@@ -96,8 +96,19 @@
         <span id="shopList2" style="font-size:12.5px;color:var(--ink-soft)"></span>
       </div>
       <div id="kaspiResult2"></div>
+      <div class="toolbar" id="kaspiStatusFilters" style="flex-wrap:wrap;"></div>
+      <div class="toolbar">
+        <span style="font-size:12px;color:var(--ink-soft)">Колонки:</span>
+        <label style="font-size:12px;"><input type="checkbox" class="kcol" data-col="num" checked> №</label>
+        <label style="font-size:12px;"><input type="checkbox" class="kcol" data-col="code" checked> Kaspi код</label>
+        <label style="font-size:12px;"><input type="checkbox" class="kcol" data-col="shop" checked> Магазин</label>
+        <label style="font-size:12px;"><input type="checkbox" class="kcol" data-col="name" checked> Наименование</label>
+        <label style="font-size:12px;"><input type="checkbox" class="kcol" data-col="courier" checked> Дата передачи курьеру</label>
+        <label style="font-size:12px;"><input type="checkbox" class="kcol" data-col="price" checked> Сумма</label>
+        <label style="font-size:12px;"><input type="checkbox" class="kcol" data-col="status" checked> Статус</label>
+      </div>
       <table>
-        <thead><tr><th>№</th><th>Kaspi код</th><th>Магазин</th><th>Наименование</th><th>Дата передачи курьеру</th><th>Статус</th></tr></thead>
+        <thead id="kaspiOrdersHead"></thead>
         <tbody id="kaspiOrdersBody"></tbody>
       </table>
     </section>
@@ -178,6 +189,23 @@
     <div class="modal-actions">
       <button class="btn danger" id="priceDeleteBtn" style="display:none">Удалить</button>
       <div><button class="btn secondary" id="priceCancelBtn">Отмена</button> <button class="btn amber" id="priceSaveBtn">Сохранить</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="kaspiDetailOverlay">
+  <div class="modal" style="max-width:700px;">
+    <h3>Данные заказа (как их прислал Kaspi)</h3>
+    <div style="font-size:12px; color:var(--ink-soft); margin-bottom:10px;">
+      Это все поля, которые реально вернул Kaspi для этого заказа — пригодится, чтобы понять,
+      как называется поле с наименованием товара и датой передачи курьеру.
+    </div>
+    <table style="font-size:12.5px;">
+      <tbody id="kaspiDetailBody"></tbody>
+    </table>
+    <div class="modal-actions">
+      <div></div>
+      <button class="btn secondary" id="kaspiDetailClose">Закрыть</button>
     </div>
   </div>
 </div>
@@ -312,19 +340,100 @@
     document.getElementById("shopList2").textContent = shops.length ? ("Активные магазины: "+shops.join(", ")) : "Нет настроенных магазинов — заполните вкладку «Kaspi: настройки»";
   }
 
-  async function renderKaspiOrders(){
-    kaspiOrders = await api("/orders?source=kaspi");
+  // Соответствие кодов статуса Kaspi понятным подписям (лучшее предположение;
+  // то, чего нет в списке — показываем как есть)
+  const KASPI_STATUS_LABELS = {
+    NEW: "Новый",
+    SIGN_REQUIRED: "Требуется подпись",
+    APPROVED_BY_BANK: "Подтверждён банком",
+    ACCEPTED_BY_MERCHANT: "Принят продавцом",
+    COMPLETED: "Завершён",
+    CANCELLED: "Отменён",
+    CANCELLING: "Отменяется",
+    RETURN_REQUESTED: "Запрошен возврат",
+    ARCHIVE: "В архиве",
+    KASPI_DELIVERY: "Доставка Kaspi",
+    DELIVERY: "Доставка",
+    PICKUP: "Самовывоз"
+  };
+  function statusLabelKaspi(s){ return KASPI_STATUS_LABELS[s] || s || "—"; }
+
+  let kaspiStatusFilter = "all";
+  let kaspiVisibleCols = JSON.parse(localStorage.getItem("kaspiCols")||"null") || {num:true,code:true,shop:true,name:true,courier:true,price:true,status:true};
+
+  document.querySelectorAll(".kcol").forEach(cb=>{
+    cb.checked = kaspiVisibleCols[cb.dataset.col];
+    cb.addEventListener("change", ()=>{
+      kaspiVisibleCols[cb.dataset.col] = cb.checked;
+      localStorage.setItem("kaspiCols", JSON.stringify(kaspiVisibleCols));
+      renderKaspiOrders(false);
+    });
+  });
+
+  const KCOL_DEFS = [
+    {key:"num", label:"№"},
+    {key:"code", label:"Kaspi код"},
+    {key:"shop", label:"Магазин"},
+    {key:"name", label:"Наименование"},
+    {key:"courier", label:"Дата передачи курьеру"},
+    {key:"price", label:"Сумма"},
+    {key:"status", label:"Статус"}
+  ];
+
+  async function renderKaspiOrders(refetch){
+    if(refetch !== false) kaspiOrders = await api("/orders?source=kaspi");
+
+    // фильтры по статусу
+    const statuses = Array.from(new Set(kaspiOrders.map(o=>o.status||"—")));
+    const filterWrap = document.getElementById("kaspiStatusFilters");
+    filterWrap.innerHTML = `<button class="btn ${kaspiStatusFilter==='all'?'amber':'secondary'}" style="padding:5px 12px;font-size:12px;" data-st="all">Все (${kaspiOrders.length})</button>`
+      + statuses.map(s=>{
+          const count = kaspiOrders.filter(o=>(o.status||"—")===s).length;
+          return `<button class="btn ${kaspiStatusFilter===s?'amber':'secondary'}" style="padding:5px 12px;font-size:12px;" data-st="${esc(s)}">${esc(statusLabelKaspi(s))} (${count})</button>`;
+        }).join("");
+    filterWrap.querySelectorAll("button").forEach(b=>{
+      b.addEventListener("click", ()=>{ kaspiStatusFilter = b.dataset.st; renderKaspiOrders(false); });
+    });
+
+    // заголовок таблицы по видимым колонкам
+    const cols = KCOL_DEFS.filter(c=>kaspiVisibleCols[c.key]);
+    document.getElementById("kaspiOrdersHead").innerHTML = "<tr>"+cols.map(c=>`<th>${c.label}</th>`).join("")+"<th></th></tr>";
+
+    let list = kaspiOrders.slice();
+    if(kaspiStatusFilter!=="all") list = list.filter(o=>(o.status||"—")===kaspiStatusFilter);
+    list.sort((a,b)=>(a.displayNumber||0)-(b.displayNumber||0));
+
     const body = document.getElementById("kaspiOrdersBody");
-    body.innerHTML = kaspiOrders.slice().sort((a,b)=>(a.displayNumber||0)-(b.displayNumber||0)).map(o=>`
+    const cellFor = (o,key)=>{
+      if(key==="num") return esc(o.displayNumber||"");
+      if(key==="code") return `<span class="mono">${esc(o.kaspiCode||"")}</span>`;
+      if(key==="shop") return esc(o.shop||"");
+      if(key==="name") return esc(o.productName||"—");
+      if(key==="courier") return esc(o.courierHandoverDate||"—");
+      if(key==="price") return o.totalPrice ? esc(o.totalPrice)+" ₸" : "—";
+      if(key==="status") return esc(statusLabelKaspi(o.status));
+      return "";
+    };
+    body.innerHTML = list.map(o=>`
       <tr>
-        <td>${esc(o.displayNumber||"")}</td>
-        <td class="mono">${esc(o.kaspiCode||"")}</td>
-        <td>${esc(o.shop||"")}</td>
-        <td>${esc(o.productName||"—")}</td>
-        <td>${esc(o.courierHandoverDate||"")}</td>
-        <td>${esc(o.status||"")}</td>
-      </tr>`).join("") || `<tr><td colspan="6" style="text-align:center;color:var(--ink-soft);padding:20px;">Пока нет заказов — нажмите «Синхронизировать сейчас»</td></tr>`;
+        ${cols.map(c=>`<td>${cellFor(o,c.key)}</td>`).join("")}
+        <td><button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__openKaspiDetail('${o.id}')">Детали</button></td>
+      </tr>`).join("") || `<tr><td colspan="${cols.length+1}" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет заказов с таким статусом</td></tr>`;
   }
+
+  window.__openKaspiDetail = function(id){
+    const o = kaspiOrders.find(x=>x.id===id);
+    if(!o) return;
+    const raw = o.raw || {};
+    const rows = Object.keys(raw).length
+      ? Object.entries(raw).map(([k,v])=>`<tr><td class="mono" style="width:220px;color:var(--ink-soft);">${esc(k)}</td><td>${esc(typeof v==='object'? JSON.stringify(v): v)}</td></tr>`).join("")
+      : `<tr><td colspan="2">Нет дополнительных данных</td></tr>`;
+    document.getElementById("kaspiDetailBody").innerHTML = rows;
+    document.getElementById("kaspiDetailOverlay").classList.add("show");
+  };
+  document.getElementById("kaspiDetailClose").addEventListener("click", ()=>{
+    document.getElementById("kaspiDetailOverlay").classList.remove("show");
+  });
 
   async function loadKaspiSettings(){
     const data = await api("/settings/kaspi");
