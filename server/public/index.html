@@ -96,10 +96,12 @@
     <section id="tab-kaspiOrders" style="display:none">
       <div class="toolbar">
         <button class="btn amber" id="btnSyncKaspi2">Синхронизировать сейчас</button>
+        <label style="font-size:12.5px;"><input type="checkbox" id="includeArchiveCheck"> включая архив</label>
         <span id="shopList2" style="font-size:12.5px;color:var(--ink-soft)"></span>
       </div>
       <div id="kaspiResult2"></div>
       <div class="toolbar" id="kaspiStatusFilters" style="flex-wrap:wrap;"></div>
+      <div class="toolbar" id="kaspiPreorderFilters" style="flex-wrap:wrap;"></div>
       <div class="toolbar" style="position:relative;">
         <button class="btn secondary" id="btnColSettings" style="padding:7px 12px;">⚙️ Колонки</button>
         <div id="colSettingsPopover" style="display:none; position:absolute; top:40px; left:0; background:#fff; border:1px solid var(--line); border-radius:8px; box-shadow:0 6px 20px rgba(0,0,0,0.15); padding:12px 16px; z-index:20; min-width:220px;">
@@ -404,6 +406,7 @@
   });
 
   let kaspiStatusFilter = "active";
+  let kaspiPreorderFilter = "all";
   let kaspiVisibleCols = JSON.parse(localStorage.getItem("kaspiCols")||"null") || {num:true,code:true,shop:true,name:true,courier:true,price:true,status:true,delivery:true};
 
   document.querySelectorAll(".kcol").forEach(cb=>{
@@ -444,6 +447,18 @@
       b.addEventListener("click", ()=>{ kaspiStatusFilter = b.dataset.st; renderKaspiOrders(false); });
     });
 
+    // второй фильтр: предзаказ (независим от статуса, комбинируется)
+    const preCount = kaspiOrders.filter(o=>o.preOrder).length;
+    const notPreCount = kaspiOrders.length - preCount;
+    const preWrap = document.getElementById("kaspiPreorderFilters");
+    preWrap.innerHTML =
+        `<button class="btn ${kaspiPreorderFilter==='all'?'amber':'secondary'}" style="padding:6px 14px;font-size:12.5px;" data-pre="all">Предзаказ: все</button>`
+      + `<button class="btn ${kaspiPreorderFilter==='yes'?'amber':'secondary'}" style="padding:6px 14px;font-size:12.5px;" data-pre="yes">Только предзаказ (${preCount})</button>`
+      + `<button class="btn ${kaspiPreorderFilter==='no'?'amber':'secondary'}" style="padding:6px 14px;font-size:12.5px;" data-pre="no">Без предзаказа (${notPreCount})</button>`;
+    preWrap.querySelectorAll("button").forEach(b=>{
+      b.addEventListener("click", ()=>{ kaspiPreorderFilter = b.dataset.pre; renderKaspiOrders(false); });
+    });
+
     // заголовок таблицы по видимым колонкам
     const cols = KCOL_DEFS.filter(c=>kaspiVisibleCols[c.key]);
     document.getElementById("kaspiOrdersHead").innerHTML = "<tr>"+cols.map(c=>`<th>${c.label}</th>`).join("")+"<th></th></tr>";
@@ -451,6 +466,8 @@
     let list = kaspiOrders.slice();
     if(kaspiStatusFilter==="active") list = list.filter(o=>o.deliveryState!=="ARCHIVE");
     else if(kaspiStatusFilter!=="all") list = list.filter(o=>(o.status||"—")===kaspiStatusFilter);
+    if(kaspiPreorderFilter==="yes") list = list.filter(o=>o.preOrder);
+    else if(kaspiPreorderFilter==="no") list = list.filter(o=>!o.preOrder);
     list.sort((a,b)=>(a.displayNumber||0)-(b.displayNumber||0));
 
     const body = document.getElementById("kaspiOrdersBody");
@@ -557,10 +574,11 @@
   document.getElementById("btnSyncKaspi2").addEventListener("click", async ()=>{
     const box = document.getElementById("kaspiResult2");
     box.innerHTML = "Синхронизация...";
+    const includeArchive = document.getElementById("includeArchiveCheck").checked;
     try{
-      const data = await api("/kaspi/sync", {method:"POST"});
+      const data = await api("/kaspi/sync", {method:"POST", body: JSON.stringify({includeArchive})});
       box.innerHTML = data.results.map(r=>
-        r.ok ? `<div class="kaspi-result">✅ ${esc(r.shop)}: добавлено ${r.added}, обновлено ${r.updated} (всего в ответе ${r.total})</div>`
+        r.ok ? `<div class="kaspi-result">✅ ${esc(r.shop)}: добавлено ${r.added}, обновлено ${r.updated}${r.skippedArchive?', пропущено архивных: '+r.skippedArchive:''} (всего в ответе ${r.total})</div>`
              : `<div class="kaspi-result" style="color:var(--red)">⚠️ ${esc(r.shop)}: ${esc(r.error)}</div>`
       ).join("");
       await renderKaspiOrders();
