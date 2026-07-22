@@ -15,17 +15,19 @@
   body{margin:0; background:var(--paper); color:var(--ink); font-family:var(--sans);}
   header.top{background:var(--navy); color:#fff; padding:16px 26px; display:flex; justify-content:space-between; align-items:center; border-bottom:4px solid var(--amber);}
   header.top h1{font-family:var(--serif); font-weight:400; font-size:22px; margin:0;}
-  nav.tabs{display:flex; gap:2px; background:var(--navy-light); padding:0 26px;}
-  nav.tabs button{background:transparent; border:none; color:#C7CEDD; padding:11px 16px; cursor:pointer; font-size:13.5px; border-bottom:3px solid transparent;}
-  nav.tabs button.active{color:#fff; border-bottom-color:var(--amber); font-weight:600;}
+  nav.tabs{display:flex; gap:6px; background:var(--navy-light); padding:10px 26px;}
+  nav.tabs button{background:transparent; border:none; color:#C7CEDD; padding:9px 18px; cursor:pointer; font-size:13.5px; border-radius:20px; transition:background .15s, color .15s;}
+  nav.tabs button:hover{background:rgba(255,255,255,0.08); color:#fff;}
+  nav.tabs button.active{color:#1E2A44; background:var(--amber); font-weight:600;}
   main{padding:22px 26px 60px; max-width:1300px; margin:0 auto;}
   .toolbar{display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:14px;}
-  .btn{padding:8px 14px; border-radius:3px; border:1px solid var(--navy); background:var(--navy); color:#fff; font-size:13px; cursor:pointer;}
+  .btn{padding:8px 16px; border-radius:6px; border:1px solid var(--navy); background:var(--navy); color:#fff; font-size:13px; cursor:pointer; transition:filter .15s;}
+  .btn:hover{filter:brightness(1.1);}
   .btn.secondary{background:#fff; color:var(--navy);}
   .btn.amber{background:var(--amber); border-color:var(--amber);}
   .btn.danger{background:#fff; color:var(--red); border-color:var(--red);}
-  input[type=text],input[type=number],input[type=password],select,textarea{padding:7px 9px; border:1px solid var(--line); border-radius:3px; font-size:13.5px;}
-  table{width:100%; border-collapse:collapse; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,0.06);}
+  input[type=text],input[type=number],input[type=password],select,textarea{padding:7px 9px; border:1px solid var(--line); border-radius:6px; font-size:13.5px;}
+  table{width:100%; border-collapse:collapse; background:#fff; border-radius:8px; overflow:hidden; box-shadow:0 2px 8px rgba(30,42,68,0.08);}
   thead th{background:#F0EAD9; text-align:left; font-size:11px; text-transform:uppercase; padding:8px; border-bottom:2px solid var(--line);}
   tbody td{padding:7px 8px; border-bottom:1px solid var(--line); font-size:13px;}
   .thumb{width:40px; height:40px; object-fit:cover; border-radius:3px; border:1px solid var(--line);}
@@ -97,15 +99,18 @@
       </div>
       <div id="kaspiResult2"></div>
       <div class="toolbar" id="kaspiStatusFilters" style="flex-wrap:wrap;"></div>
-      <div class="toolbar">
-        <span style="font-size:12px;color:var(--ink-soft)">Колонки:</span>
-        <label style="font-size:12px;"><input type="checkbox" class="kcol" data-col="num" checked> №</label>
-        <label style="font-size:12px;"><input type="checkbox" class="kcol" data-col="code" checked> Kaspi код</label>
-        <label style="font-size:12px;"><input type="checkbox" class="kcol" data-col="shop" checked> Магазин</label>
-        <label style="font-size:12px;"><input type="checkbox" class="kcol" data-col="name" checked> Наименование</label>
-        <label style="font-size:12px;"><input type="checkbox" class="kcol" data-col="courier" checked> Дата передачи курьеру</label>
-        <label style="font-size:12px;"><input type="checkbox" class="kcol" data-col="price" checked> Сумма</label>
-        <label style="font-size:12px;"><input type="checkbox" class="kcol" data-col="status" checked> Статус</label>
+      <div class="toolbar" style="position:relative;">
+        <button class="btn secondary" id="btnColSettings" style="padding:7px 12px;">⚙️ Колонки</button>
+        <div id="colSettingsPopover" style="display:none; position:absolute; top:40px; left:0; background:#fff; border:1px solid var(--line); border-radius:8px; box-shadow:0 6px 20px rgba(0,0,0,0.15); padding:12px 16px; z-index:20; min-width:220px;">
+          <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="num" checked> №</label>
+          <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="code" checked> Kaspi код</label>
+          <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="shop" checked> Магазин</label>
+          <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="name" checked> Наименование</label>
+          <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="courier" checked> Дата передачи курьеру</label>
+          <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="price" checked> Сумма</label>
+          <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="status" checked> Статус</label>
+          <label style="display:block; font-size:12.5px;"><input type="checkbox" class="kcol" data-col="delivery" checked> Доставка</label>
+        </div>
       </div>
       <table>
         <thead id="kaspiOrdersHead"></thead>
@@ -350,16 +355,30 @@
     COMPLETED: "Завершён",
     CANCELLED: "Отменён",
     CANCELLING: "Отменяется",
-    RETURN_REQUESTED: "Запрошен возврат",
-    ARCHIVE: "В архиве",
+    RETURN_REQUESTED: "Запрошен возврат"
+  };
+  function statusLabelKaspi(s){ return KASPI_STATUS_LABELS[s] || s || "—"; }
+
+  const KASPI_STATE_LABELS = {
+    ARCHIVE: "Архив",
     KASPI_DELIVERY: "Доставка Kaspi",
     DELIVERY: "Доставка",
     PICKUP: "Самовывоз"
   };
-  function statusLabelKaspi(s){ return KASPI_STATUS_LABELS[s] || s || "—"; }
+  function stateLabelKaspi(s){ return KASPI_STATE_LABELS[s] || s || "—"; }
 
-  let kaspiStatusFilter = "all";
-  let kaspiVisibleCols = JSON.parse(localStorage.getItem("kaspiCols")||"null") || {num:true,code:true,shop:true,name:true,courier:true,price:true,status:true};
+  document.getElementById("btnColSettings").addEventListener("click", (e)=>{
+    e.stopPropagation();
+    const pop = document.getElementById("colSettingsPopover");
+    pop.style.display = pop.style.display === "none" ? "block" : "none";
+  });
+  document.addEventListener("click", (e)=>{
+    const pop = document.getElementById("colSettingsPopover");
+    if(pop && !pop.contains(e.target) && e.target.id !== "btnColSettings"){ pop.style.display = "none"; }
+  });
+
+  let kaspiStatusFilter = "active";
+  let kaspiVisibleCols = JSON.parse(localStorage.getItem("kaspiCols")||"null") || {num:true,code:true,shop:true,name:true,courier:true,price:true,status:true,delivery:true};
 
   document.querySelectorAll(".kcol").forEach(cb=>{
     cb.checked = kaspiVisibleCols[cb.dataset.col];
@@ -377,19 +396,23 @@
     {key:"name", label:"Наименование"},
     {key:"courier", label:"Дата передачи курьеру"},
     {key:"price", label:"Сумма"},
-    {key:"status", label:"Статус"}
+    {key:"status", label:"Статус"},
+    {key:"delivery", label:"Доставка"}
   ];
 
   async function renderKaspiOrders(refetch){
     if(refetch !== false) kaspiOrders = await api("/orders?source=kaspi");
 
-    // фильтры по статусу
+    // фильтры по статусу: "Активные" (не архив) по умолчанию, "Все", и по каждому статусу
+    const activeCount = kaspiOrders.filter(o=>o.deliveryState!=="ARCHIVE").length;
     const statuses = Array.from(new Set(kaspiOrders.map(o=>o.status||"—")));
     const filterWrap = document.getElementById("kaspiStatusFilters");
-    filterWrap.innerHTML = `<button class="btn ${kaspiStatusFilter==='all'?'amber':'secondary'}" style="padding:5px 12px;font-size:12px;" data-st="all">Все (${kaspiOrders.length})</button>`
+    filterWrap.innerHTML =
+        `<button class="btn ${kaspiStatusFilter==='active'?'amber':'secondary'}" style="padding:6px 14px;font-size:12.5px;" data-st="active">Активные (${activeCount})</button>`
+      + `<button class="btn ${kaspiStatusFilter==='all'?'amber':'secondary'}" style="padding:6px 14px;font-size:12.5px;" data-st="all">Все (${kaspiOrders.length})</button>`
       + statuses.map(s=>{
           const count = kaspiOrders.filter(o=>(o.status||"—")===s).length;
-          return `<button class="btn ${kaspiStatusFilter===s?'amber':'secondary'}" style="padding:5px 12px;font-size:12px;" data-st="${esc(s)}">${esc(statusLabelKaspi(s))} (${count})</button>`;
+          return `<button class="btn ${kaspiStatusFilter===s?'amber':'secondary'}" style="padding:6px 14px;font-size:12.5px;" data-st="${esc(s)}">${esc(statusLabelKaspi(s))} (${count})</button>`;
         }).join("");
     filterWrap.querySelectorAll("button").forEach(b=>{
       b.addEventListener("click", ()=>{ kaspiStatusFilter = b.dataset.st; renderKaspiOrders(false); });
@@ -400,7 +423,8 @@
     document.getElementById("kaspiOrdersHead").innerHTML = "<tr>"+cols.map(c=>`<th>${c.label}</th>`).join("")+"<th></th></tr>";
 
     let list = kaspiOrders.slice();
-    if(kaspiStatusFilter!=="all") list = list.filter(o=>(o.status||"—")===kaspiStatusFilter);
+    if(kaspiStatusFilter==="active") list = list.filter(o=>o.deliveryState!=="ARCHIVE");
+    else if(kaspiStatusFilter!=="all") list = list.filter(o=>(o.status||"—")===kaspiStatusFilter);
     list.sort((a,b)=>(a.displayNumber||0)-(b.displayNumber||0));
 
     const body = document.getElementById("kaspiOrdersBody");
@@ -412,6 +436,7 @@
       if(key==="courier") return esc(o.courierHandoverDate||"—");
       if(key==="price") return o.totalPrice ? esc(o.totalPrice)+" ₸" : "—";
       if(key==="status") return esc(statusLabelKaspi(o.status));
+      if(key==="delivery") return esc(stateLabelKaspi(o.deliveryState));
       return "";
     };
     body.innerHTML = list.map(o=>`
