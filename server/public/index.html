@@ -115,6 +115,7 @@
           <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="price" checked> Сумма</label>
           <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="status" checked> Статус</label>
           <label style="display:block; font-size:12.5px;"><input type="checkbox" class="kcol" data-col="delivery" checked> Доставка</label>
+          <label style="display:block; font-size:12.5px; margin-top:6px;"><input type="checkbox" class="kcol" data-col="waybill" checked> Накладная</label>
         </div>
       </div>
       <table>
@@ -436,7 +437,7 @@
   }
 
   let kaspiStageFilter = "active"; // "active" = всё кроме архив/завершён/отменён/возврат
-  let kaspiVisibleCols = JSON.parse(localStorage.getItem("kaspiCols")||"null") || {num:true,code:true,shop:true,name:true,courier:true,price:true,status:true,delivery:true};
+  let kaspiVisibleCols = JSON.parse(localStorage.getItem("kaspiCols")||"null") || {num:true,code:true,shop:true,name:true,courier:true,price:true,status:true,delivery:true,waybill:true};
 
   document.querySelectorAll(".kcol").forEach(cb=>{
     cb.checked = kaspiVisibleCols[cb.dataset.col];
@@ -455,7 +456,8 @@
     {key:"courier", label:"Дата передачи курьеру"},
     {key:"price", label:"Сумма"},
     {key:"status", label:"Статус"},
-    {key:"delivery", label:"Доставка"}
+    {key:"delivery", label:"Доставка"},
+    {key:"waybill", label:"Накладная"}
   ];
 
   async function renderKaspiOrders(refetch){
@@ -500,6 +502,11 @@
         return `<span class="stamp" style="color:${sd.color};background:${sd.bg};border-color:${sd.color};">${esc(sd.label)}</span>`;
       }
       if(key==="delivery") return esc(stateLabelKaspi(o.deliveryState));
+      if(key==="waybill"){
+        if(!o.waybillUrl) return `<span style="color:var(--ink-soft);font-size:12px;">ещё не сформирована</span>`;
+        const printedBadge = o.printed ? ` <span style="color:var(--green);font-size:11px;">✓ распечатано</span>` : "";
+        return `<button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__printWaybill('${o.id}')">🖨️ Печать</button>${printedBadge}`;
+      }
       return "";
     };
     body.innerHTML = list.map(o=>`
@@ -590,14 +597,42 @@
     }catch(e){ toast("Ошибка: "+e.message); }
   });
 
+  window.__printWaybill = async function(id){
+    const o = kaspiOrders.find(x=>x.id===id);
+    if(!o || !o.waybillUrl) return;
+    window.open(o.waybillUrl, "_blank");
+    if(!o.printed){
+      try{
+        await api("/orders/"+id, {method:"PUT", body:JSON.stringify({printed:true})});
+        o.printed = true;
+        renderKaspiOrders(false);
+      }catch(e){}
+    }
+  };
+
   window.__openKaspiDetail = function(id){
     const o = kaspiOrders.find(x=>x.id===id);
     if(!o) return;
     const raw = o.raw || {};
+    const sd = stageDef(o.stage);
+    const summaryRows = [
+      ["Стадия", `<span class="stamp" style="color:${sd.color};background:${sd.bg};border-color:${sd.color};">${esc(sd.label)}</span>`],
+      ["Наименование", esc(o.productName||"—")],
+      ["Плановая дата отправки/передачи курьеру", esc(o.courierHandoverDate||"пока не назначена")],
+      ["Дата передачи в логистику Kaspi", esc(o.courierTransmissionDate||"ещё не передан")],
+      ["Накладная (грузовое место)", o.waybillUrl
+        ? `<button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__printWaybill('${o.id}')">🖨️ Печать</button>${o.printed?' <span style="color:var(--green);font-size:11px;">✓ распечатано</span>':''}`
+        : `<span style="color:var(--ink-soft);">ещё не сформирована (появится после упаковки)</span>`]
+    ];
+    const summaryHtml = summaryRows.map(([k,v])=>`<tr><td style="width:260px;font-weight:600;">${k}</td><td>${v}</td></tr>`).join("");
     const rows = Object.keys(raw).length
       ? Object.entries(raw).map(([k,v])=>`<tr><td class="mono" style="width:220px;color:var(--ink-soft);">${esc(k)}</td><td>${esc(typeof v==='object'? JSON.stringify(v): v)}</td></tr>`).join("")
       : `<tr><td colspan="2">Нет дополнительных данных</td></tr>`;
-    document.getElementById("kaspiDetailBody").innerHTML = rows;
+    document.getElementById("kaspiDetailBody").innerHTML =
+      `<tr><td colspan="2" style="font-weight:700; padding-top:10px; border-bottom:2px solid var(--amber);">Основное</td></tr>`
+      + summaryHtml
+      + `<tr><td colspan="2" style="font-weight:700; padding-top:16px; border-bottom:2px solid var(--line);">Всё, что прислал Kaspi</td></tr>`
+      + rows;
     document.getElementById("kaspiDetailOverlay").classList.add("show");
   };
   document.getElementById("kaspiDetailClose").addEventListener("click", ()=>{
