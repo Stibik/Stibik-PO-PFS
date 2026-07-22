@@ -34,6 +34,19 @@ export async function fetchShopOrders(token, { pageNumber = 0, pageSize = 100, d
   return json.data || [];
 }
 
+// Забираем ВСЕ страницы за период, а не только первую сотню — иначе при большом
+// количестве заказов самые свежие (те, что реально сейчас "на упаковке") могут
+// не попасть в выборку, если Kaspi отдаёт их не в конце списка.
+export async function fetchAllShopOrders(token, { daysBack = 14, pageSize = 100, maxPages = 30 } = {}) {
+  let all = [];
+  for (let page = 0; page < maxPages; page++) {
+    const batch = await fetchShopOrders(token, { pageNumber: page, pageSize, daysBack });
+    all = all.concat(batch);
+    if (batch.length < pageSize) break; // это была последняя страница
+  }
+  return all;
+}
+
 // Получаем позиции (товары) заказа — отдельный запрос, т.к. в самом заказе названия нет.
 // Путь предположительный (по общей структуре Kaspi API) — если не сработает, вернём пусто
 // и ничего не сломаем, просто останется "—" в наименовании.
@@ -86,14 +99,16 @@ export function mapKaspiOrder(raw, shopName) {
 }
 
 export async function syncShop(token, shopName, { fetchNames = true } = {}) {
-  const items = await fetchShopOrders(token, { pageNumber: 0, pageSize: 100 });
+  const items = await fetchAllShopOrders(token, { daysBack: 14, pageSize: 100 });
   const mapped = items.map(item => mapKaspiOrder(item, shopName));
 
   if (fetchNames) {
-    // Подтягиваем названия товаров небольшими партиями, чтобы не перегружать API
+    // Названия тянем только для неархивных заказов — архивные всё равно обычно
+    // не нужны сразу, а лишние сотни запросов тут ни к чему
+    const needNames = mapped.filter(o => o.deliveryState !== "ARCHIVE");
     const BATCH = 8;
-    for (let i = 0; i < mapped.length; i += BATCH) {
-      const batch = mapped.slice(i, i + BATCH);
+    for (let i = 0; i < needNames.length; i += BATCH) {
+      const batch = needNames.slice(i, i + BATCH);
       await Promise.all(batch.map(async (o) => {
         const { names } = await fetchOrderEntries(token, o.kaspiOrderId);
         if (names.length) o.productName = names.join(", ");
