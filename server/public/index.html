@@ -101,7 +101,9 @@
       </div>
       <div id="kaspiResult2"></div>
       <div class="toolbar" id="kaspiStatusFilters" style="flex-wrap:wrap;"></div>
-      <div class="toolbar" id="kaspiPreorderFilters" style="flex-wrap:wrap;"></div>
+      <div class="toolbar">
+        <button class="btn secondary" id="btnPrintKaspiList" style="padding:7px 12px;">🖨️ Печать списка (текущий фильтр)</button>
+      </div>
       <div class="toolbar" style="position:relative;">
         <button class="btn secondary" id="btnColSettings" style="padding:7px 12px;">⚙️ Колонки</button>
         <div id="colSettingsPopover" style="display:none; position:absolute; top:40px; left:0; background:#fff; border:1px solid var(--line); border-radius:8px; box-shadow:0 6px 20px rgba(0,0,0,0.15); padding:12px 16px; z-index:20; min-width:220px;">
@@ -405,8 +407,35 @@
     if(pop && !pop.contains(e.target) && e.target.id !== "btnColSettings"){ pop.style.display = "none"; }
   });
 
-  let kaspiStatusFilter = "active";
-  let kaspiPreorderFilter = "all";
+  // Классификация стадии "как в кабинете Kaspi" — это лучшее приближение по доступным
+  // полям (assembled, courierTransmissionDate, preOrder, state, status), не точная копия.
+  // Если после проверки что-то не совпадёт по конкретному заказу — поправим на реальном примере.
+  const STAGE_DEFS = [
+    {key:"cancelled", label:"Отменён", color:"#B23A2E", bg:"#F5DEDA"},
+    {key:"returns",   label:"Возврат", color:"#8B5E1F", bg:"#F3E0BC"},
+    {key:"preorder",  label:"Предзаказ", color:"#6B4FA0", bg:"#EAE0F5"},
+    {key:"packing",   label:"Упаковка", color:"#C8862B", bg:"#F3E0BC"},
+    {key:"handover",  label:"Передача", color:"#2C6E8F", bg:"#DCEEF5"},
+    {key:"toDelivery",label:"Передано на доставку", color:"#3E7D4C", bg:"#E0EEDF"},
+    {key:"completed", label:"Завершён", color:"#3E7D4C", bg:"#E0EEDF"},
+    {key:"archive",   label:"Архив", color:"#8A8F99", bg:"#EEEEEE"},
+    {key:"other",     label:"Другое", color:"#565B66", bg:"#EFEFEF"}
+  ];
+  function stageDef(key){ return STAGE_DEFS.find(s=>s.key===key) || STAGE_DEFS[STAGE_DEFS.length-1]; }
+
+  function classifyStage(o){
+    if(o.status==="CANCELLED" || o.status==="CANCELLING") return "cancelled";
+    if(o.status==="RETURN_REQUESTED" || o.status==="RETURNED") return "returns";
+    if(o.deliveryState==="ARCHIVE") return "archive";
+    if(o.status==="COMPLETED") return "completed";
+    if(o.preOrder && !o.assembled) return "preorder";
+    if(!o.assembled) return "packing";
+    if(o.assembled && !o.courierTransmissionDate) return "handover";
+    if(o.courierTransmissionDate) return "toDelivery";
+    return "other";
+  }
+
+  let kaspiStageFilter = "active"; // "active" = всё кроме архив/завершён/отменён/возврат
   let kaspiVisibleCols = JSON.parse(localStorage.getItem("kaspiCols")||"null") || {num:true,code:true,shop:true,name:true,courier:true,price:true,status:true,delivery:true};
 
   document.querySelectorAll(".kcol").forEach(cb=>{
@@ -432,31 +461,21 @@
   async function renderKaspiOrders(refetch){
     if(refetch !== false) kaspiOrders = await api("/orders?source=kaspi");
 
-    // фильтры по статусу: "Активные" (не архив) по умолчанию, "Все", и по каждому статусу
-    const activeCount = kaspiOrders.filter(o=>o.deliveryState!=="ARCHIVE").length;
-    const statuses = Array.from(new Set(kaspiOrders.map(o=>o.status||"—")));
-    const filterWrap = document.getElementById("kaspiStatusFilters");
-    filterWrap.innerHTML =
-        `<button class="btn ${kaspiStatusFilter==='active'?'amber':'secondary'}" style="padding:6px 14px;font-size:12.5px;" data-st="active">Активные (${activeCount})</button>`
-      + `<button class="btn ${kaspiStatusFilter==='all'?'amber':'secondary'}" style="padding:6px 14px;font-size:12.5px;" data-st="all">Все (${kaspiOrders.length})</button>`
-      + statuses.map(s=>{
-          const count = kaspiOrders.filter(o=>(o.status||"—")===s).length;
-          return `<button class="btn ${kaspiStatusFilter===s?'amber':'secondary'}" style="padding:6px 14px;font-size:12.5px;" data-st="${esc(s)}">${esc(statusLabelKaspi(s))} (${count})</button>`;
-        }).join("");
-    filterWrap.querySelectorAll("button").forEach(b=>{
-      b.addEventListener("click", ()=>{ kaspiStatusFilter = b.dataset.st; renderKaspiOrders(false); });
-    });
+    kaspiOrders.forEach(o=>{ o.stage = classifyStage(o); });
 
-    // второй фильтр: предзаказ (независим от статуса, комбинируется)
-    const preCount = kaspiOrders.filter(o=>o.preOrder).length;
-    const notPreCount = kaspiOrders.length - preCount;
-    const preWrap = document.getElementById("kaspiPreorderFilters");
-    preWrap.innerHTML =
-        `<button class="btn ${kaspiPreorderFilter==='all'?'amber':'secondary'}" style="padding:6px 14px;font-size:12.5px;" data-pre="all">Предзаказ: все</button>`
-      + `<button class="btn ${kaspiPreorderFilter==='yes'?'amber':'secondary'}" style="padding:6px 14px;font-size:12.5px;" data-pre="yes">Только предзаказ (${preCount})</button>`
-      + `<button class="btn ${kaspiPreorderFilter==='no'?'amber':'secondary'}" style="padding:6px 14px;font-size:12.5px;" data-pre="no">Без предзаказа (${notPreCount})</button>`;
-    preWrap.querySelectorAll("button").forEach(b=>{
-      b.addEventListener("click", ()=>{ kaspiPreorderFilter = b.dataset.pre; renderKaspiOrders(false); });
+    const nonTerminal = ["preorder","packing","handover","toDelivery","other"];
+    const activeCount = kaspiOrders.filter(o=>nonTerminal.includes(o.stage)).length;
+    const filterWrap = document.getElementById("kaspiStatusFilters");
+    let html = `<button class="btn ${kaspiStageFilter==='active'?'amber':'secondary'}" style="padding:6px 14px;font-size:12.5px;" data-stage="active">Активные (${activeCount})</button>`
+      + `<button class="btn ${kaspiStageFilter==='all'?'amber':'secondary'}" style="padding:6px 14px;font-size:12.5px;" data-stage="all">Все (${kaspiOrders.length})</button>`;
+    STAGE_DEFS.forEach(sd=>{
+      const count = kaspiOrders.filter(o=>o.stage===sd.key).length;
+      if(count===0 && !["preorder","packing","handover","toDelivery"].includes(sd.key)) return;
+      html += `<button class="btn ${kaspiStageFilter===sd.key?'amber':'secondary'}" style="padding:6px 14px;font-size:12.5px;" data-stage="${sd.key}">${sd.label} (${count})</button>`;
+    });
+    filterWrap.innerHTML = html;
+    filterWrap.querySelectorAll("button").forEach(b=>{
+      b.addEventListener("click", ()=>{ kaspiStageFilter = b.dataset.stage; renderKaspiOrders(false); });
     });
 
     // заголовок таблицы по видимым колонкам
@@ -464,10 +483,8 @@
     document.getElementById("kaspiOrdersHead").innerHTML = "<tr>"+cols.map(c=>`<th>${c.label}</th>`).join("")+"<th></th></tr>";
 
     let list = kaspiOrders.slice();
-    if(kaspiStatusFilter==="active") list = list.filter(o=>o.deliveryState!=="ARCHIVE");
-    else if(kaspiStatusFilter!=="all") list = list.filter(o=>(o.status||"—")===kaspiStatusFilter);
-    if(kaspiPreorderFilter==="yes") list = list.filter(o=>o.preOrder);
-    else if(kaspiPreorderFilter==="no") list = list.filter(o=>!o.preOrder);
+    if(kaspiStageFilter==="active") list = list.filter(o=>nonTerminal.includes(o.stage));
+    else if(kaspiStageFilter!=="all") list = list.filter(o=>o.stage===kaspiStageFilter);
     list.sort((a,b)=>(a.displayNumber||0)-(b.displayNumber||0));
 
     const body = document.getElementById("kaspiOrdersBody");
@@ -478,7 +495,10 @@
       if(key==="name") return esc(o.productName||"—");
       if(key==="courier") return esc(o.courierHandoverDate||"—");
       if(key==="price") return o.totalPrice ? esc(o.totalPrice)+" ₸" : "—";
-      if(key==="status") return esc(statusLabelKaspi(o.status));
+      if(key==="status"){
+        const sd = stageDef(o.stage);
+        return `<span class="stamp" style="color:${sd.color};background:${sd.bg};border-color:${sd.color};">${esc(sd.label)}</span>`;
+      }
       if(key==="delivery") return esc(stateLabelKaspi(o.deliveryState));
       return "";
     };
@@ -486,8 +506,43 @@
       <tr>
         ${cols.map(c=>`<td>${cellFor(o,c.key)}</td>`).join("")}
         <td><button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__openKaspiDetail('${o.id}')">Детали</button></td>
-      </tr>`).join("") || `<tr><td colspan="${cols.length+1}" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет заказов с таким статусом</td></tr>`;
+      </tr>`).join("") || `<tr><td colspan="${cols.length+1}" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет заказов на этой стадии</td></tr>`;
   }
+
+  document.getElementById("btnPrintKaspiList").addEventListener("click", ()=>{
+    let list = kaspiOrders.slice();
+    const nonTerminal = ["preorder","packing","handover","toDelivery","other"];
+    if(kaspiStageFilter==="active") list = list.filter(o=>nonTerminal.includes(o.stage));
+    else if(kaspiStageFilter!=="all") list = list.filter(o=>o.stage===kaspiStageFilter);
+    if(!list.length){ toast("Нечего печатать — список пуст"); return; }
+    const w = window.open("", "_blank");
+    if(!w){ toast("Браузер заблокировал открытие окна"); return; }
+    const rows = list.map(o=>`
+      <tr>
+        <td>${esc(o.displayNumber)}</td>
+        <td>${esc(o.kaspiCode)}</td>
+        <td>${esc(o.productName||"—")}</td>
+        <td>${esc(o.shop)}</td>
+        <td>${esc(stageDef(o.stage).label)}</td>
+      </tr>`).join("");
+    w.document.write(`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>Список заказов</title>
+    <style>
+      body{font-family:Arial,sans-serif; margin:0; padding:20px;}
+      h1{font-family:Georgia,serif; font-size:20px;}
+      table{width:100%; border-collapse:collapse; font-size:13px;}
+      th,td{border:1px solid #ccc; padding:6px 8px; text-align:left;}
+      th{background:#F0EAD9;}
+      .toolbar{margin-bottom:16px;}
+      button{padding:8px 16px; background:#C8862B; color:#fff; border:none; border-radius:4px; cursor:pointer;}
+      @media print{ .toolbar{display:none;} }
+    </style></head><body>
+      <div class="toolbar"><button onclick="window.print()">Печать / Сохранить как PDF</button></div>
+      <h1>Список заказов (${list.length})</h1>
+      <table><thead><tr><th>№</th><th>Kaspi код</th><th>Наименование</th><th>Магазин</th><th>Стадия</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+    </body></html>`);
+    w.document.close();
+  });
 
   const CLAIM_STATUSES = ["CANCELLED","CANCELLING","RETURN_REQUESTED","RETURNED"];
   let editingClaimId = null;
