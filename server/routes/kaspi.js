@@ -26,6 +26,7 @@ router.get("/shops", async (req, res) => {
 router.post("/sync", async (req, res) => {
   await db.read();
   const shops = getConfiguredShops();
+  const includeArchive = !!(req.body && req.body.includeArchive);
   if (!shops.length) {
     return res.status(400).json({ error: "no_shops_configured", message: "Токены Kaspi не настроены — добавьте их в разделе «Заказы» → «Настройки Kaspi»" });
   }
@@ -33,19 +34,23 @@ router.post("/sync", async (req, res) => {
   for (const shop of shops) {
     try {
       const kaspiOrders = await syncShop(shop.token, shop.name);
-      let added = 0, updated = 0;
+      let added = 0, updated = 0, skippedArchive = 0;
       kaspiOrders.forEach(ko => {
         const existing = db.data.orders.find(o => o.kaspiOrderId === ko.kaspiOrderId);
         if (existing) {
           Object.assign(existing, ko);
           updated++;
         } else {
+          if (ko.deliveryState === "ARCHIVE" && !includeArchive) {
+            skippedArchive++;
+            return;
+          }
           const displayNumber = db.data.meta.nextKaspiNumber++;
           db.data.orders.push({ ...ko, id: "kord_" + ko.kaspiOrderId, source: "kaspi", displayNumber });
           added++;
         }
       });
-      results.push({ shop: shop.name, ok: true, added, updated, total: kaspiOrders.length });
+      results.push({ shop: shop.name, ok: true, added, updated, skippedArchive, total: kaspiOrders.length });
     } catch (err) {
       results.push({ shop: shop.name, ok: false, error: err.message });
     }
