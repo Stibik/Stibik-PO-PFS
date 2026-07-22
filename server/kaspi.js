@@ -1,14 +1,14 @@
 // Модуль интеграции с API «Магазин на Kaspi.kz».
 // Основано на официальной документации: https://guide.kaspi.kz/partner/ru/shop/api/orders/
-// ОБНОВЛЕНО: проверено на реальном токене. Kaspi требует обязательный фильтр по дате
-// создания заказа (creationDate) — без него отвечает 400 "Required filter ... is empty".
-// Формат — epoch-миллисекунды (Unix time * 1000).
+// ПРОВЕРЕНО на реальном токене. Kaspi требует обязательный фильтр по дате создания заказа
+// (creationDate), формат — epoch-миллисекунды. МАКСИМАЛЬНАЯ разница между $ge и $le — 14 дней
+// (при попытке взять больше — ответ 400 "Exceeded the maximum difference... max [14]").
 
 const BASE_URL = "https://kaspi.kz/shop/api/v2";
 
-export async function fetchShopOrders(token, { pageNumber = 0, pageSize = 100, daysBack = 30 } = {}) {
+export async function fetchShopOrders(token, { pageNumber = 0, pageSize = 100, daysBack = 14 } = {}) {
   const now = Date.now();
-  const from = now - daysBack * 24 * 60 * 60 * 1000;
+  const from = now - Math.min(daysBack, 14) * 24 * 60 * 60 * 1000;
   const url = `${BASE_URL}/orders`
     + `?page[number]=${pageNumber}&page[size]=${pageSize}`
     + `&filter[orders][creationDate][$ge]=${from}`
