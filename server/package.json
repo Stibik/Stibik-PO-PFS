@@ -1,0 +1,21 @@
+{
+  "name": "order-tracker-server",
+  "version": "0.3.0",
+  "description": "Учёт заказов и прайса — сервер",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-session": "^1.19.0",
+    "lowdb": "^7.0.1",
+    "multer": "^2.2.0"
+  }
+}
