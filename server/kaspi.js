@@ -80,6 +80,7 @@ export async function fetchOrderEntries(token, kaspiOrderId) {
 
 export function mapKaspiOrder(raw, shopName) {
   const a = raw.attributes || {};
+  const kd = a.kaspiDelivery || {};
   return {
     kaspiOrderId: raw.id,
     kaspiCode: a.code || "",
@@ -87,6 +88,11 @@ export function mapKaspiOrder(raw, shopName) {
     status: a.status || "",
     deliveryState: a.state || "",
     preOrder: !!a.preOrder,
+    assembled: !!a.assembled,
+    isKaspiDelivery: !!a.isKaspiDelivery,
+    courierTransmissionDate: kd.courierTransmissionDate
+      ? new Date(kd.courierTransmissionDate).toISOString().slice(0, 10)
+      : "",
     orderDate: a.creationDate ? new Date(a.creationDate).toISOString().slice(0, 10) : "",
     totalPrice: a.totalPrice || 0,
     deliveryMode: a.deliveryMode || "",
