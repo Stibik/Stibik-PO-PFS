@@ -21,7 +21,7 @@ const defaultData = {
       ]
     }
   },
-  meta: { version: "0.3.0", nextReceiptNumber: 1, nextKaspiNumber: 1 }
+  meta: { version: "0.4.0", nextReceiptNumber: 1, nextKaspiNumber: 1 }
 };
 
 const adapter = new JSONFile(DB_PATH);
