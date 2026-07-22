@@ -93,6 +93,7 @@ export function mapKaspiOrder(raw, shopName) {
     courierTransmissionDate: kd.courierTransmissionDate
       ? new Date(kd.courierTransmissionDate).toISOString().slice(0, 10)
       : "",
+    waybillUrl: kd.waybill || "",
     orderDate: a.creationDate ? new Date(a.creationDate).toISOString().slice(0, 10) : "",
     totalPrice: a.totalPrice || 0,
     deliveryMode: a.deliveryMode || "",
