@@ -78,6 +78,7 @@
   <nav class="tabs">
     <button class="tab-btn active" data-tab="orders">Приход</button>
     <button class="tab-btn" data-tab="kaspiOrders">Заказы</button>
+    <button class="tab-btn" data-tab="claims">Отмены/возвраты</button>
     <button class="tab-btn" data-tab="price">Прайс</button>
     <button class="tab-btn" data-tab="kaspi">Kaspi: настройки</button>
   </nav>
@@ -115,6 +116,15 @@
       <table>
         <thead id="kaspiOrdersHead"></thead>
         <tbody id="kaspiOrdersBody"></tbody>
+      </table>
+    </section>
+    <section id="tab-claims" style="display:none">
+      <div class="toolbar">
+        <label style="font-size:13px;"><input type="checkbox" id="showClosedClaims"> Показывать закрытые</label>
+      </div>
+      <table>
+        <thead><tr><th>№</th><th>Kaspi код</th><th>Магазин</th><th>Наименование</th><th>Статус</th><th>Заметка</th><th></th></tr></thead>
+        <tbody id="claimsBody"></tbody>
       </table>
     </section>
     <section id="tab-price" style="display:none">
@@ -194,6 +204,20 @@
     <div class="modal-actions">
       <button class="btn danger" id="priceDeleteBtn" style="display:none">Удалить</button>
       <div><button class="btn secondary" id="priceCancelBtn">Отмена</button> <button class="btn amber" id="priceSaveBtn">Сохранить</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="claimOverlay">
+  <div class="modal">
+    <h3>Рекламация по заказу</h3>
+    <div class="grid2">
+      <div class="full"><label>Заметка (что происходит, что решили)</label><textarea id="claim_note" style="width:100%; min-height:80px;"></textarea></div>
+      <div class="full"><label><input type="checkbox" id="claim_resolved"> Закрыто (решено)</label></div>
+    </div>
+    <div class="modal-actions">
+      <div></div>
+      <div><button class="btn secondary" id="claimCancelBtn">Отмена</button> <button class="btn amber" id="claimSaveBtn">Сохранить</button></div>
     </div>
   </div>
 </div>
@@ -328,8 +352,9 @@
     b.addEventListener("click", ()=>{
       document.querySelectorAll(".tab-btn").forEach(x=>x.classList.remove("active"));
       b.classList.add("active");
-      ["orders","kaspiOrders","price","kaspi"].forEach(t=> document.getElementById("tab-"+t).style.display = (t===b.dataset.tab)?"":"none");
+      ["orders","kaspiOrders","claims","price","kaspi"].forEach(t=> document.getElementById("tab-"+t).style.display = (t===b.dataset.tab)?"":"none");
       if(b.dataset.tab === "kaspiOrders") renderKaspiOrders();
+      if(b.dataset.tab === "claims") { if(!kaspiOrders.length) renderKaspiOrders().then(renderClaims); else renderClaims(); }
       if(b.dataset.tab === "kaspi") loadKaspiSettings();
     });
   });
@@ -355,7 +380,8 @@
     COMPLETED: "Завершён",
     CANCELLED: "Отменён",
     CANCELLING: "Отменяется",
-    RETURN_REQUESTED: "Запрошен возврат"
+    RETURN_REQUESTED: "Запрошен возврат",
+    RETURNED: "Возвращён"
   };
   function statusLabelKaspi(s){ return KASPI_STATUS_LABELS[s] || s || "—"; }
 
@@ -445,6 +471,52 @@
         <td><button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__openKaspiDetail('${o.id}')">Детали</button></td>
       </tr>`).join("") || `<tr><td colspan="${cols.length+1}" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет заказов с таким статусом</td></tr>`;
   }
+
+  const CLAIM_STATUSES = ["CANCELLED","CANCELLING","RETURN_REQUESTED","RETURNED"];
+  let editingClaimId = null;
+
+  document.getElementById("showClosedClaims").addEventListener("change", renderClaims);
+
+  function renderClaims(){
+    const showClosed = document.getElementById("showClosedClaims").checked;
+    let list = kaspiOrders.filter(o=>CLAIM_STATUSES.includes(o.status));
+    if(!showClosed) list = list.filter(o=>!o.claimResolved);
+    list.sort((a,b)=>(a.displayNumber||0)-(b.displayNumber||0));
+    const body = document.getElementById("claimsBody");
+    body.innerHTML = list.map(o=>`
+      <tr style="${o.claimResolved?'opacity:.5;':''}">
+        <td>${esc(o.displayNumber||"")}</td>
+        <td class="mono">${esc(o.kaspiCode||"")}</td>
+        <td>${esc(o.shop||"")}</td>
+        <td>${esc(o.productName||"—")}</td>
+        <td>${esc(statusLabelKaspi(o.status))}</td>
+        <td style="max-width:220px;font-size:12.5px;color:var(--ink-soft);">${esc(o.claimNote||"")}</td>
+        <td><button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__openClaim('${o.id}')">${o.claimResolved?'Открыть':'Обработать'}</button></td>
+      </tr>`).join("") || `<tr><td colspan="7" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет отмен/возвратов${showClosed?'':' (не закрытых)'}</td></tr>`;
+  }
+
+  window.__openClaim = function(id){
+    editingClaimId = id;
+    const o = kaspiOrders.find(x=>x.id===id);
+    document.getElementById("claim_note").value = o?.claimNote || "";
+    document.getElementById("claim_resolved").checked = !!o?.claimResolved;
+    document.getElementById("claimOverlay").classList.add("show");
+  };
+  document.getElementById("claimCancelBtn").addEventListener("click", ()=>{
+    document.getElementById("claimOverlay").classList.remove("show");
+  });
+  document.getElementById("claimSaveBtn").addEventListener("click", async ()=>{
+    const note = document.getElementById("claim_note").value.trim();
+    const resolved = document.getElementById("claim_resolved").checked;
+    try{
+      await api("/orders/"+editingClaimId, {method:"PUT", body:JSON.stringify({claimNote:note, claimResolved:resolved})});
+      const o = kaspiOrders.find(x=>x.id===editingClaimId);
+      if(o){ o.claimNote = note; o.claimResolved = resolved; }
+      document.getElementById("claimOverlay").classList.remove("show");
+      renderClaims();
+      toast("Сохранено");
+    }catch(e){ toast("Ошибка: "+e.message); }
+  });
 
   window.__openKaspiDetail = function(id){
     const o = kaspiOrders.find(x=>x.id===id);
