@@ -6,7 +6,8 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 
-import { initDb } from "./db.js";
+import { ensureSchema, ensureBootstrapUser } from "./db.js";
+import { autoMigrateIfNeeded } from "./autoMigrate.js";
 import authRoutes from "./routes/auth.js";
 import orderRoutes from "./routes/orders.js";
 import priceRoutes from "./routes/price.js";
@@ -78,7 +79,21 @@ app.get("/*splat", (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 
-initDb();
+ensureSchema();
+
+// Автоперенос старых данных (data.json -> SQLite), если найдём файл и БД ещё пустая.
+// Работает без Shell — специально для бесплатного тарифа Render, где консоль недоступна.
+const oldDataCandidates = [
+  process.env.DB_PATH ? path.join(path.dirname(process.env.DB_PATH), "data.json") : null,
+  path.join(__dirname, "data.json")
+].filter(Boolean);
+let migrated = false;
+for (const candidate of oldDataCandidates) {
+  const result = autoMigrateIfNeeded(candidate);
+  if (result.ran) { migrated = true; break; }
+}
+ensureBootstrapUser(); // на случай, если старого data.json не нашлось — создаст admin/admin
+
 app.listen(PORT, () => {
   console.log(`Сервер запущен: http://localhost:${PORT}`);
 });
