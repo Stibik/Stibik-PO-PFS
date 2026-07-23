@@ -13,6 +13,7 @@ import priceRoutes from "./routes/price.js";
 import kaspiRoutes from "./routes/kaspi.js";
 import metaRoutes from "./routes/meta.js";
 import settingsRoutes from "./routes/settings.js";
+import auditRoutes from "./routes/audit.js";
 import { requireAuth } from "./middleware/auth.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -44,11 +45,19 @@ const upload = multer({
       cb(null, Date.now() + "_" + Math.random().toString(36).slice(2, 8) + ext);
     }
   }),
-  limits: { fileSize: 8 * 1024 * 1024 }
+  limits: { fileSize: 8 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const okTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+    if (!okTypes.includes(file.mimetype)) return cb(new Error("Разрешены только изображения (jpg/png/webp/gif)"));
+    cb(null, true);
+  }
 });
-app.post("/api/upload", requireAuth, upload.single("photo"), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: "no_file" });
-  res.json({ path: "/uploads/" + req.file.filename });
+app.post("/api/upload", requireAuth, (req, res) => {
+  upload.single("photo")(req, res, (err) => {
+    if (err) return res.status(400).json({ error: "upload_failed", message: err.message });
+    if (!req.file) return res.status(400).json({ error: "no_file" });
+    res.json({ path: "/uploads/" + req.file.filename });
+  });
 });
 app.use("/uploads", express.static(UPLOAD_DIR));
 
@@ -59,6 +68,7 @@ app.use("/api/price", priceRoutes);
 app.use("/api/kaspi", kaspiRoutes);
 app.use("/api/meta", metaRoutes);
 app.use("/api/settings", settingsRoutes);
+app.use("/api/audit", auditRoutes);
 
 // Статика фронтенда
 app.use(express.static(path.join(__dirname, "public")));
@@ -68,8 +78,7 @@ app.get("/*splat", (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 
-initDb().then(() => {
-  app.listen(PORT, () => {
-    console.log(`Сервер запущен: http://localhost:${PORT}`);
-  });
+initDb();
+app.listen(PORT, () => {
+  console.log(`Сервер запущен: http://localhost:${PORT}`);
 });
