@@ -94,6 +94,23 @@ for (const candidate of oldDataCandidates) {
 }
 ensureBootstrapUser(); // на случай, если старого data.json не нашлось — создаст admin/admin
 
+// Сброс пароля админа без доступа к консоли — если задана переменная окружения
+// RESET_ADMIN_PASSWORD, принудительно установим её как пароль пользователя
+// ADMIN_USER (или 'admin', если не задан). После успешного входа переменную
+// со сброшенным паролем стоит убрать из Environment на хостинге.
+if (process.env.RESET_ADMIN_PASSWORD) {
+  const bcrypt = (await import("bcryptjs")).default;
+  const { db } = await import("./db.js");
+  const username = process.env.ADMIN_USER || "admin";
+  const hash = bcrypt.hashSync(process.env.RESET_ADMIN_PASSWORD, 10);
+  const result = db.prepare("UPDATE users SET password_hash = ? WHERE username = ?").run(hash, username);
+  if (result.changes > 0) {
+    console.log(`[reset] Пароль пользователя "${username}" сброшен через RESET_ADMIN_PASSWORD`);
+  } else {
+    console.log(`[reset] Пользователь "${username}" не найден — пароль не сброшен`);
+  }
+}
+
 app.listen(PORT, () => {
   console.log(`Сервер запущен: http://localhost:${PORT}`);
 });
