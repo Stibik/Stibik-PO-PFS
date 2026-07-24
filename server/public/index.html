@@ -31,7 +31,7 @@
   thead th{background:#F0EAD9; text-align:left; font-size:11px; text-transform:uppercase; padding:8px; border-bottom:2px solid var(--line);}
   tbody td{padding:7px 8px; border-bottom:1px solid var(--line); font-size:13px;}
   .thumb{width:40px; height:40px; object-fit:cover; border-radius:3px; border:1px solid var(--line);}
-  .stamp{font-family:var(--mono); font-size:10px; font-weight:700; padding:2px 7px; border-radius:3px; border:1.5px solid currentColor;}
+  .stamp{font-family:var(--mono); font-size:10.5px; font-weight:700; padding:3px 9px; border-radius:20px; border:1.5px solid currentColor; white-space:nowrap; display:inline-block;}
   .stamp.transit{color:var(--amber); background:var(--amber-light);}
   .stamp.arrived{color:var(--green); background:#E0EEDF;}
   .stamp.problem{color:var(--red); background:#F5DEDA;}
@@ -53,6 +53,24 @@
   .kaspi-result{font-size:12.5px; margin-top:10px; background:#fff; border:1px solid var(--line); padding:10px; border-radius:4px;}
   #toast{position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:var(--navy); color:#fff; padding:10px 18px; border-radius:4px; opacity:0; transition:opacity .2s; z-index:100;}
   #toast.show{opacity:1;}
+
+  .tbl-wrap{ overflow-x:auto; -webkit-overflow-scrolling:touch; border-radius:8px; }
+  .tbl-wrap table{ min-width:640px; }
+
+  @media (max-width: 720px){
+    header.top{ padding:12px 14px; flex-wrap:wrap; gap:8px; }
+    header.top h1{ font-size:17px; }
+    nav.tabs{ padding:8px 10px; overflow-x:auto; -webkit-overflow-scrolling:touch; flex-wrap:nowrap; }
+    nav.tabs button{ white-space:nowrap; padding:8px 13px; font-size:12.5px; flex:none; }
+    main{ padding:14px 12px 40px; }
+    .toolbar{ gap:6px; }
+    .btn{ padding:8px 12px; font-size:12.5px; }
+    .grid2{ grid-template-columns:1fr; }
+    .modal{ padding:16px 14px; max-width:calc(100vw - 24px); }
+    .modal h3{ font-size:16px; }
+    thead th, tbody td{ font-size:12px; padding:6px; }
+    .login-box{ width:calc(100vw - 40px); }
+  }
 </style>
 </head>
 <body>
@@ -81,6 +99,8 @@
     <button class="tab-btn" data-tab="claims">Отмены/возвраты</button>
     <button class="tab-btn" data-tab="price">Прайс</button>
     <button class="tab-btn" data-tab="kaspi">Kaspi: настройки</button>
+    <button class="tab-btn admin-only" data-tab="audit">Журнал</button>
+    <button class="tab-btn admin-only" data-tab="users">Пользователи</button>
   </nav>
   <main>
     <section id="tab-orders">
@@ -88,10 +108,12 @@
         <button class="btn amber" id="btnAddOrder">+ Новый приход</button>
         <button class="btn secondary" id="btnExportOrders">Экспорт в Excel</button>
       </div>
-      <table>
+<div class="tbl-wrap">
+            <table>
         <thead><tr><th>№</th><th></th><th>Артикул/Название</th><th>Кол-во</th><th>Статус</th><th></th></tr></thead>
         <tbody id="ordersBody"></tbody>
       </table>
+      </div>
     </section>
     <section id="tab-kaspiOrders" style="display:none">
       <div class="toolbar">
@@ -118,35 +140,58 @@
           <label style="display:block; font-size:12.5px; margin-top:6px;"><input type="checkbox" class="kcol" data-col="waybill" checked> Накладная</label>
         </div>
       </div>
-      <table>
+<div class="tbl-wrap">
+            <table>
         <thead id="kaspiOrdersHead"></thead>
         <tbody id="kaspiOrdersBody"></tbody>
       </table>
+      </div>
     </section>
     <section id="tab-claims" style="display:none">
       <div class="toolbar">
         <label style="font-size:13px;"><input type="checkbox" id="showClosedClaims"> Показывать закрытые</label>
       </div>
-      <table>
+<div class="tbl-wrap">
+            <table>
         <thead><tr><th>№</th><th>Kaspi код</th><th>Магазин</th><th>Наименование</th><th>Статус</th><th>Заметка</th><th></th></tr></thead>
         <tbody id="claimsBody"></tbody>
       </table>
+      </div>
     </section>
     <section id="tab-price" style="display:none">
       <div class="toolbar">
         <button class="btn amber" id="btnAddPrice">+ Новая позиция</button>
         <button class="btn secondary" id="btnExportPrice">Экспорт в Excel</button>
       </div>
-      <table>
+<div class="tbl-wrap">
+            <table>
         <thead><tr><th></th><th>Артикул/Модель</th><th>Категория</th><th>Розница</th><th></th></tr></thead>
         <tbody id="priceBody"></tbody>
       </table>
+      </div>
     </section>
     <section id="tab-kaspi" style="display:none">
       <p>Введите токены API для каждого магазина (получаются в кабинете продавца Kaspi, раздел API). Без токена синхронизация для этого магазина работать не будет.</p>
       <div id="kaspiShopForms"></div>
       <button class="btn amber" id="btnSaveKaspiSettings">Сохранить настройки</button>
       <div id="kaspiSettingsMsg" style="margin-top:10px; font-size:12.5px;"></div>
+    </section>
+    <section id="tab-audit" style="display:none">
+      <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Дата</th><th>Пользователь</th><th>Действие</th><th>Заказ</th><th>Было</th><th>Стало</th><th>Комментарий</th></tr></thead>
+        <tbody id="auditBody"></tbody>
+      </table>
+      </div>
+    </section>
+    <section id="tab-users" style="display:none">
+      <div class="toolbar">
+        <button class="btn amber" id="btnAddUser">+ Новый пользователь</button>
+      </div>
+      <table>
+        <thead><tr><th>Логин</th><th>Роль</th><th>Создан</th><th></th></tr></thead>
+        <tbody id="usersBody"></tbody>
+      </table>
     </section>
   </main>
   <footer>учёт заказов · онлайн · <span id="versionTag">v?</span></footer>
@@ -227,6 +272,52 @@
   </div>
 </div>
 
+<div class="overlay" id="workflowOverlay">
+  <div class="modal" style="max-width:640px;">
+    <h3 id="wfTitle">Обработка заказа</h3>
+    <div id="wfStatusRow" style="margin-bottom:14px;"></div>
+
+    <div id="wfActionsRow" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px;"></div>
+
+    <div style="border-top:1px solid var(--line); padding-top:12px; margin-bottom:14px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <b style="font-size:13px;">Грузовые места</b>
+        <button class="btn secondary" style="padding:5px 10px;font-size:12px;" id="wfAddCargoPlace">+ Добавить место</button>
+      </div>
+      <div id="wfCargoPlaces"></div>
+    </div>
+
+    <div style="border-top:1px solid var(--line); padding-top:12px; margin-bottom:14px;">
+      <b style="font-size:13px;">История статусов</b>
+      <div id="wfHistory" style="font-size:12px; color:var(--ink-soft); margin-top:6px;"></div>
+    </div>
+
+    <div class="modal-actions">
+      <div></div>
+      <button class="btn secondary" id="wfCloseBtn">Закрыть</button>
+    </div>
+  </div>
+</div>
+
+<!-- Диалог подтверждения печати -->
+<div class="overlay" id="printConfirmOverlay">
+  <div class="modal" style="max-width:420px;">
+    <h3>Подтверждение печати</h3>
+    <div id="printWarningBox" style="display:none; background:var(--amber-light); border:1px solid var(--amber); border-radius:6px; padding:10px; font-size:12.5px; margin-bottom:12px;"></div>
+    <div id="printReasonRow" style="display:none; margin-bottom:12px;">
+      <label style="display:block; font-size:11px; color:var(--ink-soft); margin-bottom:4px;">Причина повторной печати</label>
+      <textarea id="printReasonInput" style="width:100%; min-height:60px;"></textarea>
+    </div>
+    <label style="display:block; font-size:13px; margin-bottom:12px;">
+      <input type="checkbox" id="printConfirmCheck"> Подтверждаю, что документ фактически распечатан
+    </label>
+    <div class="modal-actions">
+      <button class="btn secondary" id="printCancelBtn">Отмена</button>
+      <button class="btn amber" id="printConfirmBtn">Подтвердить</button>
+    </div>
+  </div>
+</div>
+
 <div class="overlay" id="kaspiDetailOverlay">
   <div class="modal" style="max-width:700px;">
     <h3>Данные заказа (как их прислал Kaspi)</h3>
@@ -234,9 +325,11 @@
       Это все поля, которые реально вернул Kaspi для этого заказа — пригодится, чтобы понять,
       как называется поле с наименованием товара и датой передачи курьеру.
     </div>
+    <div class="tbl-wrap">
     <table style="font-size:12.5px;">
       <tbody id="kaspiDetailBody"></tbody>
     </table>
+    </div>
     <div class="modal-actions">
       <div></div>
       <button class="btn secondary" id="kaspiDetailClose">Закрыть</button>
@@ -250,6 +343,7 @@
 (function(){
   "use strict";
   let orders = [], kaspiOrders = [], priceItems = [], categories = [];
+  let myRole = "warehouse";
   let editingOrderId = null, editingPriceId = null;
 
   function toast(msg){
@@ -284,7 +378,9 @@
     const password = document.getElementById("loginPass").value;
     try{
       const data = await api("/auth/login", {method:"POST", body: JSON.stringify({username, password})});
-      document.getElementById("whoami").textContent = data.username;
+      myRole = data.role;
+      document.getElementById("whoami").textContent = data.username + (data.role==='admin'?' (админ)':' (склад)');
+      applyRoleUI();
       showApp();
       await loadAll();
     }catch(e){
@@ -329,7 +425,7 @@
     if(!orders.length){ toast("Нет данных для экспорта"); return; }
     const rows = orders.map(o=>({
       "№": o.receiptNumber, "Артикул": o.article, "Название": o.name, "Кол-во": o.qty,
-      "Статус": o.status==='arrived'?'Пришло':o.status==='problem'?'Проблема':'В пути',
+      "Статус": o.receiveStatus==='arrived'?'Пришло':o.receiveStatus==='problem'?'Проблема':'В пути',
       "Заметка": o.note||"", "Фото (файл)": o.photo||""
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
@@ -357,10 +453,12 @@
     b.addEventListener("click", ()=>{
       document.querySelectorAll(".tab-btn").forEach(x=>x.classList.remove("active"));
       b.classList.add("active");
-      ["orders","kaspiOrders","claims","price","kaspi"].forEach(t=> document.getElementById("tab-"+t).style.display = (t===b.dataset.tab)?"":"none");
+      ["orders","kaspiOrders","claims","price","kaspi","audit","users"].forEach(t=> document.getElementById("tab-"+t).style.display = (t===b.dataset.tab)?"":"none");
       if(b.dataset.tab === "kaspiOrders") renderKaspiOrders();
       if(b.dataset.tab === "claims") { if(!kaspiOrders.length) renderKaspiOrders().then(renderClaims); else renderClaims(); }
       if(b.dataset.tab === "kaspi") loadKaspiSettings();
+      if(b.dataset.tab === "audit") loadAudit();
+      if(b.dataset.tab === "users") loadUsers();
     });
   });
 
@@ -425,10 +523,10 @@
   function stageDef(key){ return STAGE_DEFS.find(s=>s.key===key) || STAGE_DEFS[STAGE_DEFS.length-1]; }
 
   function classifyStage(o){
-    if(o.status==="CANCELLED" || o.status==="CANCELLING") return "cancelled";
-    if(o.status==="RETURN_REQUESTED" || o.status==="RETURNED") return "returns";
+    if(o.kaspiStatus==="CANCELLED" || o.kaspiStatus==="CANCELLING") return "cancelled";
+    if(o.kaspiStatus==="RETURN_REQUESTED" || o.kaspiStatus==="RETURNED") return "returns";
     if(o.deliveryState==="ARCHIVE") return "archive";
-    if(o.status==="COMPLETED") return "completed";
+    if(o.kaspiStatus==="COMPLETED") return "completed";
     if(o.preOrder && !o.assembled) return "preorder";
     if(!o.assembled) return "packing";
     if(o.assembled && !o.courierTransmissionDate) return "handover";
@@ -512,7 +610,10 @@
     body.innerHTML = list.map(o=>`
       <tr>
         ${cols.map(c=>`<td>${cellFor(o,c.key)}</td>`).join("")}
-        <td><button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__openKaspiDetail('${o.id}')">Детали</button></td>
+        <td>
+          <button class="btn amber" style="padding:4px 10px;font-size:12px" onclick="window.__openWorkflow('${o.id}')">Обработка</button>
+          <button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__openKaspiDetail('${o.id}')">Детали</button>
+        </td>
       </tr>`).join("") || `<tr><td colspan="${cols.length+1}" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет заказов на этой стадии</td></tr>`;
   }
 
@@ -545,8 +646,10 @@
     </style></head><body>
       <div class="toolbar"><button onclick="window.print()">Печать / Сохранить как PDF</button></div>
       <h1>Список заказов (${list.length})</h1>
-      <table><thead><tr><th>№</th><th>Kaspi код</th><th>Наименование</th><th>Магазин</th><th>Стадия</th></tr></thead>
+<div class="tbl-wrap">
+            <table><thead><tr><th>№</th><th>Kaspi код</th><th>Наименование</th><th>Магазин</th><th>Стадия</th></tr></thead>
       <tbody>${rows}</tbody></table>
+      </div>
     </body></html>`);
     w.document.close();
   });
@@ -558,7 +661,7 @@
 
   function renderClaims(){
     const showClosed = document.getElementById("showClosedClaims").checked;
-    let list = kaspiOrders.filter(o=>CLAIM_STATUSES.includes(o.status));
+    let list = kaspiOrders.filter(o=>CLAIM_STATUSES.includes(o.kaspiStatus));
     if(!showClosed) list = list.filter(o=>!o.claimResolved);
     list.sort((a,b)=>(a.displayNumber||0)-(b.displayNumber||0));
     const body = document.getElementById("claimsBody");
@@ -568,7 +671,7 @@
         <td class="mono">${esc(o.kaspiCode||"")}</td>
         <td>${esc(o.shop||"")}</td>
         <td>${esc(o.productName||"—")}</td>
-        <td>${esc(statusLabelKaspi(o.status))}</td>
+        <td>${esc(statusLabelKaspi(o.kaspiStatus))}</td>
         <td style="max-width:220px;font-size:12.5px;color:var(--ink-soft);">${esc(o.claimNote||"")}</td>
         <td><button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__openClaim('${o.id}')">${o.claimResolved?'Открыть':'Обработать'}</button></td>
       </tr>`).join("") || `<tr><td colspan="7" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет отмен/возвратов${showClosed?'':' (не закрытых)'}</td></tr>`;
@@ -610,6 +713,169 @@
     }
   };
 
+  // ================= Обработка заказа (статусная машина, грузовые места, печать) =================
+  const STATUS_LABELS_WF = {
+    preorder: "Предзаказ", packing: "Упаковка", label_printed: "Этикетка распечатана",
+    ready: "Готов к отгрузке", shipped: "Отгружен", cancelled: "Отменён"
+  };
+  const NEXT_ACTION_LABEL = {
+    preorder: "Передать в упаковку",
+    packing: "Распечатать этикетку",
+    label_printed: "Готово к отгрузке",
+    ready: "Отгружено"
+  };
+  const NEXT_STATUS = {
+    preorder: "packing", packing: "label_printed", label_printed: "ready", ready: "shipped"
+  };
+
+  let wfCurrentOrder = null;
+  let wfPrintOrderId = null;
+
+  window.__openWorkflow = async function(id){
+    const order = await api("/orders/"+id);
+    wfCurrentOrder = order;
+    document.getElementById("wfTitle").textContent = "Заказ №"+(order.displayNumber||order.receiptNumber||"")+" — "+(order.productName||order.name||order.article||"");
+    await renderWorkflow();
+    document.getElementById("workflowOverlay").classList.add("show");
+  };
+  document.getElementById("wfCloseBtn").addEventListener("click", ()=>{
+    document.getElementById("workflowOverlay").classList.remove("show");
+    renderKaspiOrders(); // подтянуть изменения статуса в общий список
+  });
+
+  async function renderWorkflow(){
+    const order = wfCurrentOrder;
+    const label = STATUS_LABELS_WF[order.status] || order.status;
+    document.getElementById("wfStatusRow").innerHTML =
+      `<span class="stamp" style="font-size:13px; padding:5px 14px;">${esc(label)}</span>`
+      + (order.printed ? ` <span style="font-size:12px;color:var(--green);">🖨️ распечатано (${esc(order.printCount)}×), последний раз: ${esc(order.lastPrintedAt||"").slice(0,16).replace('T',' ')} — ${esc(order.lastPrintedBy||"")}</span>` : "");
+
+    const actions = document.getElementById("wfActionsRow");
+    actions.innerHTML = "";
+    if(order.status === "packing"){
+      const btn = document.createElement("button");
+      btn.className = "btn amber";
+      btn.textContent = "🖨️ Распечатать";
+      btn.onclick = ()=>openPrintConfirm(order.id);
+      actions.appendChild(btn);
+    } else if(NEXT_STATUS[order.status]){
+      const btn = document.createElement("button");
+      btn.className = "btn amber";
+      btn.textContent = NEXT_ACTION_LABEL[order.status] || "Далее";
+      btn.onclick = ()=>doTransition(order.id, NEXT_STATUS[order.status]);
+      actions.appendChild(btn);
+    }
+    if(order.status !== "shipped" && order.status !== "cancelled"){
+      const cancelBtn = document.createElement("button");
+      cancelBtn.className = "btn danger";
+      cancelBtn.textContent = "Отменить заказ";
+      cancelBtn.onclick = ()=>doTransition(order.id, "cancelled");
+      actions.appendChild(cancelBtn);
+    }
+    if(myRole === "admin"){
+      const fixBtn = document.createElement("button");
+      fixBtn.className = "btn secondary";
+      fixBtn.textContent = "⚙ Исправить статус вручную";
+      fixBtn.onclick = ()=>adminFixStatus(order.id);
+      actions.appendChild(fixBtn);
+    }
+
+    // грузовые места
+    const places = await api("/orders/"+order.id+"/cargo-places");
+    const cpWrap = document.getElementById("wfCargoPlaces");
+    cpWrap.innerHTML = places.length ? places.map(p=>`
+      <div style="display:flex; align-items:center; gap:10px; padding:6px 0; border-bottom:1px solid var(--line); font-size:13px;">
+        <div style="flex:1;">${esc(p.name)} ${p.comment?`<span style="color:var(--ink-soft);font-size:11px;">(${esc(p.comment)})</span>`:""}</div>
+        <label style="font-size:12px;"><input type="checkbox" ${p.formed?'checked':''} onchange="window.__toggleCargoPlace('${p.id}','formed',this.checked)"> Сформировано</label>
+        <label style="font-size:12px;"><input type="checkbox" ${p.labelPrinted?'checked':''} onchange="window.__toggleCargoPlace('${p.id}','labelPrinted',this.checked)"> Этикетка распечатана</label>
+        <button class="btn danger" style="padding:3px 8px;font-size:11px;" onclick="window.__deleteCargoPlace('${p.id}')">✕</button>
+      </div>`).join("") : `<div style="color:var(--ink-soft);font-size:12.5px;">Пока не сформировано ни одного места</div>`;
+
+    // история
+    const history = await api("/orders/"+order.id+"/history");
+    document.getElementById("wfHistory").innerHTML = history.length ? history.map(h=>
+      `<div>${esc((h.createdAt||"").slice(0,16).replace('T',' '))} — ${esc(STATUS_LABELS_WF[h.from]||h.from||"—")} → <b>${esc(STATUS_LABELS_WF[h.to]||h.to)}</b> (${esc(h.user||"")})${h.isCorrection?' <span style="color:var(--red);">[исправление]</span>':''}${h.reason?': '+esc(h.reason):''}</div>`
+    ).join("") : "Пока нет изменений статуса";
+  }
+
+  async function doTransition(orderId, to, reason){
+    try{
+      const updated = await api("/orders/"+orderId+"/transition", {method:"POST", body:JSON.stringify({to, reason})});
+      wfCurrentOrder = updated;
+      await renderWorkflow();
+      toast("Статус обновлён");
+    }catch(e){
+      if(e.message === "reason_required"){
+        const r = prompt("Это исправление статуса (не обычный переход). Укажите причину:");
+        if(r && r.trim()) await doTransition(orderId, to, r.trim());
+      } else if(e.message === "cargo_places_required"){
+        toast("Нельзя — не сформировано ни одно грузовое место");
+      } else if(e.message === "forbidden_transition"){
+        toast("Такой переход запрещён для вашей роли");
+      } else {
+        toast("Ошибка: "+e.message);
+      }
+    }
+  }
+  function adminFixStatus(orderId){
+    const to = prompt("Новый статус (preorder/packing/label_printed/ready/shipped/cancelled):");
+    if(!to) return;
+    const reason = prompt("Причина исправления (обязательно):");
+    if(!reason || !reason.trim()){ toast("Без причины отменено"); return; }
+    doTransition(orderId, to.trim(), reason.trim());
+  }
+
+  window.__toggleCargoPlace = async function(placeId, field, value){
+    await api("/orders/cargo-places/"+placeId, {method:"PUT", body:JSON.stringify({[field]: value})});
+    await renderWorkflow();
+  };
+  window.__deleteCargoPlace = async function(placeId){
+    if(!confirm("Удалить это грузовое место?")) return;
+    await api("/orders/cargo-places/"+placeId, {method:"DELETE"});
+    await renderWorkflow();
+  };
+  document.getElementById("wfAddCargoPlace").addEventListener("click", async ()=>{
+    const name = prompt("Название/номер места (необязательно):");
+    await api("/orders/"+wfCurrentOrder.id+"/cargo-places", {method:"POST", body:JSON.stringify({name})});
+    await renderWorkflow();
+  });
+
+  // ---------- Печать с подтверждением ----------
+  function openPrintConfirm(orderId){
+    wfPrintOrderId = orderId;
+    const order = wfCurrentOrder;
+    document.getElementById("printConfirmCheck").checked = false;
+    document.getElementById("printReasonInput").value = "";
+    if(order.printed){
+      document.getElementById("printWarningBox").style.display = "";
+      document.getElementById("printWarningBox").textContent =
+        `⚠️ Уже печаталось ${order.printCount} раз(а). Последний раз: ${(order.lastPrintedAt||"").slice(0,16).replace('T',' ')} — ${order.lastPrintedBy||""}`;
+      document.getElementById("printReasonRow").style.display = "";
+    } else {
+      document.getElementById("printWarningBox").style.display = "none";
+      document.getElementById("printReasonRow").style.display = "none";
+    }
+    if(order.waybillUrl) window.open(order.waybillUrl, "_blank");
+    document.getElementById("printConfirmOverlay").classList.add("show");
+  }
+  document.getElementById("printCancelBtn").addEventListener("click", ()=>{
+    document.getElementById("printConfirmOverlay").classList.remove("show");
+  });
+  document.getElementById("printConfirmBtn").addEventListener("click", async ()=>{
+    if(!document.getElementById("printConfirmCheck").checked){
+      toast("Нужно подтвердить галочкой, что документ распечатан");
+      return;
+    }
+    const reason = document.getElementById("printReasonInput").value.trim();
+    try{
+      const updated = await api("/orders/"+wfPrintOrderId+"/print", {method:"POST", body:JSON.stringify({confirmed:true, reason: reason||undefined})});
+      wfCurrentOrder = updated;
+      document.getElementById("printConfirmOverlay").classList.remove("show");
+      await renderWorkflow();
+      toast("Печать зафиксирована");
+    }catch(e){ toast("Ошибка: "+e.message); }
+  });
+
   window.__openKaspiDetail = function(id){
     const o = kaspiOrders.find(x=>x.id===id);
     if(!o) return;
@@ -640,20 +906,42 @@
   });
 
   async function loadKaspiSettings(){
-    const data = await api("/settings/kaspi");
+    let data;
+    try{
+      data = await api("/settings/kaspi");
+    }catch(e){
+      document.getElementById("kaspiShopForms").innerHTML = `<div style="color:var(--red);">Не удалось загрузить настройки: ${esc(e.message)}</div>`;
+      return;
+    }
     const wrap = document.getElementById("kaspiShopForms");
-    wrap.innerHTML = data.shops.map((s,i)=>`
+    const todayMinus14 = new Date(Date.now()-14*86400000).toISOString().slice(0,10);
+    wrap.innerHTML = (data.shops||[]).map((s,i)=>{
+      const connected = s.hasToken;
+      const statusBadge = connected
+        ? `<span style="color:var(--green);font-weight:600;">✅ Подключено</span> — токен ${esc(s.tokenMasked)}`
+        : `<span style="color:var(--red);font-weight:600;">⚠️ Не подключено</span> — токен не задан`;
+      return `
       <div class="grid2" style="margin-bottom:14px; border:1px solid var(--line); padding:12px; border-radius:4px;">
-        <div><label>Название магазина</label><input type="text" id="kshop_name_${i}" value="${esc(s.name)}"></div>
-        <div><label>Токен API ${s.hasToken? '(сохранён: '+esc(s.tokenMasked)+')':'(не задан)'}</label><input type="text" id="kshop_token_${i}" placeholder="вставьте новый токен, чтобы заменить"></div>
-      </div>`).join("");
+        <div class="full" style="margin-bottom:4px;">${statusBadge}${s.name?` · <b>${esc(s.name)}</b>`:''}</div>
+        <div><label>Название магазина</label><input type="text" id="kshop_name_${i}" value="${esc(s.name||'')}"></div>
+        <div><label>Токен API ${connected? '(вставьте новый, чтобы заменить)':'(не задан)'}</label><input type="text" id="kshop_token_${i}" placeholder="вставьте токен"></div>
+        <div><label>Считать заказы с даты (максимум 14 дней назад — ограничение самого Kaspi)</label>
+          <input type="date" id="kshop_date_${i}" value="${esc(s.syncFromDate || todayMinus14)}" min="${todayMinus14}" max="${new Date().toISOString().slice(0,10)}">
+        </div>
+      </div>`;
+    }).join("");
   }
   document.getElementById("btnSaveKaspiSettings").addEventListener("click", async ()=>{
     try{
       for(let i=0;i<3;i++){
-        const name = document.getElementById("kshop_name_"+i).value;
-        const token = document.getElementById("kshop_token_"+i).value;
-        await api("/settings/kaspi/"+i, {method:"POST", body:JSON.stringify({name, token})});
+        const nameEl = document.getElementById("kshop_name_"+i);
+        const tokenEl = document.getElementById("kshop_token_"+i);
+        const dateEl = document.getElementById("kshop_date_"+i);
+        if(!nameEl || !tokenEl || !dateEl) continue; // форма ещё не отрисовалась — пропускаем безопасно
+        const name = nameEl.value;
+        const token = tokenEl.value;
+        const syncFromDate = dateEl.value;
+        await api("/settings/kaspi/"+i, {method:"POST", body:JSON.stringify({name, token, syncFromDate})});
       }
       document.getElementById("kaspiSettingsMsg").textContent = "Сохранено";
       await loadKaspiSettings();
@@ -683,7 +971,7 @@
         <td>${o.photo?`<img class="thumb" src="${esc(o.photo)}">`:""}</td>
         <td>${esc(o.name||o.article||"—")}<div style="font-size:11px;color:var(--ink-soft)">${esc(o.article||"")}</div></td>
         <td>${esc(o.qty||"")}</td>
-        <td><span class="stamp ${o.status||'transit'}">${o.status==='arrived'?'Пришло':o.status==='problem'?'Проблема':'В пути'}</span></td>
+        <td><span class="stamp ${o.receiveStatus||'transit'}">${o.receiveStatus==='arrived'?'Пришло':o.receiveStatus==='problem'?'Проблема':'В пути'}</span></td>
         <td><button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__openOrder('${o.id}')">Открыть</button></td>
       </tr>`).join("") || `<tr><td colspan="6" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет записей прихода</td></tr>`;
   }
@@ -709,7 +997,7 @@
     document.getElementById("o_article").value = o?.article||"";
     document.getElementById("o_name").value = o?.name||"";
     document.getElementById("o_qty").value = o?.qty??1;
-    document.getElementById("o_status").value = o?.status||"transit";
+    document.getElementById("o_status").value = o?.receiveStatus||"transit";
     document.getElementById("o_note").value = o?.note||"";
     currentOrderPhoto = o?.photo || null;
     updateOrderPhotoPreview();
@@ -722,7 +1010,7 @@
       article: document.getElementById("o_article").value.trim(),
       name: document.getElementById("o_name").value.trim(),
       qty: parseFloat(document.getElementById("o_qty").value)||0,
-      status: document.getElementById("o_status").value,
+      receiveStatus: document.getElementById("o_status").value,
       note: document.getElementById("o_note").value.trim(),
       photo: currentOrderPhoto
     };
@@ -824,11 +1112,64 @@
 
   // (старый обработчик кнопки синхронизации удалён — теперь используется btnSyncKaspi2 во вкладке «Заказы»)
 
+  // ---------- Роли: скрываем админ-разделы для склада ----------
+  function applyRoleUI(){
+    document.querySelectorAll(".admin-only").forEach(el=>{
+      el.style.display = (myRole === "admin") ? "" : "none";
+    });
+  }
+
+  // ---------- Журнал действий (админ) ----------
+  async function loadAudit(){
+    const rows = await api("/audit");
+    document.getElementById("auditBody").innerHTML = rows.map(r=>`
+      <tr>
+        <td class="mono" style="font-size:11px;">${esc((r.createdAt||"").slice(0,16).replace('T',' '))}</td>
+        <td>${esc(r.user||"")}</td>
+        <td>${esc(r.action)}</td>
+        <td class="mono" style="font-size:11px;">${esc(r.orderId||"")}</td>
+        <td>${esc(r.oldValue||"")}</td>
+        <td>${esc(r.newValue||"")}</td>
+        <td>${esc(r.comment||"")}</td>
+      </tr>`).join("") || `<tr><td colspan="7" style="text-align:center;color:var(--ink-soft);padding:20px;">Журнал пуст</td></tr>`;
+  }
+
+  // ---------- Пользователи (админ) ----------
+  async function loadUsers(){
+    const rows = await api("/auth/users");
+    document.getElementById("usersBody").innerHTML = rows.map(u=>`
+      <tr>
+        <td>${esc(u.username)}</td>
+        <td>${u.role==='admin'?'Админ':'Склад'}</td>
+        <td class="mono" style="font-size:11px;">${esc((u.created_at||"").slice(0,10))}</td>
+        <td><button class="btn danger" style="padding:4px 10px;font-size:12px" onclick="window.__deleteUser('${u.id}')">Удалить</button></td>
+      </tr>`).join("") || `<tr><td colspan="4" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет пользователей</td></tr>`;
+  }
+  document.getElementById("btnAddUser").addEventListener("click", async ()=>{
+    const username = prompt("Логин нового пользователя:");
+    if(!username) return;
+    const password = prompt("Пароль (минимум 4 символа):");
+    if(!password || password.length < 4){ toast("Пароль слишком короткий"); return; }
+    const role = confirm("Нажмите OK для роли «Админ», Отмена — для «Склад»") ? "admin" : "warehouse";
+    try{
+      await api("/auth/users", {method:"POST", body:JSON.stringify({username, password, role})});
+      await loadUsers();
+      toast("Пользователь создан");
+    }catch(e){ toast("Ошибка: "+e.message); }
+  });
+  window.__deleteUser = async function(id){
+    if(!confirm("Удалить пользователя?")) return;
+    await api("/auth/users/"+id, {method:"DELETE"});
+    await loadUsers();
+  };
+
   // init: try /auth/me to see if already logged in
   (async ()=>{
     try{
       const me = await api("/auth/me");
-      document.getElementById("whoami").textContent = me.username;
+      myRole = me.role;
+      document.getElementById("whoami").textContent = me.username + (me.role==='admin'?' (админ)':' (склад)');
+      applyRoleUI();
       showApp();
       await loadAll();
     }catch(e){
