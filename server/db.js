@@ -179,6 +179,7 @@ export function ensureSchema() {
   safeAddColumn("orders", "buy_price_kzt REAL");
   safeAddColumn("orders", "delivery_price REAL");
   safeAddColumn("orders", "entries_raw TEXT");
+  safeAddColumn("orders", "sale_price REAL");
 
   const kaspiShopsRow = db.prepare("SELECT value FROM settings WHERE key = 'kaspi_shops'").get();
   if (!kaspiShopsRow) {
