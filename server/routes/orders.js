@@ -32,6 +32,7 @@ function rowToOrder(row) {
     buyPriceCny: row.buy_price_cny,
     buyPriceKzt: row.buy_price_kzt,
     deliveryPrice: row.delivery_price,
+    salePrice: row.sale_price,
     status: row.status,
     statusLabel: STATUS_LABELS[row.status] || row.status,
     kaspiStatus: row.kaspi_status,
@@ -78,11 +79,11 @@ router.post("/", (req, res) => {
   const receiptNumber = nextReceiptNumber();
   db.prepare(`INSERT INTO orders
     (id, source, receipt_number, article, name, qty, note, photo, receive_status, order_date,
-     buy_price_cny, buy_price_kzt, delivery_price, status, created_at, updated_at)
-    VALUES (?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'preorder', ?, ?)`)
+     buy_price_cny, buy_price_kzt, delivery_price, sale_price, status, created_at, updated_at)
+    VALUES (?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'preorder', ?, ?)`)
     .run(id, receiptNumber, b.article || "", b.name || "", b.qty || 0, b.note || "", b.photo || null,
          b.receiveStatus || b.status || "transit", b.orderDate || now.slice(0,10),
-         b.buyPriceCny || 0, b.buyPriceKzt || 0, b.deliveryPrice || 0, now, now);
+         b.buyPriceCny || 0, b.buyPriceKzt || 0, b.deliveryPrice || 0, b.salePrice || 0, now, now);
   logAudit({ user: req.session.username, action: "create_order", orderId: id, newValue: b.name || b.article });
   const row = db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
   res.json(rowToOrder(row));
@@ -102,6 +103,7 @@ router.put("/:id", (req, res) => {
     article: "article", name: "name", qty: "qty", note: "note", photo: "photo",
     receiveStatus: "receive_status", orderDate: "order_date",
     buyPriceCny: "buy_price_cny", buyPriceKzt: "buy_price_kzt", deliveryPrice: "delivery_price",
+    salePrice: "sale_price",
     claimNote: "claim_note", claimResolved: "claim_resolved", printed: "printed"
   };
   for (const [jsKey, col] of Object.entries(map)) {
