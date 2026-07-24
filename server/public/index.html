@@ -109,11 +109,12 @@
         <button class="btn amber" id="btnAddOrder">+ Новый приход</button>
         <button class="btn secondary" id="btnImportOrders">Импорт из Excel</button>
         <button class="btn secondary" id="btnExportOrders">Экспорт в Excel</button>
+        <button class="btn danger" id="btnBulkDeleteOrders" style="display:none;"></button>
         <input type="file" id="importOrdersInput" accept=".xlsx,.xls" style="display:none">
       </div>
 <div class="tbl-wrap">
             <table>
-        <thead><tr><th>№</th><th></th><th>Артикул/Название</th><th>Кол-во</th><th>Дата заказа</th><th class="num">Дней в пути</th><th class="num">Юань</th><th class="num">₸/шт</th><th class="num">Доставка</th><th class="num">Итого</th><th>Статус</th><th></th></tr></thead>
+        <thead><tr><th></th><th>№</th><th></th><th>Артикул/Название</th><th>Кол-во</th><th>Дата заказа</th><th class="num">Дней в пути</th><th class="num">Юань</th><th class="num">₸/шт</th><th class="num">Доставка</th><th class="num">Итого</th><th>Статус</th><th></th></tr></thead>
         <tbody id="ordersBody"></tbody>
       </table>
       </div>
@@ -429,6 +430,16 @@
   }
 
   // ---------- Экспорт в Excel ----------
+  document.getElementById("btnBulkDeleteOrders").addEventListener("click", async ()=>{
+    if(!selectedOrderIds.size) return;
+    if(!confirm(`Удалить ${selectedOrderIds.size} записей безвозвратно?`)) return;
+    for(const id of selectedOrderIds){
+      try{ await api("/orders/"+id, {method:"DELETE"}); }catch(e){}
+    }
+    selectedOrderIds.clear();
+    await loadAll();
+    toast("Удалено");
+  });
   document.getElementById("btnExportOrders").addEventListener("click", ()=>{
     if(!orders.length){ toast("Нет данных для экспорта"); return; }
     const rows = orders.map(o=>({
@@ -561,6 +572,7 @@
     // в одном разделе никогда не блокировала отображение другого
     try{
       orders = await api("/orders?source=manual");
+      selectedOrderIds.clear();
       renderOrders();
     }catch(e){
       console.error(e);
@@ -1091,6 +1103,11 @@
     if(isNaN(end)) return null;
     return Math.max(0, Math.round((end-start)/86400000));
   }
+  function money(n){
+    // Аккуратное округление до 2 знаков (без "хвостов" типа 652.0799999999999)
+    return (Math.round((Number(n)||0)*100)/100).toLocaleString('ru-RU',{minimumFractionDigits:0,maximumFractionDigits:2});
+  }
+  let selectedOrderIds = new Set();
   function renderOrders(){
     const body = document.getElementById("ordersBody");
     body.innerHTML = orders.slice().sort((a,b)=>(a.receiptNumber||0)-(b.receiptNumber||0)).map(o=>{
@@ -1099,20 +1116,34 @@
       const totalCost = ((Number(o.buyPriceKzt)||0) + (Number(o.deliveryPrice)||0)) * (Number(o.qty)||0);
       return `
       <tr>
+        <td><input type="checkbox" class="order-select" data-id="${o.id}" ${selectedOrderIds.has(o.id)?'checked':''}></td>
         <td>${esc(o.receiptNumber||"")}</td>
         <td>${o.photo?`<img class="thumb" src="${esc(o.photo)}">`:""}</td>
         <td>${esc(o.name||o.article||"—")}<div style="font-size:11px;color:var(--ink-soft)">${esc(o.article||"")}</div></td>
         <td>${esc(o.qty||"")}</td>
         <td class="mono">${esc(o.orderDate||"—")}</td>
         <td class="num">${daysCell}</td>
-        <td class="num">${esc(o.buyPriceCny||0)}</td>
-        <td class="num">${esc(o.buyPriceKzt||0)}</td>
-        <td class="num">${esc(o.deliveryPrice||0)}</td>
-        <td class="num">${totalCost.toLocaleString('ru-RU')}</td>
+        <td class="num">${money(o.buyPriceCny)} ¥</td>
+        <td class="num">${money(o.buyPriceKzt)} ₸</td>
+        <td class="num">${money(o.deliveryPrice)} ₸</td>
+        <td class="num"><b>${money(totalCost)} ₸</b></td>
         <td><span class="stamp ${o.receiveStatus||'transit'}">${o.receiveStatus==='arrived'?'Пришло':o.receiveStatus==='problem'?'Проблема':'В пути'}</span></td>
         <td><button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__openOrder('${o.id}')">Открыть</button></td>
       </tr>`;
-    }).join("") || `<tr><td colspan="12" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет записей прихода</td></tr>`;
+    }).join("") || `<tr><td colspan="13" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет записей прихода</td></tr>`;
+    document.querySelectorAll(".order-select").forEach(cb=>{
+      cb.addEventListener("change", ()=>{
+        if(cb.checked) selectedOrderIds.add(cb.dataset.id); else selectedOrderIds.delete(cb.dataset.id);
+        updateBulkDeleteBtn();
+      });
+    });
+    updateBulkDeleteBtn();
+  }
+  function updateBulkDeleteBtn(){
+    const btn = document.getElementById("btnBulkDeleteOrders");
+    if(!btn) return;
+    btn.style.display = selectedOrderIds.size ? "" : "none";
+    btn.textContent = `🗑️ Удалить выбранное (${selectedOrderIds.size})`;
   }
   function renderPrice(){
     const body = document.getElementById("priceBody");
