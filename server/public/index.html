@@ -446,14 +446,6 @@
 
   // ---------- Импорт "Прихода" из Excel (гибкое распознавание заголовков) ----------
   document.getElementById("btnImportOrders").addEventListener("click", ()=>document.getElementById("importOrdersInput").click());
-  function findOrderKey(row, keywords){
-    const keys = Object.keys(row);
-    for(const k of keys){
-      const lk = k.toLowerCase();
-      if(keywords.some(w=>lk.includes(w))) return k;
-    }
-    return null;
-  }
   document.getElementById("importOrdersInput").addEventListener("change",(e)=>{
     const file = e.target.files[0];
     if(!file) return;
@@ -462,24 +454,55 @@
       try{
         const wb = XLSX.read(ev.target.result, {type:"array"});
         const sheet = wb.Sheets[wb.SheetNames[0]];
-        const rows = XLSX.utils.sheet_to_json(sheet, {defval:""});
+        // Читаем как массив строк (по позициям колонок), а не по названиям заголовков —
+        // в реальных файлах у части колонок (артикул, название) шапка может быть пустой
+        const rows = XLSX.utils.sheet_to_json(sheet, {header:1, defval:"", raw:true});
+        if(!rows.length){ toast("Файл пуст"); return; }
+        const header = rows[0].map(h=>String(h||"").toLowerCase());
+
+        function findCol(keywords){
+          for(let i=0;i<header.length;i++){
+            if(keywords.some(w=>header[i].includes(w))) return i;
+          }
+          return -1;
+        }
+        let colArticle = findCol(["артикул","штрих код","код товара"]);
+        let colName = findCol(["назван","товар","модель"]);
+        const colQty = findCol(["заказ","кол-во","количество","qty"]);
+        const colCny = findCol(["юан","cny"]);
+        const colKzt = findCol(["закупки кзт","закупка кзт","закупочная","закупки кзх"]);
+        const colDelivery = findCol(["доставк"]);
+        const colDate = findCol(["дата"]);
+        const colNote = findCol(["примечан","заметк","коммент"]);
+
+        // Если колонки артикул/название не нашлись по названию — это, скорее всего,
+        // файл с "пустой" шапкой у этих колонок (как в вашем образце): там артикул
+        // обычно в 3-й колонке, название — в 4-й (индексы 2 и 3)
+        if(colArticle === -1) colArticle = 2;
+        if(colName === -1) colName = 3;
+
         let imported = 0, skipped = 0;
-        for(const row of rows){
-          const get = (kws)=>{ const k = findOrderKey(row, kws); return k!==null ? row[k] : ""; };
-          const article = String(get(["артикул","штрих","код"])||"").trim();
-          const name = String(get(["назван","товар","модель"])||"").trim();
+        for(let r=1;r<rows.length;r++){
+          const row = rows[r];
+          if(!row || !row.length) { continue; }
+          const article = String(row[colArticle]??"").trim();
+          const name = String(row[colName]??"").trim();
           if(!article && !name){ skipped++; continue; }
-          const qty = parseFloat(get(["заказ","кол-во","количество","qty"]))||0;
-          const cny = parseFloat(get(["юан","cny"]))||0;
-          const kzt = parseFloat(get(["закупки кзт","закупка кзт","закупочная","закупки кзх"]))||0;
-          const delivery = parseFloat(get(["доставк"]))||0;
-          let orderDate = get(["дата"]);
+          const qty = colQty>=0 ? (parseFloat(row[colQty])||0) : 0;
+          const cny = colCny>=0 ? (parseFloat(row[colCny])||0) : 0;
+          const kzt = colKzt>=0 ? (parseFloat(row[colKzt])||0) : 0;
+          const delivery = colDelivery>=0 ? (parseFloat(row[colDelivery])||0) : 0;
+          let orderDate = colDate>=0 ? row[colDate] : "";
           if(orderDate instanceof Date) orderDate = orderDate.toISOString().slice(0,10);
-          else if(typeof orderDate === "string" && /^\d{1,2}\.\d{1,2}\.\d{4}/.test(orderDate)){
+          else if(typeof orderDate === "number" && orderDate > 0){
+            // Excel-дата в виде числа (дней с 1900 года)
+            const d = new Date(Math.round((orderDate - 25569) * 86400 * 1000));
+            orderDate = isNaN(d) ? "" : d.toISOString().slice(0,10);
+          } else if(typeof orderDate === "string" && /^\d{1,2}\.\d{1,2}\.\d{4}/.test(orderDate)){
             const m = orderDate.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})/);
             orderDate = `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
           } else orderDate = "";
-          const note = String(get(["примечан","заметк","коммент"])||"").trim();
+          const note = colNote>=0 ? String(row[colNote]||"").trim() : "";
           try{
             await api("/orders", {method:"POST", body:JSON.stringify({
               article, name, qty, note, orderDate: orderDate||undefined,
