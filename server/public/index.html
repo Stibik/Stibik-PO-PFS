@@ -539,7 +539,8 @@
         api("/orders?source=manual"), api("/price"), api("/price/categories/list")
       ]);
       orders = o; priceItems = p; categories = c;
-      renderOrders(); renderPrice();
+      try{ renderOrders(); }catch(e){ console.error(e); document.getElementById("ordersBody").innerHTML = `<tr><td colspan="12" style="color:var(--red);padding:20px;">Ошибка отрисовки: ${esc(e.message)}</td></tr>`; }
+      try{ renderPrice(); }catch(e){ console.error(e); document.getElementById("priceBody").innerHTML = `<tr><td colspan="6" style="color:var(--red);padding:20px;">Ошибка отрисовки: ${esc(e.message)}</td></tr>`; }
     }catch(e){ toast("Ошибка загрузки данных: "+e.message); }
 
     try{
