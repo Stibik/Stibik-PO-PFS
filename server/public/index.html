@@ -110,7 +110,7 @@
       </div>
 <div class="tbl-wrap">
             <table>
-        <thead><tr><th>№</th><th></th><th>Артикул/Название</th><th>Кол-во</th><th>Статус</th><th></th></tr></thead>
+        <thead><tr><th>№</th><th></th><th>Артикул/Название</th><th>Кол-во</th><th>Дата заказа</th><th class="num">Дней в пути</th><th>Статус</th><th></th></tr></thead>
         <tbody id="ordersBody"></tbody>
       </table>
       </div>
@@ -217,6 +217,7 @@
       <div><label>Артикул</label><input id="o_article" type="text"></div>
       <div><label>Название</label><input id="o_name" type="text"></div>
       <div><label>Кол-во</label><input id="o_qty" type="number" value="1"></div>
+      <div><label>Дата заказа</label><input id="o_orderdate" type="date"></div>
       <div><label>Статус</label>
         <select id="o_status"><option value="transit">В пути</option><option value="arrived">Пришло</option><option value="problem">Проблема</option></select>
       </div>
@@ -425,6 +426,7 @@
     if(!orders.length){ toast("Нет данных для экспорта"); return; }
     const rows = orders.map(o=>({
       "№": o.receiptNumber, "Артикул": o.article, "Название": o.name, "Кол-во": o.qty,
+      "Дата заказа": o.orderDate||"", "Дней в пути": daysInTransit(o) ?? "",
       "Статус": o.receiveStatus==='arrived'?'Пришло':o.receiveStatus==='problem'?'Проблема':'В пути',
       "Заметка": o.note||"", "Фото (файл)": o.photo||""
     }));
@@ -463,14 +465,24 @@
   });
 
   async function loadAll(){
-    const [o, p, c, v] = await Promise.all([
-      api("/orders?source=manual"), api("/price"), api("/price/categories/list"), api("/meta/version")
-    ]);
-    orders = o; priceItems = p; categories = c;
-    document.getElementById("versionTag").textContent = "v"+v.version;
-    renderOrders(); renderPrice();
-    const shops = await api("/kaspi/shops");
-    document.getElementById("shopList2").textContent = shops.length ? ("Активные магазины: "+shops.join(", ")) : "Нет настроенных магазинов — заполните вкладку «Kaspi: настройки»";
+    // Версию грузим отдельно и всегда — чтобы она показывалась, даже если
+    // что-то другое ниже упадёт с ошибкой
+    api("/meta/version").then(v=>{
+      document.getElementById("versionTag").textContent = "v"+v.version;
+    }).catch(()=>{});
+
+    try{
+      const [o, p, c] = await Promise.all([
+        api("/orders?source=manual"), api("/price"), api("/price/categories/list")
+      ]);
+      orders = o; priceItems = p; categories = c;
+      renderOrders(); renderPrice();
+    }catch(e){ toast("Ошибка загрузки данных: "+e.message); }
+
+    try{
+      const shops = await api("/kaspi/shops");
+      document.getElementById("shopList2").textContent = shops.length ? ("Активные магазины: "+shops.join(", ")) : "Нет настроенных магазинов — заполните вкладку «Kaspi: настройки»";
+    }catch(e){}
   }
 
   // Соответствие кодов статуса Kaspi понятным подписям (лучшее предположение;
@@ -963,17 +975,31 @@
     }catch(e){ box.innerHTML = `<div class="kaspi-result" style="color:var(--red)">Ошибка: ${esc(e.message)}</div>`; }
   });
 
+  function daysInTransit(o){
+    if(!o.orderDate) return null;
+    const start = new Date(o.orderDate+"T00:00:00");
+    if(isNaN(start)) return null;
+    const end = o.arrivedDate ? new Date(o.arrivedDate+"T00:00:00") : new Date();
+    if(isNaN(end)) return null;
+    return Math.max(0, Math.round((end-start)/86400000));
+  }
   function renderOrders(){
     const body = document.getElementById("ordersBody");
-    body.innerHTML = orders.slice().sort((a,b)=>(a.receiptNumber||0)-(b.receiptNumber||0)).map(o=>`
+    body.innerHTML = orders.slice().sort((a,b)=>(a.receiptNumber||0)-(b.receiptNumber||0)).map(o=>{
+      const days = daysInTransit(o);
+      const daysCell = days==null ? "—" : `<span style="${days>14?'color:var(--red);font-weight:700;':''}">${days}</span>`;
+      return `
       <tr>
         <td>${esc(o.receiptNumber||"")}</td>
         <td>${o.photo?`<img class="thumb" src="${esc(o.photo)}">`:""}</td>
         <td>${esc(o.name||o.article||"—")}<div style="font-size:11px;color:var(--ink-soft)">${esc(o.article||"")}</div></td>
         <td>${esc(o.qty||"")}</td>
+        <td class="mono">${esc(o.orderDate||"—")}</td>
+        <td class="num">${daysCell}</td>
         <td><span class="stamp ${o.receiveStatus||'transit'}">${o.receiveStatus==='arrived'?'Пришло':o.receiveStatus==='problem'?'Проблема':'В пути'}</span></td>
         <td><button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__openOrder('${o.id}')">Открыть</button></td>
-      </tr>`).join("") || `<tr><td colspan="6" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет записей прихода</td></tr>`;
+      </tr>`;
+    }).join("") || `<tr><td colspan="8" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет записей прихода</td></tr>`;
   }
   function renderPrice(){
     const body = document.getElementById("priceBody");
@@ -998,6 +1024,7 @@
     document.getElementById("o_name").value = o?.name||"";
     document.getElementById("o_qty").value = o?.qty??1;
     document.getElementById("o_status").value = o?.receiveStatus||"transit";
+    document.getElementById("o_orderdate").value = o?.orderDate || new Date().toISOString().slice(0,10);
     document.getElementById("o_note").value = o?.note||"";
     currentOrderPhoto = o?.photo || null;
     updateOrderPhotoPreview();
@@ -1011,6 +1038,7 @@
       name: document.getElementById("o_name").value.trim(),
       qty: parseFloat(document.getElementById("o_qty").value)||0,
       receiveStatus: document.getElementById("o_status").value,
+      orderDate: document.getElementById("o_orderdate").value,
       note: document.getElementById("o_note").value.trim(),
       photo: currentOrderPhoto
     };
