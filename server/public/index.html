@@ -29,6 +29,8 @@
   input[type=text],input[type=number],input[type=password],select,textarea{padding:7px 9px; border:1px solid var(--line); border-radius:6px; font-size:13.5px;}
   table{width:100%; border-collapse:collapse; background:#fff; border-radius:8px; overflow:hidden; box-shadow:0 2px 8px rgba(30,42,68,0.08);}
   thead th{background:#F0EAD9; text-align:left; font-size:11px; text-transform:uppercase; padding:8px; border-bottom:2px solid var(--line);}
+  thead th.sortable{cursor:pointer; user-select:none;}
+  thead th.sortable:hover{color:var(--navy); background:#e8dfc4;}
   tbody td{padding:7px 8px; border-bottom:1px solid var(--line); font-size:13px;}
   .thumb{width:40px; height:40px; object-fit:cover; border-radius:3px; border:1px solid var(--line);}
   .thumb-empty{width:40px; height:40px; border-radius:3px; border:1px dashed var(--line); display:flex; align-items:center; justify-content:center; color:var(--ink-soft); font-size:11px;}
@@ -115,7 +117,24 @@
       <div id="ordersStats" style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:14px;"></div>
 <div class="tbl-wrap">
             <table>
-        <thead><tr><th></th><th>№</th><th></th><th>Артикул/Название</th><th>Кол-во</th><th>Дата заказа</th><th class="num">Дней в пути</th><th class="num">Юань</th><th class="num">₸/шт</th><th class="num">Доставка</th><th class="num">Итого</th><th class="num">Продажа</th><th class="num">Маржа</th><th>Статус</th><th></th></tr></thead>
+        <thead><tr>
+          <th></th>
+          <th class="sortable" data-sort="receiptNumber">№ ⇅</th>
+          <th></th>
+          <th class="sortable" data-sort="name">Артикул/Название ⇅</th>
+          <th class="sortable" data-sort="qty">Кол-во ⇅</th>
+          <th class="sortable" data-sort="orderDate">Дата заказа ⇅</th>
+          <th class="num sortable" data-sort="days">Дней в пути ⇅</th>
+          <th class="num">Юань</th>
+          <th class="num">₸/шт</th>
+          <th class="num">Доставка</th>
+          <th class="num sortable" data-sort="total">Итого ⇅</th>
+          <th class="num">Продажа</th>
+          <th class="num">Маржа</th>
+          <th class="sortable" data-sort="category">Категория ⇅</th>
+          <th class="sortable" data-sort="receiveStatus">Статус ⇅</th>
+          <th></th>
+        </tr></thead>
         <tbody id="ordersBody"></tbody>
       </table>
       </div>
@@ -228,6 +247,7 @@
       <div><label>Закупка, ₸ (за шт.)</label><input id="o_kzt" type="number" step="0.01"></div>
       <div><label>Доставка, ₸ (за шт.)</label><input id="o_delivery" type="number" step="0.01"></div>
       <div><label>Продажная цена, ₸</label><input id="o_sale" type="number" step="0.01"></div>
+      <div><label>Категория</label><select id="o_category"></select></div>
       <div><label>Статус</label>
         <select id="o_status"><option value="transit">В пути</option><option value="arrived">Пришло</option><option value="problem">Проблема</option></select>
       </div>
@@ -1110,6 +1130,32 @@
     return (Math.round((Number(n)||0)*100)/100).toLocaleString('ru-RU',{minimumFractionDigits:0,maximumFractionDigits:2});
   }
   let selectedOrderIds = new Set();
+  let ordersSortKey = "receiptNumber";
+  let ordersSortDir = 1; // 1 asc, -1 desc
+  document.querySelectorAll('#tab-orders thead th.sortable').forEach(th=>{
+    th.addEventListener("click", ()=>{
+      const key = th.dataset.sort;
+      if(ordersSortKey === key) ordersSortDir *= -1; else { ordersSortKey = key; ordersSortDir = 1; }
+      renderOrders();
+    });
+  });
+  function sortOrders(list){
+    return list.slice().sort((a,b)=>{
+      let av, bv;
+      if(ordersSortKey==="days"){ av = daysInTransit(a)??-1; bv = daysInTransit(b)??-1; }
+      else if(ordersSortKey==="total"){
+        av = ((Number(a.buyPriceKzt)||0)+(Number(a.deliveryPrice)||0))*(Number(a.qty)||0);
+        bv = ((Number(b.buyPriceKzt)||0)+(Number(b.deliveryPrice)||0))*(Number(b.qty)||0);
+      }
+      else if(ordersSortKey==="name"){ av = (a.name||a.article||"").toLowerCase(); bv = (b.name||b.article||"").toLowerCase(); }
+      else { av = a[ordersSortKey]; bv = b[ordersSortKey]; }
+      if(av==null) av = "";
+      if(bv==null) bv = "";
+      if(av<bv) return -1*ordersSortDir;
+      if(av>bv) return 1*ordersSortDir;
+      return 0;
+    });
+  }
   function renderOrders(){
     // Сводка: сколько сейчас в пути (штук и на какую сумму) и сколько уже пришло
     const transitOrders = orders.filter(o=>(o.receiveStatus||'transit')==='transit');
@@ -1127,7 +1173,7 @@
       </div>`;
 
     const body = document.getElementById("ordersBody");
-    body.innerHTML = orders.slice().sort((a,b)=>(a.receiptNumber||0)-(b.receiptNumber||0)).map(o=>{
+    body.innerHTML = sortOrders(orders).map(o=>{
       const days = daysInTransit(o);
       const daysCell = days==null ? "—" : `<span style="${days>14?'color:var(--red);font-weight:700;':''}">${days}</span>`;
       const totalCost = ((Number(o.buyPriceKzt)||0) + (Number(o.deliveryPrice)||0)) * (Number(o.qty)||0);
@@ -1147,10 +1193,11 @@
         <td class="num"><b>${money(totalCost)} ₸</b></td>
         <td class="num">${o.salePrice?money(o.salePrice)+' ₸':'—'}</td>
         <td class="num" style="${margin<0?'color:var(--red);':margin>0?'color:var(--green);':''}">${o.salePrice?money(margin)+' ₸':'—'}</td>
+        <td>${esc(o.category||"—")}</td>
         <td><span class="stamp ${o.receiveStatus||'transit'}">${o.receiveStatus==='arrived'?'Пришло':o.receiveStatus==='problem'?'Проблема':'В пути'}</span></td>
         <td><button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__openOrder('${o.id}')">Открыть</button></td>
       </tr>`;
-    }).join("") || `<tr><td colspan="15" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет записей прихода</td></tr>`;
+    }).join("") || `<tr><td colspan="16" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет записей прихода</td></tr>`;
     document.querySelectorAll(".order-select").forEach(cb=>{
       cb.addEventListener("change", ()=>{
         if(cb.checked) selectedOrderIds.add(cb.dataset.id); else selectedOrderIds.delete(cb.dataset.id);
@@ -1193,6 +1240,7 @@
     document.getElementById("o_kzt").value = o?.buyPriceKzt ?? "";
     document.getElementById("o_delivery").value = o?.deliveryPrice ?? "";
     document.getElementById("o_sale").value = o?.salePrice ?? "";
+    populateCategorySelect(o?.category||"", "o_category");
     document.getElementById("o_note").value = o?.note||"";
     currentOrderPhoto = o?.photo || null;
     updateOrderPhotoPreview();
@@ -1211,6 +1259,7 @@
       buyPriceKzt: parseFloat(document.getElementById("o_kzt").value)||0,
       deliveryPrice: parseFloat(document.getElementById("o_delivery").value)||0,
       salePrice: parseFloat(document.getElementById("o_sale").value)||0,
+      category: document.getElementById("o_category").value,
       note: document.getElementById("o_note").value.trim(),
       photo: currentOrderPhoto
     };
@@ -1230,20 +1279,23 @@
 
   // PRICE MODAL
   const priceOverlay = document.getElementById("priceOverlay");
-  function populateCategorySelect(sel){
-    const el = document.getElementById("pr_type");
+  function populateCategorySelect(sel, elId){
+    elId = elId || "pr_type";
+    const el = document.getElementById(elId);
     el.innerHTML = categories.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join("") + `<option value="__add__">+ Добавить категорию...</option>`;
     el.value = categories.includes(sel) ? sel : (categories[0]||"__add__");
   }
-  document.getElementById("pr_type").addEventListener("change", async (e)=>{
+  async function handleCategoryAdd(e, elId){
     if(e.target.value === "__add__"){
       const name = prompt("Название новой категории:");
       if(name && name.trim()){
         categories = await api("/price/categories/list", {method:"POST", body:JSON.stringify({name:name.trim()})});
-        populateCategorySelect(name.trim());
-      } else populateCategorySelect(categories[0]);
+        populateCategorySelect(name.trim(), elId);
+      } else populateCategorySelect(categories[0], elId);
     }
-  });
+  }
+  document.getElementById("pr_type").addEventListener("change", (e)=>handleCategoryAdd(e, "pr_type"));
+  document.getElementById("o_category").addEventListener("change", (e)=>handleCategoryAdd(e, "o_category"));
   // ---------- Фото для прайса ----------
   let currentPricePhoto = null;
   document.getElementById("pr_photo_btn").addEventListener("click", ()=>document.getElementById("pr_photo_input").click());
