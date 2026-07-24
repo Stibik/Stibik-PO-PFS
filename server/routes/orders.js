@@ -51,6 +51,7 @@ function rowToOrder(row) {
     claimNote: row.claim_note,
     claimResolved: !!row.claim_resolved,
     raw: row.raw ? JSON.parse(row.raw) : null,
+    entriesRaw: row.entries_raw ? JSON.parse(row.entries_raw) : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
