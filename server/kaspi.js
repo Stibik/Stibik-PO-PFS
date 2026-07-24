@@ -57,24 +57,37 @@ export async function fetchOrderEntries(token, kaspiOrderId) {
       method: "GET",
       headers: { "Accept": "application/vnd.api+json", "X-Auth-Token": token }
     });
-    if (!resp.ok) return { names: [], raw: null };
+    if (!resp.ok) return { names: [], photos: [], raw: null };
     const json = await resp.json();
     const names = [];
+    const photos = [];
+    // Пробуем несколько вероятных названий полей с картинкой — точное название
+    // узнаем только при реальной синхронизации, если ни одно не подойдёт
+    const extractPhoto = (attrs) => {
+      if (!attrs) return null;
+      return attrs.previewImage || attrs.image || attrs.imageUrl ||
+             (Array.isArray(attrs.images) && attrs.images[0]) ||
+             (attrs.gallery && attrs.gallery[0]) || null;
+    };
     if (Array.isArray(json.included)) {
       json.included.forEach(inc => {
         const n = inc.attributes?.name;
         if (n) names.push(n);
+        const photo = extractPhoto(inc.attributes);
+        if (photo) photos.push(photo);
       });
     }
     if (!names.length && Array.isArray(json.data)) {
       json.data.forEach(entry => {
         const n = entry.attributes?.name || entry.attributes?.offer?.name;
         if (n) names.push(n);
+        const photo = extractPhoto(entry.attributes) || extractPhoto(entry.attributes?.offer);
+        if (photo) photos.push(photo);
       });
     }
-    return { names, raw: json };
+    return { names, photos, raw: json };
   } catch (e) {
-    return { names: [], raw: null };
+    return { names: [], photos: [], raw: null };
   }
 }
 
@@ -117,8 +130,9 @@ export async function syncShop(token, shopName, { fetchNames = true, daysBack = 
     for (let i = 0; i < needNames.length; i += BATCH) {
       const batch = needNames.slice(i, i + BATCH);
       await Promise.all(batch.map(async (o) => {
-        const { names } = await fetchOrderEntries(token, o.kaspiOrderId);
+        const { names, photos } = await fetchOrderEntries(token, o.kaspiOrderId);
         if (names.length) o.productName = names.join(", ");
+        if (photos.length) o.productPhoto = photos[0];
       }));
     }
   }
