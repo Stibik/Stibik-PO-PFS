@@ -166,6 +166,15 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_order ON audit_log(order_id);
 export function ensureSchema() {
   db.exec(SCHEMA);
 
+  // Безопасно добавляем колонки, которых не было в самых первых версиях схемы
+  // (SQLite не поддерживает "ADD COLUMN IF NOT EXISTS", поэтому просто игнорируем
+  // ошибку "duplicate column", если колонка уже есть)
+  const safeAddColumn = (table, def) => {
+    try { db.exec(`ALTER TABLE ${table} ADD COLUMN ${def}`); } catch (e) { /* уже есть — ок */ }
+  };
+  safeAddColumn("orders", "order_date TEXT");
+  safeAddColumn("orders", "arrived_date TEXT");
+
   const kaspiShopsRow = db.prepare("SELECT value FROM settings WHERE key = 'kaspi_shops'").get();
   if (!kaspiShopsRow) {
     const defaultShops = [
@@ -222,7 +231,12 @@ export function nextKaspiNumber() {
 
 export function getKaspiShops() {
   const row = db.prepare("SELECT value FROM settings WHERE key = 'kaspi_shops'").get();
-  return row ? JSON.parse(row.value) : [];
+  let shops = row ? JSON.parse(row.value) : [];
+  // Защита: массив всегда должен быть ровно из 3 элементов — если после
+  // старых миграций/данных он короче или длиннее, выравниваем
+  while (shops.length < 3) shops.push({ name: `Магазин ${shops.length + 1}`, token: "" });
+  if (shops.length > 3) shops = shops.slice(0, 3);
+  return shops;
 }
 export function setKaspiShops(shops) {
   db.prepare("INSERT INTO settings (key, value) VALUES ('kaspi_shops', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
