@@ -557,14 +557,24 @@
       document.getElementById("versionTag").textContent = "v"+v.version;
     }).catch(()=>{});
 
+    // "Приход" грузим полностью независимо от "Прайса" — так, чтобы ошибка
+    // в одном разделе никогда не блокировала отображение другого
     try{
-      const [o, p, c] = await Promise.all([
-        api("/orders?source=manual"), api("/price"), api("/price/categories/list")
-      ]);
-      orders = o; priceItems = p; categories = c;
-      try{ renderOrders(); }catch(e){ console.error(e); document.getElementById("ordersBody").innerHTML = `<tr><td colspan="12" style="color:var(--red);padding:20px;">Ошибка отрисовки: ${esc(e.message)}</td></tr>`; }
-      try{ renderPrice(); }catch(e){ console.error(e); document.getElementById("priceBody").innerHTML = `<tr><td colspan="6" style="color:var(--red);padding:20px;">Ошибка отрисовки: ${esc(e.message)}</td></tr>`; }
-    }catch(e){ toast("Ошибка загрузки данных: "+e.message); }
+      orders = await api("/orders?source=manual");
+      renderOrders();
+    }catch(e){
+      console.error(e);
+      document.getElementById("ordersBody").innerHTML = `<tr><td colspan="12" style="color:var(--red);padding:20px;">Ошибка загрузки «Прихода»: ${esc(e.message)}</td></tr>`;
+    }
+
+    try{
+      const [p, c] = await Promise.all([api("/price"), api("/price/categories/list")]);
+      priceItems = p; categories = c;
+      renderPrice();
+    }catch(e){
+      console.error(e);
+      document.getElementById("priceBody").innerHTML = `<tr><td colspan="6" style="color:var(--red);padding:20px;">Ошибка загрузки «Прайса»: ${esc(e.message)}</td></tr>`;
+    }
 
     try{
       const shops = await api("/kaspi/shops");
