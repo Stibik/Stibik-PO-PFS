@@ -174,6 +174,10 @@ export function ensureSchema() {
   };
   safeAddColumn("orders", "order_date TEXT");
   safeAddColumn("orders", "arrived_date TEXT");
+  safeAddColumn("orders", "product_photo TEXT");
+  safeAddColumn("orders", "buy_price_cny REAL");
+  safeAddColumn("orders", "buy_price_kzt REAL");
+  safeAddColumn("orders", "delivery_price REAL");
 
   const kaspiShopsRow = db.prepare("SELECT value FROM settings WHERE key = 'kaspi_shops'").get();
   if (!kaspiShopsRow) {
