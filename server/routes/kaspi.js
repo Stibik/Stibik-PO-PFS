@@ -50,10 +50,10 @@ router.post("/sync", async (req, res) => {
           db.prepare(`UPDATE orders SET
             kaspi_code=?, shop=?, kaspi_status=?, delivery_state=?, pre_order=?, assembled=?,
             courier_transmission_date=?, courier_handover_date=?, total_price=?, product_name=?,
-            waybill_url=?, raw=?, updated_at=? WHERE id=?`)
+            product_photo=?, waybill_url=?, raw=?, updated_at=? WHERE id=?`)
             .run(ko.kaspiCode, ko.shop, ko.status, ko.deliveryState, ko.preOrder ? 1 : 0, ko.assembled ? 1 : 0,
                  ko.courierTransmissionDate, ko.courierHandoverDate, ko.totalPrice, ko.productName,
-                 ko.waybillUrl, JSON.stringify(ko.raw || {}), now, existing.id);
+                 ko.productPhoto || null, ko.waybillUrl, JSON.stringify(ko.raw || {}), now, existing.id);
           updated++;
         } else {
           if (ko.deliveryState === "ARCHIVE" && !includeArchive) { skippedArchive++; continue; }
@@ -62,11 +62,11 @@ router.post("/sync", async (req, res) => {
           db.prepare(`INSERT INTO orders
             (id, source, kaspi_order_id, kaspi_code, shop, display_number, status, kaspi_status,
              delivery_state, pre_order, assembled, courier_transmission_date, courier_handover_date,
-             total_price, product_name, waybill_url, raw, created_at, updated_at)
-            VALUES (?, 'kaspi', ?, ?, ?, ?, 'preorder', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+             total_price, product_name, product_photo, waybill_url, raw, created_at, updated_at)
+            VALUES (?, 'kaspi', ?, ?, ?, ?, 'preorder', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
             .run(id, ko.kaspiOrderId, ko.kaspiCode, ko.shop, displayNumber, ko.status, ko.deliveryState,
                  ko.preOrder ? 1 : 0, ko.assembled ? 1 : 0, ko.courierTransmissionDate, ko.courierHandoverDate,
-                 ko.totalPrice, ko.productName, ko.waybillUrl, JSON.stringify(ko.raw || {}), now, now);
+                 ko.totalPrice, ko.productName, ko.productPhoto || null, ko.waybillUrl, JSON.stringify(ko.raw || {}), now, now);
           added++;
         }
       }
