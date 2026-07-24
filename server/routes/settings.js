@@ -1,31 +1,29 @@
 import express from "express";
-import { db } from "../db.js";
+import { getKaspiShops, setKaspiShops } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
 
 const router = express.Router();
 router.use(requireAuth);
 
-// Отдаём настройки Kaspi. Токены маскируем (показываем только конец),
-// чтобы не светить их лишний раз на экране — но не как настоящее шифрование.
-router.get("/kaspi", async (req, res) => {
-  await db.read();
-  const shops = db.data.settings.kaspi.shops.map(s => ({
+router.get("/kaspi", (req, res) => {
+  const shops = getKaspiShops().map(s => ({
     name: s.name,
     hasToken: !!s.token,
-    tokenMasked: s.token ? "••••" + s.token.slice(-4) : ""
+    tokenMasked: s.token ? "••••" + s.token.slice(-4) : "",
+    syncFromDate: s.syncFromDate || ""
   }));
   res.json({ shops });
 });
 
-// Обновляем токен/имя одного магазина (index 0,1,2)
-router.post("/kaspi/:index", async (req, res) => {
+router.post("/kaspi/:index", (req, res) => {
   const idx = parseInt(req.params.index, 10);
   if (isNaN(idx) || idx < 0 || idx > 2) return res.status(400).json({ error: "bad_index" });
-  const { name, token } = req.body || {};
-  await db.read();
-  if (typeof name === "string" && name.trim()) db.data.settings.kaspi.shops[idx].name = name.trim();
-  if (typeof token === "string" && token.trim()) db.data.settings.kaspi.shops[idx].token = token.trim();
-  await db.write();
+  const { name, token, syncFromDate } = req.body || {};
+  const shops = getKaspiShops();
+  if (typeof name === "string" && name.trim()) shops[idx].name = name.trim();
+  if (typeof token === "string" && token.trim()) shops[idx].token = token.trim();
+  if (typeof syncFromDate === "string") shops[idx].syncFromDate = syncFromDate;
+  setKaspiShops(shops);
   res.json({ ok: true });
 });
 
