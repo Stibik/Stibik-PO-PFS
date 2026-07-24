@@ -23,6 +23,7 @@ router.get("/shops", (req, res) => {
 });
 
 router.post("/sync", async (req, res) => {
+ try {
   const shops = getConfiguredShops();
   const includeArchive = !!(req.body && req.body.includeArchive);
   if (!shops.length) {
@@ -77,6 +78,10 @@ router.post("/sync", async (req, res) => {
     }
   }
   res.json({ results });
+ } catch (fatalErr) {
+  console.error("[kaspi/sync] Неожиданная ошибка:", fatalErr.message, fatalErr.stack);
+  res.status(500).json({ error: "internal_error", message: fatalErr.message });
+ }
 });
 
 export default router;
