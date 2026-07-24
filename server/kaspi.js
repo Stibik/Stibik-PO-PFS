@@ -105,8 +105,8 @@ export function mapKaspiOrder(raw, shopName) {
   };
 }
 
-export async function syncShop(token, shopName, { fetchNames = true } = {}) {
-  const items = await fetchAllShopOrders(token, { daysBack: 14, pageSize: 100 });
+export async function syncShop(token, shopName, { fetchNames = true, daysBack = 14 } = {}) {
+  const items = await fetchAllShopOrders(token, { daysBack, pageSize: 100 });
   const mapped = items.map(item => mapKaspiOrder(item, shopName));
 
   if (fetchNames) {
