@@ -1,6 +1,6 @@
 {
   "name": "order-tracker-server",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Учёт заказов и прайса — сервер",
   "main": "server.js",
   "type": "module",
