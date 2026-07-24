@@ -112,9 +112,10 @@
         <button class="btn danger" id="btnBulkDeleteOrders" style="display:none;"></button>
         <input type="file" id="importOrdersInput" accept=".xlsx,.xls" style="display:none">
       </div>
+      <div id="ordersStats" style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:14px;"></div>
 <div class="tbl-wrap">
             <table>
-        <thead><tr><th></th><th>№</th><th></th><th>Артикул/Название</th><th>Кол-во</th><th>Дата заказа</th><th class="num">Дней в пути</th><th class="num">Юань</th><th class="num">₸/шт</th><th class="num">Доставка</th><th class="num">Итого</th><th>Статус</th><th></th></tr></thead>
+        <thead><tr><th></th><th>№</th><th></th><th>Артикул/Название</th><th>Кол-во</th><th>Дата заказа</th><th class="num">Дней в пути</th><th class="num">Юань</th><th class="num">₸/шт</th><th class="num">Доставка</th><th class="num">Итого</th><th class="num">Продажа</th><th class="num">Маржа</th><th>Статус</th><th></th></tr></thead>
         <tbody id="ordersBody"></tbody>
       </table>
       </div>
@@ -226,6 +227,7 @@
       <div><label>Закупка, юань</label><input id="o_cny" type="number" step="0.01"></div>
       <div><label>Закупка, ₸ (за шт.)</label><input id="o_kzt" type="number" step="0.01"></div>
       <div><label>Доставка, ₸ (за шт.)</label><input id="o_delivery" type="number" step="0.01"></div>
+      <div><label>Продажная цена, ₸</label><input id="o_sale" type="number" step="0.01"></div>
       <div><label>Статус</label>
         <select id="o_status"><option value="transit">В пути</option><option value="arrived">Пришло</option><option value="problem">Проблема</option></select>
       </div>
@@ -1109,11 +1111,27 @@
   }
   let selectedOrderIds = new Set();
   function renderOrders(){
+    // Сводка: сколько сейчас в пути (штук и на какую сумму) и сколько уже пришло
+    const transitOrders = orders.filter(o=>(o.receiveStatus||'transit')==='transit');
+    const arrivedOrders = orders.filter(o=>o.receiveStatus==='arrived');
+    const sumCost = (list)=> list.reduce((s,o)=> s + ((Number(o.buyPriceKzt)||0)+(Number(o.deliveryPrice)||0))*(Number(o.qty)||0), 0);
+    const sumQty = (list)=> list.reduce((s,o)=> s+(Number(o.qty)||0), 0);
+    document.getElementById("ordersStats").innerHTML = `
+      <div class="stat-card" style="background:#fff;border:1px solid var(--line);border-left:4px solid var(--amber);padding:12px 16px;">
+        <div style="font-size:11px;text-transform:uppercase;color:var(--ink-soft);">В пути сейчас</div>
+        <div style="font-family:var(--serif,serif);font-size:22px;">${transitOrders.length} поз. · ${sumQty(transitOrders)} шт · ${money(sumCost(transitOrders))} ₸</div>
+      </div>
+      <div class="stat-card" style="background:#fff;border:1px solid var(--line);border-left:4px solid var(--green);padding:12px 16px;">
+        <div style="font-size:11px;text-transform:uppercase;color:var(--ink-soft);">Пришло</div>
+        <div style="font-family:var(--serif,serif);font-size:22px;">${arrivedOrders.length} поз. · ${sumQty(arrivedOrders)} шт · ${money(sumCost(arrivedOrders))} ₸</div>
+      </div>`;
+
     const body = document.getElementById("ordersBody");
     body.innerHTML = orders.slice().sort((a,b)=>(a.receiptNumber||0)-(b.receiptNumber||0)).map(o=>{
       const days = daysInTransit(o);
       const daysCell = days==null ? "—" : `<span style="${days>14?'color:var(--red);font-weight:700;':''}">${days}</span>`;
       const totalCost = ((Number(o.buyPriceKzt)||0) + (Number(o.deliveryPrice)||0)) * (Number(o.qty)||0);
+      const margin = (Number(o.salePrice)||0) - (Number(o.buyPriceKzt)||0) - (Number(o.deliveryPrice)||0);
       return `
       <tr>
         <td><input type="checkbox" class="order-select" data-id="${o.id}" ${selectedOrderIds.has(o.id)?'checked':''}></td>
@@ -1127,10 +1145,12 @@
         <td class="num">${money(o.buyPriceKzt)} ₸</td>
         <td class="num">${money(o.deliveryPrice)} ₸</td>
         <td class="num"><b>${money(totalCost)} ₸</b></td>
+        <td class="num">${o.salePrice?money(o.salePrice)+' ₸':'—'}</td>
+        <td class="num" style="${margin<0?'color:var(--red);':margin>0?'color:var(--green);':''}">${o.salePrice?money(margin)+' ₸':'—'}</td>
         <td><span class="stamp ${o.receiveStatus||'transit'}">${o.receiveStatus==='arrived'?'Пришло':o.receiveStatus==='problem'?'Проблема':'В пути'}</span></td>
         <td><button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__openOrder('${o.id}')">Открыть</button></td>
       </tr>`;
-    }).join("") || `<tr><td colspan="13" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет записей прихода</td></tr>`;
+    }).join("") || `<tr><td colspan="15" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет записей прихода</td></tr>`;
     document.querySelectorAll(".order-select").forEach(cb=>{
       cb.addEventListener("change", ()=>{
         if(cb.checked) selectedOrderIds.add(cb.dataset.id); else selectedOrderIds.delete(cb.dataset.id);
@@ -1172,6 +1192,7 @@
     document.getElementById("o_cny").value = o?.buyPriceCny ?? "";
     document.getElementById("o_kzt").value = o?.buyPriceKzt ?? "";
     document.getElementById("o_delivery").value = o?.deliveryPrice ?? "";
+    document.getElementById("o_sale").value = o?.salePrice ?? "";
     document.getElementById("o_note").value = o?.note||"";
     currentOrderPhoto = o?.photo || null;
     updateOrderPhotoPreview();
@@ -1189,6 +1210,7 @@
       buyPriceCny: parseFloat(document.getElementById("o_cny").value)||0,
       buyPriceKzt: parseFloat(document.getElementById("o_kzt").value)||0,
       deliveryPrice: parseFloat(document.getElementById("o_delivery").value)||0,
+      salePrice: parseFloat(document.getElementById("o_sale").value)||0,
       note: document.getElementById("o_note").value.trim(),
       photo: currentOrderPhoto
     };
