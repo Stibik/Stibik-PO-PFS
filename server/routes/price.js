@@ -98,4 +98,13 @@ router.post("/categories/list", (req, res) => {
   res.json(rows.map(r => r.name));
 });
 
+router.delete("/categories/:name", (req, res) => {
+  try {
+    db.prepare("DELETE FROM categories WHERE name = ?").run(req.params.name);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: "internal_error", message: err.message });
+  }
+});
+
 export default router;
