@@ -7,11 +7,29 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, "data.sqlite");
 
+console.log(`[db] Использую путь к базе данных: ${DB_PATH}`);
+
 // Убедимся, что папка для файла БД существует (важно для /data на Render)
 const dbDir = path.dirname(DB_PATH);
-if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
+try {
+  if (!fs.existsSync(dbDir)) {
+    console.log(`[db] Папки ${dbDir} нет, создаю...`);
+    fs.mkdirSync(dbDir, { recursive: true });
+  }
+  console.log(`[db] Проверка доступности папки ${dbDir}: OK, содержимое:`, fs.readdirSync(dbDir));
+} catch (e) {
+  console.error(`[db] ОШИБКА при создании/чтении папки ${dbDir}:`, e.message);
+  throw e;
+}
 
-export const db = new DatabaseSync(DB_PATH);
+export let db;
+try {
+  db = new DatabaseSync(DB_PATH);
+  console.log(`[db] База данных SQLite успешно открыта: ${DB_PATH}`);
+} catch (e) {
+  console.error(`[db] ОШИБКА при открытии базы данных ${DB_PATH}:`, e.message, e.stack);
+  throw e;
+}
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
