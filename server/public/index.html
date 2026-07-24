@@ -28,9 +28,10 @@
   .btn.danger{background:#fff; color:var(--red); border-color:var(--red);}
   input[type=text],input[type=number],input[type=password],select,textarea{padding:7px 9px; border:1px solid var(--line); border-radius:6px; font-size:13.5px;}
   table{width:100%; border-collapse:collapse; background:#fff; border-radius:8px; overflow:hidden; box-shadow:0 2px 8px rgba(30,42,68,0.08);}
-  thead th{background:#F0EAD9; text-align:left; font-size:11px; text-transform:uppercase; padding:8px; border-bottom:2px solid var(--line);}
+  thead th{background:#F0EAD9; text-align:left; font-size:11px; text-transform:uppercase; padding:8px; border-bottom:2px solid var(--line); white-space:nowrap;}
   thead th.sortable{cursor:pointer; user-select:none;}
   thead th.sortable:hover{color:var(--navy); background:#e8dfc4;}
+  .mono{white-space:nowrap;}
   tbody td{padding:7px 8px; border-bottom:1px solid var(--line); font-size:13px;}
   .thumb{width:40px; height:40px; object-fit:cover; border-radius:3px; border:1px solid var(--line);}
   .thumb-empty{width:40px; height:40px; border-radius:3px; border:1px dashed var(--line); display:flex; align-items:center; justify-content:center; color:var(--ink-soft); font-size:11px;}
@@ -115,26 +116,34 @@
         <input type="file" id="importOrdersInput" accept=".xlsx,.xls" style="display:none">
       </div>
       <div id="ordersStats" style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:14px;"></div>
+      <div class="toolbar" style="flex-wrap:wrap;">
+        <select id="ordersFilterStatus" style="padding:7px 10px;">
+          <option value="all">Все статусы</option>
+          <option value="transit">В пути</option>
+          <option value="arrived">Пришло</option>
+          <option value="problem">Проблема</option>
+        </select>
+        <select id="ordersFilterCategory" style="padding:7px 10px;">
+          <option value="all">Все категории</option>
+        </select>
+        <div style="position:relative;">
+          <button class="btn secondary" id="btnOrdersColSettings" style="padding:7px 12px;">⚙️ Колонки</button>
+          <div id="ordersColPopover" style="display:none; position:absolute; top:40px; left:0; background:#fff; border:1px solid var(--line); border-radius:8px; box-shadow:0 6px 20px rgba(0,0,0,0.15); padding:12px 16px; z-index:20; min-width:200px;">
+            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="ocol" data-col="days" checked> Дней в пути</label>
+            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="ocol" data-col="cny" checked> Юань</label>
+            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="ocol" data-col="kzt" checked> ₸/шт</label>
+            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="ocol" data-col="delivery" checked> Доставка</label>
+            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="ocol" data-col="total" checked> Итого</label>
+            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="ocol" data-col="sale" checked> Продажа</label>
+            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="ocol" data-col="margin" checked> Маржа</label>
+            <label style="display:block; font-size:12.5px;"><input type="checkbox" class="ocol" data-col="category" checked> Категория</label>
+          </div>
+        </div>
+        <button class="btn secondary" id="btnManageCategories" style="padding:7px 12px;">Управление категориями</button>
+      </div>
 <div class="tbl-wrap">
             <table>
-        <thead><tr>
-          <th></th>
-          <th class="sortable" data-sort="receiptNumber">№ ⇅</th>
-          <th></th>
-          <th class="sortable" data-sort="name">Артикул/Название ⇅</th>
-          <th class="sortable" data-sort="qty">Кол-во ⇅</th>
-          <th class="sortable" data-sort="orderDate">Дата заказа ⇅</th>
-          <th class="num sortable" data-sort="days">Дней в пути ⇅</th>
-          <th class="num">Юань</th>
-          <th class="num">₸/шт</th>
-          <th class="num">Доставка</th>
-          <th class="num sortable" data-sort="total">Итого ⇅</th>
-          <th class="num">Продажа</th>
-          <th class="num">Маржа</th>
-          <th class="sortable" data-sort="category">Категория ⇅</th>
-          <th class="sortable" data-sort="receiveStatus">Статус ⇅</th>
-          <th></th>
-        </tr></thead>
+        <thead id="ordersHead"></thead>
         <tbody id="ordersBody"></tbody>
       </table>
       </div>
@@ -364,6 +373,21 @@
     <div class="modal-actions">
       <div></div>
       <button class="btn secondary" id="kaspiDetailClose">Закрыть</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="categoriesManageOverlay">
+  <div class="modal" style="max-width:420px;">
+    <h3>Управление категориями</h3>
+    <div style="display:flex; gap:8px; margin-bottom:14px;">
+      <input type="text" id="newCategoryInput" placeholder="Новая категория" style="flex:1;">
+      <button class="btn amber" id="btnAddCategoryManage">Добавить</button>
+    </div>
+    <div id="categoriesManageBody"></div>
+    <div class="modal-actions">
+      <div></div>
+      <button class="btn secondary" id="categoriesManageClose">Закрыть</button>
     </div>
   </div>
 </div>
@@ -1130,15 +1154,48 @@
     return (Math.round((Number(n)||0)*100)/100).toLocaleString('ru-RU',{minimumFractionDigits:0,maximumFractionDigits:2});
   }
   let selectedOrderIds = new Set();
-  let ordersSortKey = "receiptNumber";
-  let ordersSortDir = 1; // 1 asc, -1 desc
-  document.querySelectorAll('#tab-orders thead th.sortable').forEach(th=>{
-    th.addEventListener("click", ()=>{
-      const key = th.dataset.sort;
-      if(ordersSortKey === key) ordersSortDir *= -1; else { ordersSortKey = key; ordersSortDir = 1; }
-      renderOrders();
+  const OCOL_DEFS = [
+    {key:"num", label:"№", sort:"receiptNumber", always:true},
+    {key:"photo", label:"", always:true},
+    {key:"name", label:"Артикул/Название", sort:"name", always:true},
+    {key:"qty", label:"Кол-во", sort:"qty", always:true},
+    {key:"date", label:"Дата заказа", sort:"orderDate", always:true},
+    {key:"days", label:"Дней в пути", sort:"days", num:true},
+    {key:"cny", label:"Юань", num:true},
+    {key:"kzt", label:"₸/шт", num:true},
+    {key:"delivery", label:"Доставка", num:true},
+    {key:"total", label:"Итого", sort:"total", num:true},
+    {key:"sale", label:"Продажа", num:true},
+    {key:"margin", label:"Маржа", num:true},
+    {key:"category", label:"Категория", sort:"category"},
+    {key:"status", label:"Статус", sort:"receiveStatus", always:true}
+  ];
+  let ordersVisibleCols = JSON.parse(localStorage.getItem("ordersCols")||"null") || {days:true,cny:true,kzt:true,delivery:true,total:true,sale:true,margin:true,category:true};
+  let ordersFilterStatus = "all";
+  let ordersFilterCategory = "all";
+
+  document.getElementById("btnOrdersColSettings").addEventListener("click",(e)=>{
+    e.stopPropagation();
+    const pop = document.getElementById("ordersColPopover");
+    pop.style.display = pop.style.display==="none" ? "block":"none";
+  });
+  document.addEventListener("click",(e)=>{
+    const pop = document.getElementById("ordersColPopover");
+    if(pop && !pop.contains(e.target) && e.target.id!=="btnOrdersColSettings") pop.style.display="none";
+  });
+  document.querySelectorAll(".ocol").forEach(cb=>{
+    cb.checked = ordersVisibleCols[cb.dataset.col];
+    cb.addEventListener("change",()=>{
+      ordersVisibleCols[cb.dataset.col] = cb.checked;
+      localStorage.setItem("ordersCols", JSON.stringify(ordersVisibleCols));
+      renderOrders(false);
     });
   });
+  document.getElementById("ordersFilterStatus").addEventListener("change",(e)=>{ ordersFilterStatus = e.target.value; renderOrders(false); });
+  document.getElementById("ordersFilterCategory").addEventListener("change",(e)=>{ ordersFilterCategory = e.target.value; renderOrders(false); });
+
+  let ordersSortKey = "receiptNumber";
+  let ordersSortDir = 1; // 1 asc, -1 desc
   function sortOrders(list){
     return list.slice().sort((a,b)=>{
       let av, bv;
@@ -1156,7 +1213,7 @@
       return 0;
     });
   }
-  function renderOrders(){
+  function renderOrders(refetchNotUsed){
     // Сводка: сколько сейчас в пути (штук и на какую сумму) и сколько уже пришло
     const transitOrders = orders.filter(o=>(o.receiveStatus||'transit')==='transit');
     const arrivedOrders = orders.filter(o=>o.receiveStatus==='arrived');
@@ -1172,32 +1229,63 @@
         <div style="font-family:var(--serif,serif);font-size:22px;">${arrivedOrders.length} поз. · ${sumQty(arrivedOrders)} шт · ${money(sumCost(arrivedOrders))} ₸</div>
       </div>`;
 
-    const body = document.getElementById("ordersBody");
-    body.innerHTML = sortOrders(orders).map(o=>{
+    // список категорий в фильтре
+    const catSelect = document.getElementById("ordersFilterCategory");
+    const usedCats = Array.from(new Set(orders.map(o=>o.category).filter(Boolean))).sort();
+    const prevCatVal = catSelect.value;
+    catSelect.innerHTML = `<option value="all">Все категории</option>` + usedCats.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join("");
+    catSelect.value = usedCats.includes(prevCatVal) ? prevCatVal : "all";
+    ordersFilterCategory = catSelect.value;
+
+    // заголовок с учётом видимых колонок
+    const cols = OCOL_DEFS.filter(c=>c.always || ordersVisibleCols[c.key]);
+    document.getElementById("ordersHead").innerHTML = "<tr><th></th>" + cols.map(c=>{
+      if(!c.sort) return `<th class="${c.num?'num':''}">${c.label}</th>`;
+      const active = ordersSortKey===c.sort;
+      const arrow = active ? (ordersSortDir===1?" ▲":" ▼") : "";
+      return `<th class="sortable ${c.num?'num':''}" data-sort="${c.sort}">${c.label}${arrow}</th>`;
+    }).join("") + "<th></th></tr>";
+    document.querySelectorAll('#ordersHead th.sortable').forEach(th=>{
+      th.addEventListener("click", ()=>{
+        const key = th.dataset.sort;
+        if(ordersSortKey === key) ordersSortDir *= -1; else { ordersSortKey = key; ordersSortDir = 1; }
+        renderOrders(false);
+      });
+    });
+
+    let list = orders.slice();
+    if(ordersFilterStatus!=="all") list = list.filter(o=>(o.receiveStatus||'transit')===ordersFilterStatus);
+    if(ordersFilterCategory!=="all") list = list.filter(o=>o.category===ordersFilterCategory);
+    list = sortOrders(list);
+
+    const cellFor = (o,key)=>{
       const days = daysInTransit(o);
-      const daysCell = days==null ? "—" : `<span style="${days>14?'color:var(--red);font-weight:700;':''}">${days}</span>`;
       const totalCost = ((Number(o.buyPriceKzt)||0) + (Number(o.deliveryPrice)||0)) * (Number(o.qty)||0);
       const margin = (Number(o.salePrice)||0) - (Number(o.buyPriceKzt)||0) - (Number(o.deliveryPrice)||0);
-      return `
+      if(key==="num") return esc(o.receiptNumber||"");
+      if(key==="photo") return o.photo?`<img class="thumb" src="${esc(o.photo)}">`:"";
+      if(key==="name") return `${esc(o.name||o.article||"—")}<div style="font-size:11px;color:var(--ink-soft)">${esc(o.article||"")}</div>`;
+      if(key==="qty") return esc(o.qty||"");
+      if(key==="date") return `<span class="mono">${esc(o.orderDate||"—")}</span>`;
+      if(key==="days") return days==null?"—":`<span style="${days>14?'color:var(--red);font-weight:700;':''}">${days}</span>`;
+      if(key==="cny") return money(o.buyPriceCny)+" ¥";
+      if(key==="kzt") return money(o.buyPriceKzt)+" ₸";
+      if(key==="delivery") return money(o.deliveryPrice)+" ₸";
+      if(key==="total") return `<b>${money(totalCost)} ₸</b>`;
+      if(key==="sale") return o.salePrice?money(o.salePrice)+" ₸":"—";
+      if(key==="margin") return o.salePrice?`<span style="${margin<0?'color:var(--red);':margin>0?'color:var(--green);':''}">${money(margin)} ₸</span>`:"—";
+      if(key==="category") return esc(o.category||"—");
+      if(key==="status") return `<span class="stamp ${o.receiveStatus||'transit'}">${o.receiveStatus==='arrived'?'Пришло':o.receiveStatus==='problem'?'Проблема':'В пути'}</span>`;
+      return "";
+    };
+
+    const body = document.getElementById("ordersBody");
+    body.innerHTML = list.map(o=>`
       <tr>
         <td><input type="checkbox" class="order-select" data-id="${o.id}" ${selectedOrderIds.has(o.id)?'checked':''}></td>
-        <td>${esc(o.receiptNumber||"")}</td>
-        <td>${o.photo?`<img class="thumb" src="${esc(o.photo)}">`:""}</td>
-        <td>${esc(o.name||o.article||"—")}<div style="font-size:11px;color:var(--ink-soft)">${esc(o.article||"")}</div></td>
-        <td>${esc(o.qty||"")}</td>
-        <td class="mono">${esc(o.orderDate||"—")}</td>
-        <td class="num">${daysCell}</td>
-        <td class="num">${money(o.buyPriceCny)} ¥</td>
-        <td class="num">${money(o.buyPriceKzt)} ₸</td>
-        <td class="num">${money(o.deliveryPrice)} ₸</td>
-        <td class="num"><b>${money(totalCost)} ₸</b></td>
-        <td class="num">${o.salePrice?money(o.salePrice)+' ₸':'—'}</td>
-        <td class="num" style="${margin<0?'color:var(--red);':margin>0?'color:var(--green);':''}">${o.salePrice?money(margin)+' ₸':'—'}</td>
-        <td>${esc(o.category||"—")}</td>
-        <td><span class="stamp ${o.receiveStatus||'transit'}">${o.receiveStatus==='arrived'?'Пришло':o.receiveStatus==='problem'?'Проблема':'В пути'}</span></td>
+        ${cols.map(c=>`<td class="${c.num?'num':''}">${cellFor(o,c.key)}</td>`).join("")}
         <td><button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__openOrder('${o.id}')">Открыть</button></td>
-      </tr>`;
-    }).join("") || `<tr><td colspan="16" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет записей прихода</td></tr>`;
+      </tr>`).join("") || `<tr><td colspan="${cols.length+2}" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет записей, подходящих под фильтр</td></tr>`;
     document.querySelectorAll(".order-select").forEach(cb=>{
       cb.addEventListener("change", ()=>{
         if(cb.checked) selectedOrderIds.add(cb.dataset.id); else selectedOrderIds.delete(cb.dataset.id);
@@ -1206,6 +1294,41 @@
     });
     updateBulkDeleteBtn();
   }
+
+  // ---------- Управление категориями (отдельное окно, без prompt) ----------
+  document.getElementById("btnManageCategories").addEventListener("click", async ()=>{
+    renderCategoriesManagePanel();
+    document.getElementById("categoriesManageOverlay").classList.add("show");
+  });
+  function renderCategoriesManagePanel(){
+    const body = document.getElementById("categoriesManageBody");
+    body.innerHTML = categories.length ? categories.map(c=>`
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--line);">
+        <span>${esc(c)}</span>
+        <button class="btn danger" style="padding:4px 10px;font-size:12px" onclick="window.__deleteCategory('${esc(c)}')">Удалить</button>
+      </div>`).join("") : `<div style="color:var(--ink-soft);">Пока нет категорий</div>`;
+  }
+  window.__deleteCategory = async function(name){
+    if(!confirm(`Удалить категорию «${name}»? Записи, где она указана, не удалятся — просто останутся без категории при следующем изменении.`)) return;
+    try{
+      await api("/price/categories/"+encodeURIComponent(name), {method:"DELETE"});
+    }catch(e){}
+    categories = await api("/price/categories/list");
+    renderCategoriesManagePanel();
+    renderOrders(false);
+    renderPrice();
+  };
+  document.getElementById("btnAddCategoryManage").addEventListener("click", async ()=>{
+    const input = document.getElementById("newCategoryInput");
+    const name = input.value.trim();
+    if(!name) return;
+    categories = await api("/price/categories/list", {method:"POST", body:JSON.stringify({name})});
+    input.value = "";
+    renderCategoriesManagePanel();
+  });
+  document.getElementById("categoriesManageClose").addEventListener("click", ()=>{
+    document.getElementById("categoriesManageOverlay").classList.remove("show");
+  });
   function updateBulkDeleteBtn(){
     const btn = document.getElementById("btnBulkDeleteOrders");
     if(!btn) return;
