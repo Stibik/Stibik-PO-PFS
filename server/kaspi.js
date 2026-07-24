@@ -130,9 +130,10 @@ export async function syncShop(token, shopName, { fetchNames = true, daysBack = 
     for (let i = 0; i < needNames.length; i += BATCH) {
       const batch = needNames.slice(i, i + BATCH);
       await Promise.all(batch.map(async (o) => {
-        const { names, photos } = await fetchOrderEntries(token, o.kaspiOrderId);
+        const { names, photos, raw: entriesRaw } = await fetchOrderEntries(token, o.kaspiOrderId);
         if (names.length) o.productName = names.join(", ");
         if (photos.length) o.productPhoto = photos[0];
+        o.entriesRaw = entriesRaw;
       }));
     }
   }
