@@ -995,11 +995,20 @@
     const rows = Object.keys(raw).length
       ? Object.entries(raw).map(([k,v])=>`<tr><td class="mono" style="width:220px;color:var(--ink-soft);">${esc(k)}</td><td>${esc(typeof v==='object'? JSON.stringify(v): v)}</td></tr>`).join("")
       : `<tr><td colspan="2">Нет дополнительных данных</td></tr>`;
+    const entriesRaw = o.entriesRaw || {};
+    let entriesRows;
+    try{
+      entriesRows = JSON.stringify(entriesRaw, null, 2)
+        ? `<tr><td colspan="2"><pre style="white-space:pre-wrap; font-size:11px; max-height:300px; overflow:auto;">${esc(JSON.stringify(entriesRaw, null, 2))}</pre></td></tr>`
+        : `<tr><td colspan="2">Нет данных</td></tr>`;
+    }catch(e){ entriesRows = `<tr><td colspan="2">Нет данных</td></tr>`; }
     document.getElementById("kaspiDetailBody").innerHTML =
       `<tr><td colspan="2" style="font-weight:700; padding-top:10px; border-bottom:2px solid var(--amber);">Основное</td></tr>`
       + summaryHtml
-      + `<tr><td colspan="2" style="font-weight:700; padding-top:16px; border-bottom:2px solid var(--line);">Всё, что прислал Kaspi</td></tr>`
-      + rows;
+      + `<tr><td colspan="2" style="font-weight:700; padding-top:16px; border-bottom:2px solid var(--line);">Всё, что прислал Kaspi (заказ)</td></tr>`
+      + rows
+      + `<tr><td colspan="2" style="font-weight:700; padding-top:16px; border-bottom:2px solid var(--line);">Данные о товарах в заказе (тут должно быть фото)</td></tr>`
+      + entriesRows;
     document.getElementById("kaspiDetailOverlay").classList.add("show");
   };
   document.getElementById("kaspiDetailClose").addEventListener("click", ()=>{
