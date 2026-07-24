@@ -31,6 +31,7 @@
   thead th{background:#F0EAD9; text-align:left; font-size:11px; text-transform:uppercase; padding:8px; border-bottom:2px solid var(--line);}
   tbody td{padding:7px 8px; border-bottom:1px solid var(--line); font-size:13px;}
   .thumb{width:40px; height:40px; object-fit:cover; border-radius:3px; border:1px solid var(--line);}
+  .thumb-empty{width:40px; height:40px; border-radius:3px; border:1px dashed var(--line); display:flex; align-items:center; justify-content:center; color:var(--ink-soft); font-size:11px;}
   .stamp{font-family:var(--mono); font-size:10.5px; font-weight:700; padding:3px 9px; border-radius:20px; border:1.5px solid currentColor; white-space:nowrap; display:inline-block;}
   .stamp.transit{color:var(--amber); background:var(--amber-light);}
   .stamp.arrived{color:var(--green); background:#E0EEDF;}
@@ -106,11 +107,13 @@
     <section id="tab-orders">
       <div class="toolbar">
         <button class="btn amber" id="btnAddOrder">+ Новый приход</button>
+        <button class="btn secondary" id="btnImportOrders">Импорт из Excel</button>
         <button class="btn secondary" id="btnExportOrders">Экспорт в Excel</button>
+        <input type="file" id="importOrdersInput" accept=".xlsx,.xls" style="display:none">
       </div>
 <div class="tbl-wrap">
             <table>
-        <thead><tr><th>№</th><th></th><th>Артикул/Название</th><th>Кол-во</th><th>Дата заказа</th><th class="num">Дней в пути</th><th>Статус</th><th></th></tr></thead>
+        <thead><tr><th>№</th><th></th><th>Артикул/Название</th><th>Кол-во</th><th>Дата заказа</th><th class="num">Дней в пути</th><th class="num">Юань</th><th class="num">₸/шт</th><th class="num">Доставка</th><th class="num">Итого</th><th>Статус</th><th></th></tr></thead>
         <tbody id="ordersBody"></tbody>
       </table>
       </div>
@@ -129,6 +132,7 @@
       <div class="toolbar" style="position:relative;">
         <button class="btn secondary" id="btnColSettings" style="padding:7px 12px;">⚙️ Колонки</button>
         <div id="colSettingsPopover" style="display:none; position:absolute; top:40px; left:0; background:#fff; border:1px solid var(--line); border-radius:8px; box-shadow:0 6px 20px rgba(0,0,0,0.15); padding:12px 16px; z-index:20; min-width:220px;">
+          <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="photo" checked> Фото</label>
           <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="num" checked> №</label>
           <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="code" checked> Kaspi код</label>
           <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="shop" checked> Магазин</label>
@@ -218,6 +222,9 @@
       <div><label>Название</label><input id="o_name" type="text"></div>
       <div><label>Кол-во</label><input id="o_qty" type="number" value="1"></div>
       <div><label>Дата заказа</label><input id="o_orderdate" type="date"></div>
+      <div><label>Закупка, юань</label><input id="o_cny" type="number" step="0.01"></div>
+      <div><label>Закупка, ₸ (за шт.)</label><input id="o_kzt" type="number" step="0.01"></div>
+      <div><label>Доставка, ₸ (за шт.)</label><input id="o_delivery" type="number" step="0.01"></div>
       <div><label>Статус</label>
         <select id="o_status"><option value="transit">В пути</option><option value="arrived">Пришло</option><option value="problem">Проблема</option></select>
       </div>
@@ -427,6 +434,7 @@
     const rows = orders.map(o=>({
       "№": o.receiptNumber, "Артикул": o.article, "Название": o.name, "Кол-во": o.qty,
       "Дата заказа": o.orderDate||"", "Дней в пути": daysInTransit(o) ?? "",
+      "Закупка, юань": o.buyPriceCny||0, "Закупка, ₸": o.buyPriceKzt||0, "Доставка, ₸": o.deliveryPrice||0,
       "Статус": o.receiveStatus==='arrived'?'Пришло':o.receiveStatus==='problem'?'Проблема':'В пути',
       "Заметка": o.note||"", "Фото (файл)": o.photo||""
     }));
@@ -434,6 +442,61 @@
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Приход");
     XLSX.writeFile(wb, `приход_${new Date().toISOString().slice(0,10)}.xlsx`);
+  });
+
+  // ---------- Импорт "Прихода" из Excel (гибкое распознавание заголовков) ----------
+  document.getElementById("btnImportOrders").addEventListener("click", ()=>document.getElementById("importOrdersInput").click());
+  function findOrderKey(row, keywords){
+    const keys = Object.keys(row);
+    for(const k of keys){
+      const lk = k.toLowerCase();
+      if(keywords.some(w=>lk.includes(w))) return k;
+    }
+    return null;
+  }
+  document.getElementById("importOrdersInput").addEventListener("change",(e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = async function(ev){
+      try{
+        const wb = XLSX.read(ev.target.result, {type:"array"});
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, {defval:""});
+        let imported = 0, skipped = 0;
+        for(const row of rows){
+          const get = (kws)=>{ const k = findOrderKey(row, kws); return k!==null ? row[k] : ""; };
+          const article = String(get(["артикул","штрих","код"])||"").trim();
+          const name = String(get(["назван","товар","модель"])||"").trim();
+          if(!article && !name){ skipped++; continue; }
+          const qty = parseFloat(get(["заказ","кол-во","количество","qty"]))||0;
+          const cny = parseFloat(get(["юан","cny"]))||0;
+          const kzt = parseFloat(get(["закупки кзт","закупка кзт","закупочная","закупки кзх"]))||0;
+          const delivery = parseFloat(get(["доставк"]))||0;
+          let orderDate = get(["дата"]);
+          if(orderDate instanceof Date) orderDate = orderDate.toISOString().slice(0,10);
+          else if(typeof orderDate === "string" && /^\d{1,2}\.\d{1,2}\.\d{4}/.test(orderDate)){
+            const m = orderDate.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+            orderDate = `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+          } else orderDate = "";
+          const note = String(get(["примечан","заметк","коммент"])||"").trim();
+          try{
+            await api("/orders", {method:"POST", body:JSON.stringify({
+              article, name, qty, note, orderDate: orderDate||undefined,
+              buyPriceCny: cny, buyPriceKzt: kzt, deliveryPrice: delivery, receiveStatus: "transit"
+            })});
+            imported++;
+          }catch(err){ skipped++; }
+        }
+        await loadAll();
+        toast(`Импортировано: ${imported}${skipped?`, пропущено: ${skipped}`:''}`);
+      }catch(err){
+        console.error(err);
+        toast("Не удалось прочитать файл. Проверьте, что это .xlsx");
+      }
+      e.target.value = "";
+    };
+    reader.readAsArrayBuffer(file);
   });
   document.getElementById("btnExportPrice").addEventListener("click", ()=>{
     if(!priceItems.length){ toast("Нет данных для экспорта"); return; }
@@ -547,7 +610,7 @@
   }
 
   let kaspiStageFilter = "active"; // "active" = всё кроме архив/завершён/отменён/возврат
-  let kaspiVisibleCols = JSON.parse(localStorage.getItem("kaspiCols")||"null") || {num:true,code:true,shop:true,name:true,courier:true,price:true,status:true,delivery:true,waybill:true};
+  let kaspiVisibleCols = JSON.parse(localStorage.getItem("kaspiCols")||"null") || {photo:true,num:true,code:true,shop:true,name:true,courier:true,price:true,status:true,delivery:true,waybill:true};
 
   document.querySelectorAll(".kcol").forEach(cb=>{
     cb.checked = kaspiVisibleCols[cb.dataset.col];
@@ -559,6 +622,7 @@
   });
 
   const KCOL_DEFS = [
+    {key:"photo", label:"Фото"},
     {key:"num", label:"№"},
     {key:"code", label:"Kaspi код"},
     {key:"shop", label:"Магазин"},
@@ -601,6 +665,7 @@
 
     const body = document.getElementById("kaspiOrdersBody");
     const cellFor = (o,key)=>{
+      if(key==="photo") return o.productPhoto ? `<img class="thumb" src="${esc(o.productPhoto)}" style="cursor:zoom-in;" onclick="window.open('${esc(o.productPhoto)}','_blank')">` : `<div class="thumb-empty">—</div>`;
       if(key==="num") return esc(o.displayNumber||"");
       if(key==="code") return `<span class="mono">${esc(o.kaspiCode||"")}</span>`;
       if(key==="shop") return esc(o.shop||"");
@@ -988,6 +1053,7 @@
     body.innerHTML = orders.slice().sort((a,b)=>(a.receiptNumber||0)-(b.receiptNumber||0)).map(o=>{
       const days = daysInTransit(o);
       const daysCell = days==null ? "—" : `<span style="${days>14?'color:var(--red);font-weight:700;':''}">${days}</span>`;
+      const totalCost = ((Number(o.buyPriceKzt)||0) + (Number(o.deliveryPrice)||0)) * (Number(o.qty)||0);
       return `
       <tr>
         <td>${esc(o.receiptNumber||"")}</td>
@@ -996,10 +1062,14 @@
         <td>${esc(o.qty||"")}</td>
         <td class="mono">${esc(o.orderDate||"—")}</td>
         <td class="num">${daysCell}</td>
+        <td class="num">${esc(o.buyPriceCny||0)}</td>
+        <td class="num">${esc(o.buyPriceKzt||0)}</td>
+        <td class="num">${esc(o.deliveryPrice||0)}</td>
+        <td class="num">${totalCost.toLocaleString('ru-RU')}</td>
         <td><span class="stamp ${o.receiveStatus||'transit'}">${o.receiveStatus==='arrived'?'Пришло':o.receiveStatus==='problem'?'Проблема':'В пути'}</span></td>
         <td><button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__openOrder('${o.id}')">Открыть</button></td>
       </tr>`;
-    }).join("") || `<tr><td colspan="8" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет записей прихода</td></tr>`;
+    }).join("") || `<tr><td colspan="12" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет записей прихода</td></tr>`;
   }
   function renderPrice(){
     const body = document.getElementById("priceBody");
@@ -1025,6 +1095,9 @@
     document.getElementById("o_qty").value = o?.qty??1;
     document.getElementById("o_status").value = o?.receiveStatus||"transit";
     document.getElementById("o_orderdate").value = o?.orderDate || new Date().toISOString().slice(0,10);
+    document.getElementById("o_cny").value = o?.buyPriceCny ?? "";
+    document.getElementById("o_kzt").value = o?.buyPriceKzt ?? "";
+    document.getElementById("o_delivery").value = o?.deliveryPrice ?? "";
     document.getElementById("o_note").value = o?.note||"";
     currentOrderPhoto = o?.photo || null;
     updateOrderPhotoPreview();
@@ -1039,6 +1112,9 @@
       qty: parseFloat(document.getElementById("o_qty").value)||0,
       receiveStatus: document.getElementById("o_status").value,
       orderDate: document.getElementById("o_orderdate").value,
+      buyPriceCny: parseFloat(document.getElementById("o_cny").value)||0,
+      buyPriceKzt: parseFloat(document.getElementById("o_kzt").value)||0,
+      deliveryPrice: parseFloat(document.getElementById("o_delivery").value)||0,
       note: document.getElementById("o_note").value.trim(),
       photo: currentOrderPhoto
     };
