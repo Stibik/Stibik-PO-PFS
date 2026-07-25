@@ -139,7 +139,8 @@
           <input type="text" id="ordersSearch" placeholder="Поиск по артикулу/названию..." style="padding:7px 28px 7px 10px; min-width:220px;">
           <span id="ordersSearchClear" style="display:none; position:absolute; right:8px; top:50%; transform:translateY(-50%); cursor:pointer; color:var(--ink-soft); font-weight:700;" title="Очистить поиск">✕</span>
         </div>
-        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-left:auto;">
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-left:auto;">
+          <label style="font-size:12.5px; white-space:nowrap; color:var(--ink-soft);"><input type="checkbox" id="showArchivedOrders"> Показывать архив (>30 дн. с прихода)</label>
           <select id="ordersFilterStatus" style="padding:7px 10px;">
             <option value="all">Все статусы</option>
             <option value="new">Новый</option>
@@ -452,6 +453,7 @@
       applyRoleUI();
       showApp();
       await loadAll();
+      startAutoSync();
     }catch(e){
       document.getElementById("loginError").textContent = "Неверный логин или пароль";
     }
@@ -680,6 +682,7 @@
   });
 
   document.getElementById("btnLogout").addEventListener("click", async ()=>{
+    stopAutoSync();
     await api("/auth/logout", {method:"POST"});
     showLogin();
   });
@@ -1263,19 +1266,53 @@
     }catch(e){ document.getElementById("kaspiSettingsMsg").textContent = "Ошибка: "+e.message; }
   });
 
-  document.getElementById("btnSyncKaspi2").addEventListener("click", async ()=>{
+  // Общая функция синхронизации — использует и кнопка, и автосинхронизация.
+  // silent=true — не перезаписываем текстовый блок результата (чтобы не мешать,
+  // если человек сейчас читает что-то другое), но уведомление о новых заказах
+  // показываем в любом случае.
+  async function performKaspiSync(opts){
+    opts = opts || {};
     const box = document.getElementById("kaspiResult2");
-    box.innerHTML = "Синхронизация...";
+    if(!opts.silent) box.innerHTML = "Синхронизация...";
     const includeArchive = document.getElementById("includeArchiveCheck").checked;
     try{
       const data = await api("/kaspi/sync", {method:"POST", body: JSON.stringify({includeArchive})});
-      box.innerHTML = data.results.map(r=>
-        r.ok ? `<div class="kaspi-result">✅ ${esc(r.shop)}: добавлено ${r.added}, обновлено ${r.updated}${r.skippedArchive?', пропущено архивных: '+r.skippedArchive:''} (всего в ответе ${r.total})</div>`
-             : `<div class="kaspi-result" style="color:var(--red)">⚠️ ${esc(r.shop)}: ${esc(r.error)}</div>`
-      ).join("");
+      if(!opts.silent){
+        box.innerHTML = data.results.map(r=>
+          r.ok ? `<div class="kaspi-result">✅ ${esc(r.shop)}: добавлено ${r.added}, обновлено ${r.updated}${r.skippedArchive?', пропущено архивных: '+r.skippedArchive:''} (всего в ответе ${r.total})</div>`
+               : `<div class="kaspi-result" style="color:var(--red)">⚠️ ${esc(r.shop)}: ${esc(r.error)}</div>`
+        ).join("");
+      }
+      const newOnes = (data.results||[]).filter(r=>r.ok && r.added>0);
+      if(newOnes.length){
+        toast("🔔 Новый заказ: " + newOnes.map(r=>`${r.shop} +${r.added}`).join(", "));
+      }
       await renderKaspiOrders();
-    }catch(e){ box.innerHTML = `<div class="kaspi-result" style="color:var(--red)">Ошибка: ${esc(e.message)}</div>`; }
-  });
+      return data;
+    }catch(e){
+      if(!opts.silent){
+        box.innerHTML = `<div class="kaspi-result" style="color:var(--red)">Ошибка: ${esc(e.message)}</div>`;
+      } else {
+        console.error("[auto-sync]", e.message); // автосинхронизация не должна спамить ошибками в интерфейс
+      }
+    }
+  }
+  document.getElementById("btnSyncKaspi2").addEventListener("click", ()=>performKaspiSync({silent:false}));
+
+  // ---------- Автосинхронизация с Kaspi ----------
+  // Работает, пока страница открыта в браузере. Это НЕ серверный cron: на
+  // бесплатном тарифе Render сервер "засыпает" без входящих запросов, поэтому
+  // фоновая проверка из открытой вкладки надёжнее, чем таймер на сервере.
+  // При обнаружении новых заказов показывает всплывающее уведомление (toast).
+  const AUTO_SYNC_INTERVAL_MS = 3 * 60 * 1000; // каждые 3 минуты
+  let autoSyncTimer = null;
+  function startAutoSync(){
+    if(autoSyncTimer) return;
+    autoSyncTimer = setInterval(()=>performKaspiSync({silent:true}), AUTO_SYNC_INTERVAL_MS);
+  }
+  function stopAutoSync(){
+    if(autoSyncTimer){ clearInterval(autoSyncTimer); autoSyncTimer = null; }
+  }
 
   function receiveStatusLabel(s){
     if(s==="arrived") return "Пришло";
@@ -1295,6 +1332,18 @@
     const end = o.arrivedDate ? new Date(o.arrivedDate+"T00:00:00") : new Date();
     if(isNaN(end)) return null;
     return Math.max(0, Math.round((end-start)/86400000));
+  }
+  // Товар, который пришёл больше ARCHIVE_AFTER_DAYS дней назад, считается
+  // "архивным" — уходит из основного списка и из активных итогов, чтобы
+  // дашборд не разрастался бесконечно. Ничего не удаляется, только прячется
+  // (можно посмотреть через чекбокс "Показывать архив").
+  const ARCHIVE_AFTER_DAYS = 30;
+  function isArchivedOrder(o){
+    if((o.receiveStatus||'new') !== 'arrived' || !o.arrivedDate) return false;
+    const arrived = new Date(o.arrivedDate+"T00:00:00");
+    if(isNaN(arrived)) return false;
+    const daysSinceArrival = Math.round((Date.now()-arrived)/86400000);
+    return daysSinceArrival > ARCHIVE_AFTER_DAYS;
   }
   function money(n){
     // Округление до целых чисел — без копеек/десятых, только чистое ₸
@@ -1322,6 +1371,7 @@
   let ordersFilterStatus = "all";
   let ordersFilterCategory = "all";
   let ordersSearchQuery = "";
+  let showArchivedOrders = false;
   document.getElementById("ordersSearch").addEventListener("input",(e)=>{
     ordersSearchQuery = e.target.value.trim().toLowerCase();
     document.getElementById("ordersSearchClear").style.display = e.target.value ? "" : "none";
@@ -1354,6 +1404,7 @@
   });
   document.getElementById("ordersFilterStatus").addEventListener("change",(e)=>{ ordersFilterStatus = e.target.value; renderOrders(false); });
   document.getElementById("ordersFilterCategory").addEventListener("change",(e)=>{ ordersFilterCategory = e.target.value; renderOrders(false); });
+  document.getElementById("showArchivedOrders").addEventListener("change",(e)=>{ showArchivedOrders = e.target.checked; renderOrders(false); });
 
   let ordersSortKey = "receiptNumber";
   let ordersSortDir = 1; // 1 asc, -1 desc
@@ -1380,7 +1431,8 @@
     // прогноз прибыли (выручка минус закупка+доставка) и % маржи. Отдельно
     // по "В пути", по "Пришло" и общий "Итого" по обеим группам сразу.
     const transitOrders = orders.filter(o=>{ const s = o.receiveStatus||'new'; return s==='new' || s==='transit'; });
-    const arrivedOrders = orders.filter(o=>o.receiveStatus==='arrived');
+    const arrivedOrders = orders.filter(o=>o.receiveStatus==='arrived' && !isArchivedOrder(o));
+    const archivedOrders = orders.filter(o=>isArchivedOrder(o));
     const sumCost = (list)=> list.reduce((s,o)=> s + ((Number(o.buyPriceKzt)||0)+(Number(o.deliveryPrice)||0))*(Number(o.qty)||0), 0);
     const sumQty = (list)=> list.reduce((s,o)=> s+(Number(o.qty)||0), 0);
     // Прогноз продаж — если продать все позиции по цене "Продажа"
@@ -1408,7 +1460,8 @@
     document.getElementById("ordersStats").innerHTML =
       statCard("В пути сейчас", transitOrders, "var(--amber)") +
       statCard("Пришло", arrivedOrders, "var(--green)") +
-      statCard("Итого (пришло + в пути)", orders, "var(--navy)");
+      statCard("Итого (активные)", [...transitOrders, ...arrivedOrders], "var(--navy)") +
+      (archivedOrders.length ? statCard(`Архив (>${ARCHIVE_AFTER_DAYS} дн.)`, archivedOrders, "#8A8F99") : "");
 
     // список категорий в фильтре
     const catSelect = document.getElementById("ordersFilterCategory");
@@ -1435,6 +1488,7 @@
     });
 
     let list = orders.slice();
+    if(!showArchivedOrders) list = list.filter(o=>!isArchivedOrder(o));
     if(ordersFilterStatus!=="all") list = list.filter(o=>(o.receiveStatus||'transit')===ordersFilterStatus);
     if(ordersFilterCategory!=="all") list = list.filter(o=>o.category===ordersFilterCategory);
     if(ordersSearchQuery) list = list.filter(o=>
@@ -1467,7 +1521,10 @@
       if(key==="sale") return o.salePrice?money(o.salePrice)+" ₸":"—";
       if(key==="margin") return o.salePrice?`<span style="${margin<0?'color:var(--red);':margin>0?'color:var(--green);':''}">${money(margin)} ₸</span>`:"—";
       if(key==="category") return esc(o.category||"—");
-      if(key==="status") return `<span class="stamp ${o.receiveStatus||'new'}">${receiveStatusLabel(o.receiveStatus)}</span>`;
+      if(key==="status"){
+        const archivedTag = isArchivedOrder(o) ? ` <span style="color:var(--ink-soft);font-size:10.5px;">· архив</span>` : "";
+        return `<span class="stamp ${o.receiveStatus||'new'}">${receiveStatusLabel(o.receiveStatus)}</span>${archivedTag}`;
+      }
       return "";
     };
 
@@ -1744,6 +1801,7 @@
       applyRoleUI();
       showApp();
       await loadAll();
+      startAutoSync();
     }catch(e){
       showLogin();
     }
