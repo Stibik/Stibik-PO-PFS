@@ -1,0 +1,110 @@
+import express from "express";
+import { db, logAudit } from "../db.js";
+import { requireAuth } from "../middleware/auth.js";
+
+const router = express.Router();
+router.use(requireAuth);
+
+function uid() {
+  return "cat_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+
+// Справочник = таблица price_items (та же, что и "Прайс"), просто с добавленными
+// полями от Kaspi. article используется как SKU для сопоставления при импорте.
+function rowToCatalogItem(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    article: row.article,           // SKU (из Kaspi или введённый вручную)
+    printName: row.name,            // "Название для печати" — ручное поле
+    category: row.type,             // категория — ручное поле
+    costPrice: row.cost,            // себестоимость — ручное поле
+    retailPrice: row.retail,        // наша розничная цена — ручное поле
+    photo: row.photo,
+    kaspiName: row.kaspi_name,              // сырое название с Kaspi (авто)
+    kaspiPrice: row.kaspi_price,            // цена на Kaspi (авто)
+    inStockPoints: row.kaspi_in_stock_points,
+    totalPoints: row.kaspi_total_points,
+    preorderDays: row.kaspi_preorder_days,
+    syncedAt: row.kaspi_synced_at,
+    createdAt: row.created_at
+  };
+}
+
+router.get("/", (req, res) => {
+  const rows = db.prepare(
+    "SELECT * FROM price_items ORDER BY kaspi_synced_at DESC, created_at DESC"
+  ).all();
+  res.json(rows.map(rowToCatalogItem));
+});
+
+// Импорт выгрузки Kaspi "Активные товары" — принимает уже распарсенный на
+// клиенте массив строк (SheetJS разбирает файл в браузере, сюда прилетает JSON).
+// Апсерт по article (= SKU из Kaspi). Ручные поля (name/type/cost/retail)
+// НИКОГДА не трогаются этим импортом — обновляются только kaspi_* колонки.
+router.post("/import", (req, res) => {
+  const items = Array.isArray(req.body?.items) ? req.body.items : [];
+  if (!items.length) return res.status(400).json({ error: "empty_items", message: "Список товаров пуст" });
+
+  const now = new Date().toISOString();
+  let added = 0, updated = 0, skipped = 0;
+
+  for (const it of items) {
+    const sku = String(it.sku || "").trim();
+    if (!sku) { skipped++; continue; }
+    const kaspiName = String(it.kaspiName || "").trim();
+    const kaspiPrice = Number(it.kaspiPrice) || 0;
+    const inStockPoints = Number(it.inStockPoints) || 0;
+    const totalPoints = Number(it.totalPoints) || 0;
+    const preorderDays = Number(it.preorderDays) || 0;
+
+    const existing = db.prepare("SELECT id FROM price_items WHERE article = ?").get(sku);
+    if (existing) {
+      db.prepare(`UPDATE price_items SET
+        kaspi_name=?, kaspi_price=?, kaspi_in_stock_points=?, kaspi_total_points=?,
+        kaspi_preorder_days=?, kaspi_synced_at=? WHERE id=?`)
+        .run(kaspiName, kaspiPrice, inStockPoints, totalPoints, preorderDays, now, existing.id);
+      updated++;
+    } else {
+      db.prepare(`INSERT INTO price_items
+        (id, article, name, type, retail, cost,
+         kaspi_name, kaspi_price, kaspi_in_stock_points, kaspi_total_points, kaspi_preorder_days,
+         kaspi_synced_at, created_at)
+        VALUES (?, ?, '', '', 0, NULL, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(uid(), sku, kaspiName, kaspiPrice, inStockPoints, totalPoints, preorderDays, now, now);
+      added++;
+    }
+  }
+
+  logAudit({ user: req.session.username, action: "catalog_import", comment: `+${added} ~${updated} (пропущено: ${skipped})` });
+  res.json({ added, updated, skipped });
+});
+
+// Точечное обновление ручных полей: название для печати, категория,
+// себестоимость, розница. Через тот же маршрут, что уже был у "Прайса"
+// (price.js), эта запись не трогается — правим напрямую здесь.
+router.put("/:id", (req, res) => {
+  const row = db.prepare("SELECT * FROM price_items WHERE id = ?").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  const b = req.body || {};
+
+  const updates = [];
+  const params = [];
+  const map = { printName: "name", category: "type", costPrice: "cost", retailPrice: "retail" };
+  for (const [jsKey, col] of Object.entries(map)) {
+    if (Object.prototype.hasOwnProperty.call(b, jsKey)) {
+      updates.push(`${col} = ?`);
+      let v = b[jsKey];
+      if ((jsKey === "costPrice" || jsKey === "retailPrice") && v !== null) v = Number(v) || 0;
+      params.push(v);
+    }
+  }
+  if (updates.length) {
+    params.push(req.params.id);
+    db.prepare(`UPDATE price_items SET ${updates.join(", ")} WHERE id = ?`).run(...params);
+  }
+  const updated = db.prepare("SELECT * FROM price_items WHERE id = ?").get(req.params.id);
+  res.json(rowToCatalogItem(updated));
+});
+
+export default router;
