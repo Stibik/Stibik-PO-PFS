@@ -183,6 +183,17 @@ export function ensureSchema() {
   safeAddColumn("orders", "category TEXT");
   safeAddColumn("orders", "actual_qty REAL");
 
+  // ── Справочник товаров: поля, подтягиваемые из выгрузки Kaspi "Активные товары" ──
+  // article (уже существующее поле) используется как SKU для сопоставления.
+  // name/type/cost/retail — остаются ручными полями (название для печати,
+  // категория, себестоимость, наша розница) и НИКОГДА не перезаписываются импортом.
+  safeAddColumn("price_items", "kaspi_name TEXT");              // сырое название с Kaspi (авто)
+  safeAddColumn("price_items", "kaspi_price REAL");             // цена на Kaspi (авто)
+  safeAddColumn("price_items", "kaspi_in_stock_points INTEGER"); // сколько ПВЗ из общего числа — есть в наличии
+  safeAddColumn("price_items", "kaspi_total_points INTEGER");    // всего ПВЗ в выгрузке
+  safeAddColumn("price_items", "kaspi_preorder_days INTEGER");   // дни допоставки
+  safeAddColumn("price_items", "kaspi_synced_at TEXT");          // когда последний раз обновлено импортом
+
   const kaspiShopsRow = db.prepare("SELECT value FROM settings WHERE key = 'kaspi_shops'").get();
   if (!kaspiShopsRow) {
     const defaultShops = [
