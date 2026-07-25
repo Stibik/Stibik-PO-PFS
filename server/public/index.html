@@ -117,15 +117,6 @@
       </div>
       <div id="ordersStats" style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:14px;"></div>
       <div class="toolbar" style="flex-wrap:wrap;">
-        <select id="ordersFilterStatus" style="padding:7px 10px;">
-          <option value="all">Все статусы</option>
-          <option value="transit">В пути</option>
-          <option value="arrived">Пришло</option>
-          <option value="problem">Проблема</option>
-        </select>
-        <select id="ordersFilterCategory" style="padding:7px 10px;">
-          <option value="all">Все категории</option>
-        </select>
         <div style="position:relative;">
           <button class="btn secondary" id="btnOrdersColSettings" style="padding:7px 12px;">⚙️ Колонки</button>
           <div id="ordersColPopover" style="display:none; position:absolute; top:40px; left:0; background:#fff; border:1px solid var(--line); border-radius:8px; box-shadow:0 6px 20px rgba(0,0,0,0.15); padding:12px 16px; z-index:20; min-width:200px;">
@@ -139,7 +130,18 @@
             <label style="display:block; font-size:12.5px;"><input type="checkbox" class="ocol" data-col="category" checked> Категория</label>
           </div>
         </div>
-        <button class="btn secondary" id="btnManageCategories" style="padding:7px 12px;">Управление категориями</button>
+        <button class="btn secondary" id="btnManageCategories" style="padding:7px 12px;">Категории</button>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-left:auto;">
+          <select id="ordersFilterStatus" style="padding:7px 10px;">
+            <option value="all">Все статусы</option>
+            <option value="transit">В пути</option>
+            <option value="arrived">Пришло</option>
+            <option value="problem">Проблема</option>
+          </select>
+          <select id="ordersFilterCategory" style="padding:7px 10px;">
+            <option value="all">Все категории</option>
+          </select>
+        </div>
       </div>
 <div class="tbl-wrap">
             <table>
@@ -155,6 +157,7 @@
         <span id="shopList2" style="font-size:12.5px;color:var(--ink-soft)"></span>
       </div>
       <div id="kaspiResult2"></div>
+      <div class="toolbar" id="kaspiShopFilters" style="flex-wrap:wrap;"></div>
       <div class="toolbar" id="kaspiStatusFilters" style="flex-wrap:wrap;"></div>
       <div class="toolbar">
         <button class="btn secondary" id="btnPrintKaspiList" style="padding:7px 12px;">🖨️ Печать списка (текущий фильтр)</button>
@@ -702,6 +705,7 @@
   }
 
   let kaspiStageFilter = "active"; // "active" = всё кроме архив/завершён/отменён/возврат
+  let kaspiShopFilter = null; // null = все магазины; иначе Set с выбранными именами
   let kaspiVisibleCols = JSON.parse(localStorage.getItem("kaspiCols")||"null") || {photo:true,num:true,code:true,shop:true,name:true,courier:true,price:true,status:true,delivery:true,waybill:true};
 
   document.querySelectorAll(".kcol").forEach(cb=>{
@@ -731,13 +735,35 @@
 
     kaspiOrders.forEach(o=>{ o.stage = classifyStage(o); });
 
+    // Фильтр по магазинам — чекбоксы, можно выбрать 1, 2 или все 3
+    const shopNames = Array.from(new Set(kaspiOrders.map(o=>o.shop).filter(Boolean))).sort();
+    if(kaspiShopFilter===null) kaspiShopFilter = new Set(shopNames); // по умолчанию — все выбраны
+    const shopWrap = document.getElementById("kaspiShopFilters");
+    if(shopNames.length > 1){
+      shopWrap.innerHTML = `<span style="font-size:12px;color:var(--ink-soft);align-self:center;margin-right:4px;">Магазины:</span>` + shopNames.map(s=>{
+        const count = kaspiOrders.filter(o=>o.shop===s).length;
+        const active = kaspiShopFilter.has(s);
+        return `<button class="btn ${active?'amber':'secondary'}" style="padding:6px 14px;font-size:12.5px;" data-shop="${esc(s)}">${esc(s)} (${count})</button>`;
+      }).join("");
+      shopWrap.querySelectorAll("button").forEach(b=>{
+        b.addEventListener("click", ()=>{
+          const s = b.dataset.shop;
+          if(kaspiShopFilter.has(s)) kaspiShopFilter.delete(s); else kaspiShopFilter.add(s);
+          if(kaspiShopFilter.size===0) kaspiShopFilter = new Set(shopNames); // не даём снять все разом
+          renderKaspiOrders(false);
+        });
+      });
+    } else {
+      shopWrap.innerHTML = "";
+    }
+
     const nonTerminal = ["preorder","packing","handover","toDelivery","other"];
-    const activeCount = kaspiOrders.filter(o=>nonTerminal.includes(o.stage)).length;
+    const activeCount = kaspiOrders.filter(o=>nonTerminal.includes(o.stage) && kaspiShopFilter.has(o.shop)).length;
     const filterWrap = document.getElementById("kaspiStatusFilters");
     let html = `<button class="btn ${kaspiStageFilter==='active'?'amber':'secondary'}" style="padding:6px 14px;font-size:12.5px;" data-stage="active">Активные (${activeCount})</button>`
-      + `<button class="btn ${kaspiStageFilter==='all'?'amber':'secondary'}" style="padding:6px 14px;font-size:12.5px;" data-stage="all">Все (${kaspiOrders.length})</button>`;
+      + `<button class="btn ${kaspiStageFilter==='all'?'amber':'secondary'}" style="padding:6px 14px;font-size:12.5px;" data-stage="all">Все (${kaspiOrders.filter(o=>kaspiShopFilter.has(o.shop)).length})</button>`;
     STAGE_DEFS.forEach(sd=>{
-      const count = kaspiOrders.filter(o=>o.stage===sd.key).length;
+      const count = kaspiOrders.filter(o=>o.stage===sd.key && kaspiShopFilter.has(o.shop)).length;
       if(count===0 && !["preorder","packing","handover","toDelivery"].includes(sd.key)) return;
       html += `<button class="btn ${kaspiStageFilter===sd.key?'amber':'secondary'}" style="padding:6px 14px;font-size:12.5px;" data-stage="${sd.key}">${sd.label} (${count})</button>`;
     });
@@ -750,7 +776,7 @@
     const cols = KCOL_DEFS.filter(c=>kaspiVisibleCols[c.key]);
     document.getElementById("kaspiOrdersHead").innerHTML = "<tr>"+cols.map(c=>`<th>${c.label}</th>`).join("")+"<th></th></tr>";
 
-    let list = kaspiOrders.slice();
+    let list = kaspiOrders.slice().filter(o=>kaspiShopFilter.has(o.shop));
     if(kaspiStageFilter==="active") list = list.filter(o=>nonTerminal.includes(o.stage));
     else if(kaspiStageFilter!=="all") list = list.filter(o=>o.stage===kaspiStageFilter);
     list.sort((a,b)=>(a.displayNumber||0)-(b.displayNumber||0));
@@ -762,7 +788,7 @@
       if(key==="code") return `<span class="mono">${esc(o.kaspiCode||"")}</span>`;
       if(key==="shop") return esc(o.shop||"");
       if(key==="name") return esc(o.productName||"—");
-      if(key==="courier") return esc(o.courierHandoverDate||"—");
+      if(key==="courier") return fmtDate(o.courierHandoverDate);
       if(key==="price") return o.totalPrice ? esc(o.totalPrice)+" ₸" : "—";
       if(key==="status"){
         const sd = stageDef(o.stage);
@@ -787,7 +813,7 @@
   }
 
   document.getElementById("btnPrintKaspiList").addEventListener("click", ()=>{
-    let list = kaspiOrders.slice();
+    let list = kaspiOrders.slice().filter(o=>kaspiShopFilter.has(o.shop));
     const nonTerminal = ["preorder","packing","handover","toDelivery","other"];
     if(kaspiStageFilter==="active") list = list.filter(o=>nonTerminal.includes(o.stage));
     else if(kaspiStageFilter!=="all") list = list.filter(o=>o.stage===kaspiStageFilter);
@@ -1050,11 +1076,14 @@
     if(!o) return;
     const raw = o.raw || {};
     const sd = stageDef(o.stage);
+    const paymentLabels = { PAY_WITH_CREDIT: "В кредит", CASH: "Наличными", PREPAID: "Предоплата" };
+    const paymentText = paymentLabels[raw.paymentMode] || (raw.paymentMode ? esc(raw.paymentMode) : "не указано в данных Kaspi");
     const summaryRows = [
       ["Стадия", `<span class="stamp" style="color:${sd.color};background:${sd.bg};border-color:${sd.color};">${esc(sd.label)}</span>`],
       ["Наименование", esc(o.productName||"—")],
-      ["Плановая дата отправки/передачи курьеру", esc(o.courierHandoverDate||"пока не назначена")],
-      ["Дата передачи в логистику Kaspi", esc(o.courierTransmissionDate||"ещё не передан")],
+      ["Способ оплаты", paymentText],
+      ["Плановая дата отправки/передачи курьеру", fmtDate(o.courierHandoverDate)||"пока не назначена"],
+      ["Дата передачи в логистику Kaspi", fmtDate(o.courierTransmissionDate)||"ещё не передан"],
       ["Накладная (грузовое место)", o.waybillUrl
         ? `<button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__printWaybill('${o.id}')">🖨️ Печать</button>${o.printed?' <span style="color:var(--green);font-size:11px;">✓ распечатано</span>':''}`
         : `<span style="color:var(--ink-soft);">ещё не сформирована (появится после упаковки)</span>`]
@@ -1073,10 +1102,13 @@
     document.getElementById("kaspiDetailBody").innerHTML =
       `<tr><td colspan="2" style="font-weight:700; padding-top:10px; border-bottom:2px solid var(--amber);">Основное</td></tr>`
       + summaryHtml
-      + `<tr><td colspan="2" style="font-weight:700; padding-top:16px; border-bottom:2px solid var(--line);">Всё, что прислал Kaspi (заказ)</td></tr>`
+      + `<tr><td colspan="2" style="padding-top:16px;"><button class="btn secondary" style="padding:6px 12px;font-size:12.5px;" onclick="this.closest('tr').nextElementSibling.style.display=this.closest('tr').nextElementSibling.style.display==='none'?'':'none'; this.textContent=this.textContent.includes('Показать')?'Скрыть технические поля':'Показать технические поля (для разработчика)'">Показать технические поля (для разработчика)</button></td></tr>`
+      + `<tr style="display:none;"><td colspan="2"><table style="width:100%;">`
+      + `<tr><td colspan="2" style="font-weight:700; padding-top:10px; border-bottom:2px solid var(--line);">Всё, что прислал Kaspi (заказ)</td></tr>`
       + rows
-      + `<tr><td colspan="2" style="font-weight:700; padding-top:16px; border-bottom:2px solid var(--line);">Данные о товарах в заказе (тут должно быть фото)</td></tr>`
-      + entriesRows;
+      + `<tr><td colspan="2" style="font-weight:700; padding-top:16px; border-bottom:2px solid var(--line);">Данные о товарах в заказе</td></tr>`
+      + entriesRows
+      + `</table></td></tr>`;
     document.getElementById("kaspiDetailOverlay").classList.add("show");
   };
   document.getElementById("kaspiDetailClose").addEventListener("click", ()=>{
@@ -1141,6 +1173,11 @@
     }catch(e){ box.innerHTML = `<div class="kaspi-result" style="color:var(--red)">Ошибка: ${esc(e.message)}</div>`; }
   });
 
+  function fmtDate(d){
+    if(!d) return "—";
+    const m = String(d).match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return m ? `${m[3]}.${m[2]}.${m[1]}` : d;
+  }
   function daysInTransit(o){
     if(!o.orderDate) return null;
     const start = new Date(o.orderDate+"T00:00:00");
@@ -1266,7 +1303,7 @@
       if(key==="photo") return o.photo?`<img class="thumb" src="${esc(o.photo)}">`:"";
       if(key==="name") return `${esc(o.name||o.article||"—")}<div style="font-size:11px;color:var(--ink-soft)">${esc(o.article||"")}</div>`;
       if(key==="qty") return esc(o.qty||"");
-      if(key==="date") return `<span class="mono">${esc(o.orderDate||"—")}</span>`;
+      if(key==="date") return `<span class="mono" style="white-space:nowrap;">${fmtDate(o.orderDate)}</span>`;
       if(key==="days") return days==null?"—":`<span style="${days>14?'color:var(--red);font-weight:700;':''}">${days}</span>`;
       if(key==="cny") return money(o.buyPriceCny)+" ¥";
       if(key==="kzt") return money(o.buyPriceKzt)+" ₸";
