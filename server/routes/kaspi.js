@@ -45,8 +45,19 @@ router.post("/sync", async (req, res) => {
       const now = new Date().toISOString();
 
       for (const ko of kaspiOrders) {
-        const existing = db.prepare("SELECT id FROM orders WHERE kaspi_order_id = ?").get(ko.kaspiOrderId);
+        // Берём ВЕСЬ существующий ряд (не только id) — нужен его текущий
+        // kaspi_status/delivery_state/updated_at для сравнения ниже.
+        const existing = db.prepare("SELECT * FROM orders WHERE kaspi_order_id = ?").get(ko.kaspiOrderId);
         if (existing) {
+          // Kaspi не присылает дату отмены/смены статуса напрямую (подтверждено
+          // документацией API) — приближаем её как "когда статус/состояние
+          // заказа у нас в базе последний раз реально поменялись".
+          // ВАЖНО: раньше updated_at обновлялся на КАЖДУЮ синхронизацию, даже
+          // если ничего не изменилось — с автосинхронизацией каждые 3 минуты
+          // это делало дату всегда "сегодня" и ломало расчёт "дней с отмены".
+          // Теперь трогаем updated_at только если статус или состояние реально другие.
+          const statusChanged = existing.kaspi_status !== ko.status || existing.delivery_state !== ko.deliveryState;
+          const updatedAtValue = statusChanged ? now : existing.updated_at;
           db.prepare(`UPDATE orders SET
             kaspi_code=?, shop=?, kaspi_status=?, delivery_state=?, pre_order=?, assembled=?,
             courier_transmission_date=?, courier_handover_date=?, total_price=?, product_name=?,
@@ -54,7 +65,7 @@ router.post("/sync", async (req, res) => {
             .run(ko.kaspiCode, ko.shop, ko.status, ko.deliveryState, ko.preOrder ? 1 : 0, ko.assembled ? 1 : 0,
                  ko.courierTransmissionDate, ko.courierHandoverDate, ko.totalPrice, ko.productName,
                  ko.productPhoto || null, ko.waybillUrl, JSON.stringify(ko.raw || {}),
-                 JSON.stringify(ko.entriesRaw || {}), now, existing.id);
+                 JSON.stringify(ko.entriesRaw || {}), updatedAtValue, existing.id);
           updated++;
         } else {
           if (ko.deliveryState === "ARCHIVE" && !includeArchive) { skippedArchive++; continue; }
