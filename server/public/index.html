@@ -38,6 +38,7 @@
   .thumb{width:40px; height:40px; object-fit:cover; border-radius:3px; border:1px solid var(--line);}
   .thumb-empty{width:40px; height:40px; border-radius:3px; border:1px dashed var(--line); display:flex; align-items:center; justify-content:center; color:var(--ink-soft); font-size:11px;}
   .stamp{font-family:var(--mono); font-size:10.5px; font-weight:700; padding:3px 9px; border-radius:20px; border:1.5px solid currentColor; white-space:nowrap; display:inline-block;}
+  .stamp.new{color:#5B7FA6; background:#E4ECF5;}
   .stamp.transit{color:var(--amber); background:var(--amber-light);}
   .stamp.arrived{color:var(--green); background:#E0EEDF;}
   .stamp.problem{color:var(--red); background:#F5DEDA;}
@@ -141,6 +142,7 @@
         <div style="display:flex; gap:8px; flex-wrap:wrap; margin-left:auto;">
           <select id="ordersFilterStatus" style="padding:7px 10px;">
             <option value="all">Все статусы</option>
+            <option value="new">Новый</option>
             <option value="transit">В пути</option>
             <option value="arrived">Пришло</option>
             <option value="problem">Проблема</option>
@@ -270,7 +272,7 @@
       <div><label>Продажная цена, ₸</label><input id="o_sale" type="number" step="0.01"></div>
       <div><label>Категория</label><select id="o_category"></select></div>
       <div><label>Статус</label>
-        <select id="o_status"><option value="transit">В пути</option><option value="arrived">Пришло</option><option value="problem">Проблема</option></select>
+        <select id="o_status"><option value="new">Новый</option><option value="transit">В пути</option><option value="arrived">Пришло</option><option value="problem">Проблема</option></select>
       </div>
       <div class="full"><label>Заметка</label><textarea id="o_note" style="width:100%"></textarea></div>
     </div>
@@ -501,7 +503,7 @@
     document.getElementById("o_name").value = o.name||"";
     document.getElementById("o_qty").value = o.qty??1;
     document.getElementById("o_actualqty").value = "";
-    document.getElementById("o_status").value = "transit";
+    document.getElementById("o_status").value = "new";
     document.getElementById("o_orderdate").value = new Date().toISOString().slice(0,10);
     document.getElementById("o_cny").value = o.buyPriceCny ?? "";
     document.getElementById("o_kzt").value = o.buyPriceKzt ?? "";
@@ -580,7 +582,7 @@
       "№": o.receiptNumber, "Артикул": o.article, "Название": o.name, "Кол-во": o.qty,
       "Дата заказа": o.orderDate||"", "Дней в пути": daysInTransit(o) ?? "",
       "Закупка, юань": o.buyPriceCny||0, "Закупка, ₸": o.buyPriceKzt||0, "Доставка, ₸": o.deliveryPrice||0,
-      "Статус": o.receiveStatus==='arrived'?'Пришло':o.receiveStatus==='problem'?'Проблема':'В пути',
+      "Статус": receiveStatusLabel(o.receiveStatus),
       "Заметка": o.note||"", "Фото (файл)": o.photo||""
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
@@ -1258,6 +1260,12 @@
     }catch(e){ box.innerHTML = `<div class="kaspi-result" style="color:var(--red)">Ошибка: ${esc(e.message)}</div>`; }
   });
 
+  function receiveStatusLabel(s){
+    if(s==="arrived") return "Пришло";
+    if(s==="problem") return "Проблема";
+    if(s==="transit") return "В пути";
+    return "Новый"; // s==="new" или не задано вовсе
+  }
   function fmtDate(d){
     if(!d) return "—";
     const m = String(d).match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -1351,7 +1359,7 @@
   }
   function renderOrders(refetchNotUsed){
     // Сводка: сколько сейчас в пути (штук и на какую сумму) и сколько уже пришло
-    const transitOrders = orders.filter(o=>(o.receiveStatus||'transit')==='transit');
+    const transitOrders = orders.filter(o=>{ const s = o.receiveStatus||'new'; return s==='new' || s==='transit'; });
     const arrivedOrders = orders.filter(o=>o.receiveStatus==='arrived');
     const sumCost = (list)=> list.reduce((s,o)=> s + ((Number(o.buyPriceKzt)||0)+(Number(o.deliveryPrice)||0))*(Number(o.qty)||0), 0);
     const sumQty = (list)=> list.reduce((s,o)=> s+(Number(o.qty)||0), 0);
@@ -1422,7 +1430,7 @@
       if(key==="sale") return o.salePrice?money(o.salePrice)+" ₸":"—";
       if(key==="margin") return o.salePrice?`<span style="${margin<0?'color:var(--red);':margin>0?'color:var(--green);':''}">${money(margin)} ₸</span>`:"—";
       if(key==="category") return esc(o.category||"—");
-      if(key==="status") return `<span class="stamp ${o.receiveStatus||'transit'}">${o.receiveStatus==='arrived'?'Пришло':o.receiveStatus==='problem'?'Проблема':'В пути'}</span>`;
+      if(key==="status") return `<span class="stamp ${o.receiveStatus||'new'}">${receiveStatusLabel(o.receiveStatus)}</span>`;
       return "";
     };
 
@@ -1508,7 +1516,7 @@
     document.getElementById("o_name").value = o?.name||"";
     document.getElementById("o_qty").value = o?.qty??1;
     document.getElementById("o_actualqty").value = o?.actualQty ?? "";
-    document.getElementById("o_status").value = o?.receiveStatus||"transit";
+    document.getElementById("o_status").value = o?.receiveStatus||"new";
     document.getElementById("o_orderdate").value = o?.orderDate || new Date().toISOString().slice(0,10);
     document.getElementById("o_cny").value = o?.buyPriceCny ?? "";
     document.getElementById("o_kzt").value = o?.buyPriceKzt ?? "";
