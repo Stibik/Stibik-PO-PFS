@@ -1297,8 +1297,8 @@
     return Math.max(0, Math.round((end-start)/86400000));
   }
   function money(n){
-    // Аккуратное округление до 2 знаков (без "хвостов" типа 652.0799999999999)
-    return (Math.round((Number(n)||0)*100)/100).toLocaleString('ru-RU',{minimumFractionDigits:0,maximumFractionDigits:2});
+    // Округление до целых чисел — без копеек/десятых, только чистое ₸
+    return Math.round(Number(n)||0).toLocaleString('ru-RU');
   }
   let selectedOrderIds = new Set();
   const OCOL_DEFS = [
@@ -1375,20 +1375,40 @@
     });
   }
   function renderOrders(refetchNotUsed){
-    // Сводка: сколько сейчас в пути (штук и на какую сумму) и сколько уже пришло
+    // Сводка: сколько сейчас в пути и сколько уже пришло, плюс прогноз —
+    // сколько можно выручить, если продать по указанной цене "Продажа",
+    // прогноз прибыли (выручка минус закупка+доставка) и % маржи. Отдельно
+    // по "В пути", по "Пришло" и общий "Итого" по обеим группам сразу.
     const transitOrders = orders.filter(o=>{ const s = o.receiveStatus||'new'; return s==='new' || s==='transit'; });
     const arrivedOrders = orders.filter(o=>o.receiveStatus==='arrived');
     const sumCost = (list)=> list.reduce((s,o)=> s + ((Number(o.buyPriceKzt)||0)+(Number(o.deliveryPrice)||0))*(Number(o.qty)||0), 0);
     const sumQty = (list)=> list.reduce((s,o)=> s+(Number(o.qty)||0), 0);
-    document.getElementById("ordersStats").innerHTML = `
-      <div class="stat-card" style="background:#fff;border:1px solid var(--line);border-left:4px solid var(--amber);padding:12px 16px;">
-        <div style="font-size:11px;text-transform:uppercase;color:var(--ink-soft);">В пути сейчас</div>
-        <div style="font-family:var(--serif,serif);font-size:22px;">${transitOrders.length} поз. · ${sumQty(transitOrders)} шт · ${money(sumCost(transitOrders))} ₸</div>
-      </div>
-      <div class="stat-card" style="background:#fff;border:1px solid var(--line);border-left:4px solid var(--green);padding:12px 16px;">
-        <div style="font-size:11px;text-transform:uppercase;color:var(--ink-soft);">Пришло</div>
-        <div style="font-family:var(--serif,serif);font-size:22px;">${arrivedOrders.length} поз. · ${sumQty(arrivedOrders)} шт · ${money(sumCost(arrivedOrders))} ₸</div>
+    // Прогноз продаж — если продать все позиции по цене "Продажа"
+    const sumRevenue = (list)=> list.reduce((s,o)=> s + (Number(o.salePrice)||0)*(Number(o.qty)||0), 0);
+    // Прогноз прибыли — прогноз продаж минус закупка+доставка
+    const sumProfit = (list)=> sumRevenue(list) - sumCost(list);
+    // Маржа, % — прибыль от суммы прогноза продаж
+    const marginPct = (list)=>{ const rev = sumRevenue(list); return rev ? (sumProfit(list)/rev*100) : 0; };
+
+    function statCard(label, list, borderColor){
+      const profit = sumProfit(list);
+      const profitColor = profit < 0 ? "var(--red)" : "var(--green)";
+      return `
+      <div class="stat-card" style="background:#fff;border:1px solid var(--line);border-left:4px solid ${borderColor};padding:12px 16px;min-width:240px;">
+        <div style="font-size:11px;text-transform:uppercase;color:var(--ink-soft);">${label}</div>
+        <div style="font-family:var(--serif,serif);font-size:20px;">${list.length} поз. · ${sumQty(list)} шт</div>
+        <div style="font-size:12.5px;color:var(--ink-soft);margin-top:6px;line-height:1.7;">
+          Закупка: <b style="color:var(--ink);">${money(sumCost(list))} ₸</b><br>
+          Прогноз продаж: <b style="color:var(--ink);">${money(sumRevenue(list))} ₸</b><br>
+          Прогноз прибыли: <b style="color:${profitColor};">${money(profit)} ₸</b> · маржа ${Math.round(marginPct(list))}%
+        </div>
       </div>`;
+    }
+
+    document.getElementById("ordersStats").innerHTML =
+      statCard("В пути сейчас", transitOrders, "var(--amber)") +
+      statCard("Пришло", arrivedOrders, "var(--green)") +
+      statCard("Итого (пришло + в пути)", orders, "var(--navy)");
 
     // список категорий в фильтре
     const catSelect = document.getElementById("ordersFilterCategory");
