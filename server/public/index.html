@@ -104,7 +104,10 @@
     <button class="tab-btn active" data-tab="orders">Приход</button>
     <button class="tab-btn" data-tab="kaspiOrders">Заказы</button>
     <button class="tab-btn" data-tab="claims">Отмены/возвраты</button>
+    <button class="tab-btn" data-tab="catalog">Справочник</button>
     <button class="tab-btn" data-tab="price">Прайс</button>
+    <button class="tab-btn" data-tab="salary">Зарплата</button>
+    <button class="tab-btn" data-tab="production">Производство</button>
     <button class="tab-btn" data-tab="kaspi">Kaspi: настройки</button>
     <button class="tab-btn admin-only" data-tab="audit">Журнал</button>
     <button class="tab-btn admin-only" data-tab="users">Пользователи</button>
@@ -205,6 +208,20 @@
       </table>
       </div>
     </section>
+    <section id="tab-catalog" style="display:none">
+      <div class="toolbar">
+        <button class="btn amber" id="btnImportCatalog">Импорт из Kaspi (Excel)</button>
+        <input type="file" id="importCatalogInput" accept=".xlsx,.xls" style="display:none">
+        <span id="catalogImportInfo" style="font-size:12.5px;color:var(--ink-soft);"></span>
+      </div>
+      <div id="catalogStats" style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:14px;"></div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>SKU</th><th>Название (Kaspi)</th><th>Название для печати</th><th>Цена Kaspi</th><th>Себестоимость</th><th>Наличие</th><th>Допоставка</th></tr></thead>
+          <tbody id="catalogBody"><tr><td colspan="7" style="text-align:center;color:var(--ink-soft);padding:20px;">Справочник пуст — нажмите «Импорт из Kaspi», чтобы загрузить файл выгрузки активных товаров</td></tr></tbody>
+        </table>
+      </div>
+    </section>
     <section id="tab-price" style="display:none">
       <div class="toolbar">
         <button class="btn amber" id="btnAddPrice">+ Новая позиция</button>
@@ -215,6 +232,18 @@
         <thead><tr><th></th><th>Артикул/Модель</th><th>Категория</th><th>Розница</th><th></th></tr></thead>
         <tbody id="priceBody"></tbody>
       </table>
+      </div>
+    </section>
+    <section id="tab-salary" style="display:none">
+      <div style="text-align:center; padding:60px 20px; color:var(--ink-soft);">
+        <div style="font-size:16px; margin-bottom:8px; color:var(--ink);">Раздел «Зарплата» — в разработке</div>
+        <div style="font-size:13px; max-width:420px; margin:0 auto;">Будет считаться на основе справочника (себестоимость, производство) — подключим, как только настроим сам справочник</div>
+      </div>
+    </section>
+    <section id="tab-production" style="display:none">
+      <div style="text-align:center; padding:60px 20px; color:var(--ink-soft);">
+        <div style="font-size:16px; margin-bottom:8px; color:var(--ink);">Раздел «Производство» — в разработке</div>
+        <div style="font-size:13px; max-width:420px; margin:0 auto;">Будет связан со справочником товаров — подключим следующим шагом</div>
       </div>
     </section>
     <section id="tab-kaspi" style="display:none">
@@ -681,6 +710,134 @@
     XLSX.writeFile(wb, `прайс_${new Date().toISOString().slice(0,10)}.xlsx`);
   });
 
+  // ---------- Справочник товаров (импорт из выгрузки Kaspi "Активные товары") ----------
+  // Формат подтверждён на реальном файле: SKU, model, brand, price, PP1..PP5 (наличие
+  // по пунктам выдачи, yes/no), preorder (дни допоставки). Лист2 в файле — просто
+  // легенда полей, его не читаем.
+  // ВАЖНО: сырое название (model) неоднородное — где-то есть вес, где-то нет, бренд
+  // пишется по-разному. Поэтому "Название для печати" и "Себестоимость" — только
+  // ручной ввод, один раз на SKU; автоматически подтягиваются только те поля, что
+  // реально есть в выгрузке Kaspi (название, цена, наличие, допоставка).
+  // Хранится в той же таблице, что и "Прайс" (price_items) — справочник и прайс
+  // это один и тот же набор товаров, просто с разными колонками.
+  let catalogItems = [];
+
+  async function loadCatalog(){
+    try{
+      catalogItems = await api("/catalog");
+      renderCatalog();
+    }catch(e){
+      document.getElementById("catalogBody").innerHTML = `<tr><td colspan="7" style="color:var(--red);padding:20px;">Ошибка загрузки справочника: ${esc(e.message)}</td></tr>`;
+    }
+  }
+
+  document.getElementById("btnImportCatalog").addEventListener("click", ()=>document.getElementById("importCatalogInput").click());
+  document.getElementById("importCatalogInput").addEventListener("change",(e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = async function(ev){
+      try{
+        const wb = XLSX.read(ev.target.result, {type:"array"});
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, {header:1, defval:"", raw:true});
+        if(!rows.length){ toast("Файл пуст"); return; }
+        const header = rows[0].map(h=>String(h||"").trim().toLowerCase());
+        const idx = {
+          sku: header.indexOf("sku"),
+          model: header.indexOf("model"),
+          price: header.indexOf("price"),
+          preorder: header.indexOf("preorder")
+        };
+        const ppCols = [];
+        header.forEach((h,i)=>{ if(/^pp\s*\d+$/.test(h)) ppCols.push(i); });
+        if(idx.sku===-1 || idx.model===-1){
+          toast("Не нашёл колонки SKU/model — это точно выгрузка «Активные товары» из Kaspi?");
+          return;
+        }
+        const parsed = [];
+        for(let r=1;r<rows.length;r++){
+          const row = rows[r];
+          if(!row || !row.length) continue;
+          const sku = String(row[idx.sku]??"").trim();
+          const model = String(row[idx.model]??"").trim();
+          if(!sku && !model) continue;
+          const inStockCount = ppCols.filter(ci=> String(row[ci]||"").trim().toLowerCase()==="yes").length;
+          parsed.push({
+            sku, kaspiName: model,
+            kaspiPrice: idx.price>=0 ? (parseFloat(row[idx.price])||0) : 0,
+            inStockPoints: inStockCount, totalPoints: ppCols.length,
+            preorderDays: idx.preorder>=0 ? (parseInt(row[idx.preorder])||0) : 0
+          });
+        }
+        if(!parsed.length){ toast("Не нашлось ни одной строки с товаром"); return; }
+
+        document.getElementById("catalogImportInfo").textContent = "Сохраняю на сервере...";
+        const result = await api("/catalog/import", {method:"POST", body:JSON.stringify({items: parsed})});
+        document.getElementById("catalogImportInfo").textContent =
+          `Готово: новых ${result.added}, обновлено ${result.updated}${result.skipped?', пропущено '+result.skipped:''}`;
+        await loadCatalog();
+        toast(`Справочник обновлён: +${result.added} новых, ~${result.updated} обновлено`);
+      }catch(err){
+        console.error(err);
+        toast("Ошибка: "+(err.message||"не удалось прочитать файл"));
+      }
+      e.target.value = "";
+    };
+    reader.readAsArrayBuffer(file);
+  });
+
+  function renderCatalog(){
+    const totalCount = catalogItems.length;
+    const withPrintName = catalogItems.filter(it=>it.printName).length;
+    const withCost = catalogItems.filter(it=>it.costPrice!=null).length;
+    document.getElementById("catalogStats").innerHTML = totalCount ? `
+      <div class="stat-card" style="background:#fff;border:1px solid var(--line);border-left:4px solid var(--navy);padding:12px 16px;">
+        <div style="font-size:11px;text-transform:uppercase;color:var(--ink-soft);">Всего в справочнике</div>
+        <div style="font-family:var(--serif,serif);font-size:22px;">${totalCount}</div>
+      </div>
+      <div class="stat-card" style="background:#fff;border:1px solid var(--line);border-left:4px solid var(--amber);padding:12px 16px;">
+        <div style="font-size:11px;text-transform:uppercase;color:var(--ink-soft);">Без имени для печати</div>
+        <div style="font-family:var(--serif,serif);font-size:22px;">${totalCount-withPrintName}</div>
+      </div>
+      <div class="stat-card" style="background:#fff;border:1px solid var(--line);border-left:4px solid var(--amber);padding:12px 16px;">
+        <div style="font-size:11px;text-transform:uppercase;color:var(--ink-soft);">Без себестоимости</div>
+        <div style="font-family:var(--serif,serif);font-size:22px;">${totalCount-withCost}</div>
+      </div>` : "";
+
+    const body = document.getElementById("catalogBody");
+    if(!catalogItems.length){
+      body.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--ink-soft);padding:20px;">Справочник пуст — нажмите «Импорт из Kaspi», чтобы загрузить файл выгрузки активных товаров</td></tr>`;
+      return;
+    }
+    body.innerHTML = catalogItems.map((it)=>`
+      <tr>
+        <td class="mono" style="font-size:11.5px;">${esc(it.article)}</td>
+        <td>${esc(it.kaspiName||"—")}</td>
+        <td><input type="text" data-catalog-id="${it.id}" data-field="printName" value="${esc(it.printName)}" placeholder="Своё название..." style="width:100%;"></td>
+        <td class="num">${it.kaspiPrice ? money(it.kaspiPrice)+" ₸" : "—"}</td>
+        <td class="num"><input type="number" data-catalog-id="${it.id}" data-field="costPrice" value="${it.costPrice??''}" placeholder="—" style="width:90px;text-align:right;"></td>
+        <td>${it.totalPoints ? it.inStockPoints+"/"+it.totalPoints : "—"}</td>
+        <td>${it.preorderDays ? it.preorderDays+' дн.' : '—'}</td>
+      </tr>`).join("");
+    body.querySelectorAll("input[data-catalog-id]").forEach(inp=>{
+      inp.addEventListener("change", async ()=>{
+        const id = inp.dataset.catalogId;
+        const field = inp.dataset.field;
+        const value = field==="costPrice" ? (inp.value===""?null:parseFloat(inp.value)||0) : inp.value;
+        try{
+          await api("/catalog/"+id, {method:"PUT", body:JSON.stringify({[field]: value})});
+          const it = catalogItems.find(x=>x.id===id);
+          if(it) it[field] = value;
+          toast("Сохранено");
+        }catch(e){
+          toast("Ошибка сохранения: "+e.message);
+          await loadCatalog(); // откатываем визуально к тому, что реально в базе
+        }
+      });
+    });
+  }
+
   document.getElementById("btnLogout").addEventListener("click", async ()=>{
     stopAutoSync();
     await api("/auth/logout", {method:"POST"});
@@ -691,7 +848,8 @@
     b.addEventListener("click", ()=>{
       document.querySelectorAll(".tab-btn").forEach(x=>x.classList.remove("active"));
       b.classList.add("active");
-      ["orders","kaspiOrders","claims","price","kaspi","audit","users"].forEach(t=> document.getElementById("tab-"+t).style.display = (t===b.dataset.tab)?"":"none");
+      ["orders","kaspiOrders","claims","price","catalog","salary","production","kaspi","audit","users"].forEach(t=> document.getElementById("tab-"+t).style.display = (t===b.dataset.tab)?"":"none");
+      if(b.dataset.tab === "catalog") loadCatalog();
       if(b.dataset.tab === "kaspiOrders") renderKaspiOrders();
       if(b.dataset.tab === "claims") { if(!kaspiOrders.length) renderKaspiOrders().then(renderClaims); else renderClaims(); }
       if(b.dataset.tab === "kaspi") loadKaspiSettings();
