@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Учёт заказов — онлайн</title>
 <script src="/xlsx.core.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/JsBarcode/3.11.5/JsBarcode.all.min.js"></script>
 <style>
   :root{
     --paper:#FAF7F0; --ink:#20242B; --ink-soft:#565B66; --navy:#1E2A44; --navy-light:#2C3B5C;
@@ -120,6 +121,7 @@
         <div style="position:relative;">
           <button class="btn secondary" id="btnOrdersColSettings" style="padding:7px 12px;">⚙️ Колонки</button>
           <div id="ordersColPopover" style="display:none; position:absolute; top:40px; left:0; background:#fff; border:1px solid var(--line); border-radius:8px; box-shadow:0 6px 20px rgba(0,0,0,0.15); padding:12px 16px; z-index:20; min-width:200px;">
+            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="ocol" data-col="arrived" checked> Дата прихода</label>
             <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="ocol" data-col="days" checked> Дней в пути</label>
             <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="ocol" data-col="cny" checked> Юань</label>
             <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="ocol" data-col="kzt" checked> ₸/шт</label>
@@ -131,6 +133,7 @@
           </div>
         </div>
         <button class="btn secondary" id="btnManageCategories" style="padding:7px 12px;">Категории</button>
+        <input type="text" id="ordersSearch" placeholder="Поиск по артикулу/названию..." style="padding:7px 10px; min-width:220px;">
         <div style="display:flex; gap:8px; flex-wrap:wrap; margin-left:auto;">
           <select id="ordersFilterStatus" style="padding:7px 10px;">
             <option value="all">Все статусы</option>
@@ -238,6 +241,7 @@
 <div class="overlay" id="orderOverlay">
   <div class="modal">
     <h3 id="orderModalTitle">Новый заказ</h3>
+    <div id="orderArrivedDateInfo" style="display:none; font-size:12.5px; color:var(--green); margin-bottom:10px;"></div>
     <div class="grid2">
       <div class="full">
         <label>Фото</label>
@@ -479,6 +483,49 @@
   }
 
   // ---------- Экспорт в Excel ----------
+  // ---------- Печать этикетки (термопринтер 58x30мм) ----------
+  window.__printOrderLabel = function(id){
+    const o = orders.find(x=>x.id===id);
+    if(!o) return;
+    const w = window.open("", "_blank", "width=420,height=520");
+    if(!w){ toast("Браузер заблокировал открытие окна"); return; }
+    const defaultCode = o.article || String(o.receiptNumber||"");
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Этикетка</title>
+      <style>
+        @page{ size: 58mm 30mm; margin: 0; }
+        body{ font-family: Arial, sans-serif; margin:0; padding:8px; width:58mm; box-sizing:border-box; }
+        .toolbar{ padding:10px; background:#f4f0e4; }
+        .toolbar input{ width:100%; padding:6px; margin-bottom:8px; box-sizing:border-box; }
+        .toolbar label{ font-size:11px; color:#666; }
+        .label{ width:58mm; min-height:30mm; box-sizing:border-box; padding:2mm; text-align:center; }
+        .label .name{ font-size:9px; line-height:1.2; max-height:22px; overflow:hidden; margin-bottom:2px; }
+        .label svg{ width:100%; height:auto; }
+        @media print{ .toolbar{ display:none; } }
+      </style></head><body>
+      <div class="toolbar">
+        <label>Что закодировать в штрихкоде (можно изменить):</label>
+        <input type="text" id="code" value="${defaultCode.replace(/"/g,'&quot;')}">
+        <button onclick="renderBarcode()" style="padding:6px 12px;">Обновить</button>
+        <button onclick="window.print()" style="padding:6px 12px; background:#C8862B; color:#fff; border:none; border-radius:4px;">🖨️ Печать (58×30мм)</button>
+      </div>
+      <div class="label">
+        <div class="name">${esc(o.name||o.article||"")}</div>
+        <svg id="barcodeSvg"></svg>
+      </div>
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/JsBarcode/3.11.5/JsBarcode.all.min.js"><\/script>
+      <script>
+        function renderBarcode(){
+          const val = document.getElementById("code").value || "0";
+          try{
+            JsBarcode("#barcodeSvg", val, { format: "CODE128", height: 40, fontSize: 12, margin: 2 });
+          }catch(e){ document.getElementById("barcodeSvg").outerHTML = "<div style=color:red;>Некорректное значение для штрихкода</div>"; }
+        }
+        renderBarcode();
+      <\/script>
+      </body></html>`);
+    w.document.close();
+  };
+
   document.getElementById("btnBulkDeleteOrders").addEventListener("click", async ()=>{
     if(!selectedOrderIds.size) return;
     if(!confirm(`Удалить ${selectedOrderIds.size} записей безвозвратно?`)) return;
@@ -1197,6 +1244,7 @@
     {key:"name", label:"Артикул/Название", sort:"name", always:true},
     {key:"qty", label:"Кол-во", sort:"qty", always:true},
     {key:"date", label:"Дата заказа", sort:"orderDate", always:true},
+    {key:"arrived", label:"Дата прихода", sort:"arrivedDate"},
     {key:"days", label:"Дней в пути", sort:"days", num:true},
     {key:"cny", label:"Юань", num:true},
     {key:"kzt", label:"₸/шт", num:true},
@@ -1207,9 +1255,14 @@
     {key:"category", label:"Категория", sort:"category"},
     {key:"status", label:"Статус", sort:"receiveStatus", always:true}
   ];
-  let ordersVisibleCols = JSON.parse(localStorage.getItem("ordersCols")||"null") || {days:true,cny:true,kzt:true,delivery:true,total:true,sale:true,margin:true,category:true};
+  let ordersVisibleCols = JSON.parse(localStorage.getItem("ordersCols")||"null") || {arrived:true,days:true,cny:true,kzt:true,delivery:true,total:true,sale:true,margin:true,category:true};
   let ordersFilterStatus = "all";
   let ordersFilterCategory = "all";
+  let ordersSearchQuery = "";
+  document.getElementById("ordersSearch").addEventListener("input",(e)=>{
+    ordersSearchQuery = e.target.value.trim().toLowerCase();
+    renderOrders(false);
+  });
 
   document.getElementById("btnOrdersColSettings").addEventListener("click",(e)=>{
     e.stopPropagation();
@@ -1293,6 +1346,10 @@
     let list = orders.slice();
     if(ordersFilterStatus!=="all") list = list.filter(o=>(o.receiveStatus||'transit')===ordersFilterStatus);
     if(ordersFilterCategory!=="all") list = list.filter(o=>o.category===ordersFilterCategory);
+    if(ordersSearchQuery) list = list.filter(o=>
+      (o.article||"").toLowerCase().includes(ordersSearchQuery) ||
+      (o.name||"").toLowerCase().includes(ordersSearchQuery)
+    );
     list = sortOrders(list);
 
     const cellFor = (o,key)=>{
@@ -1300,10 +1357,11 @@
       const totalCost = ((Number(o.buyPriceKzt)||0) + (Number(o.deliveryPrice)||0)) * (Number(o.qty)||0);
       const margin = (Number(o.salePrice)||0) - (Number(o.buyPriceKzt)||0) - (Number(o.deliveryPrice)||0);
       if(key==="num") return esc(o.receiptNumber||"");
-      if(key==="photo") return o.photo?`<img class="thumb" src="${esc(o.photo)}">`:"";
+      if(key==="photo") return o.photo?`<img class="thumb" src="${esc(o.photo)}" style="cursor:zoom-in;" onclick="window.open('${esc(o.photo)}','_blank')">`:"";
       if(key==="name") return `${esc(o.name||o.article||"—")}<div style="font-size:11px;color:var(--ink-soft)">${esc(o.article||"")}</div>`;
       if(key==="qty") return esc(o.qty||"");
       if(key==="date") return `<span class="mono" style="white-space:nowrap;">${fmtDate(o.orderDate)}</span>`;
+      if(key==="arrived") return `<span class="mono" style="white-space:nowrap;">${fmtDate(o.arrivedDate)}</span>`;
       if(key==="days") return days==null?"—":`<span style="${days>14?'color:var(--red);font-weight:700;':''}">${days}</span>`;
       if(key==="cny") return money(o.buyPriceCny)+" ¥";
       if(key==="kzt") return money(o.buyPriceKzt)+" ₸";
@@ -1321,7 +1379,7 @@
       <tr>
         <td><input type="checkbox" class="order-select" data-id="${o.id}" ${selectedOrderIds.has(o.id)?'checked':''}></td>
         ${cols.map(c=>`<td class="${c.num?'num':''}">${cellFor(o,c.key)}</td>`).join("")}
-        <td><button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__openOrder('${o.id}')">Открыть</button></td>
+        <td><button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__openOrder('${o.id}')">Открыть</button> <button class="btn secondary" style="padding:4px 8px;font-size:12px" title="Печать этикетки" onclick="window.__printOrderLabel('${o.id}')">🏷️</button></td>
       </tr>`).join("") || `<tr><td colspan="${cols.length+2}" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет записей, подходящих под фильтр</td></tr>`;
     document.querySelectorAll(".order-select").forEach(cb=>{
       cb.addEventListener("change", ()=>{
@@ -1390,6 +1448,9 @@
     editingOrderId = id || null;
     const o = id ? orders.find(x=>x.id===id) : null;
     document.getElementById("orderModalTitle").textContent = o ? "Заказ" : "Новый заказ";
+    const arrInfo = document.getElementById("orderArrivedDateInfo");
+    if(o?.arrivedDate){ arrInfo.style.display=""; arrInfo.textContent = `✓ Пришло: ${fmtDate(o.arrivedDate)}`; }
+    else arrInfo.style.display = "none";
     document.getElementById("orderDeleteBtn").style.display = o ? "" : "none";
     document.getElementById("o_article").value = o?.article||"";
     document.getElementById("o_name").value = o?.name||"";
