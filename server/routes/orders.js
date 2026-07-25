@@ -84,7 +84,7 @@ router.post("/", (req, res) => {
      buy_price_cny, buy_price_kzt, delivery_price, sale_price, category, status, created_at, updated_at)
     VALUES (?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'preorder', ?, ?)`)
     .run(id, receiptNumber, b.article || "", b.name || "", b.qty || 0, b.note || "", b.photo || null,
-         b.receiveStatus || b.status || "transit", b.orderDate || now.slice(0,10),
+         b.receiveStatus || b.status || "new", b.orderDate || now.slice(0,10),
          b.buyPriceCny || 0, b.buyPriceKzt || 0, b.deliveryPrice || 0, b.salePrice || 0, b.category || "", now, now);
   logAudit({ user: req.session.username, action: "create_order", orderId: id, newValue: b.name || b.article });
   const row = db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
