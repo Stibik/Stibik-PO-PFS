@@ -199,7 +199,7 @@
       </div>
 <div class="tbl-wrap">
             <table>
-        <thead><tr><th>№</th><th>Kaspi код</th><th>Магазин</th><th>Наименование</th><th>Статус</th><th>Заметка</th><th></th></tr></thead>
+        <thead><tr><th>№</th><th>Kaspi код</th><th>Магазин</th><th>Наименование</th><th>Статус</th><th>Дата отмены</th><th>Заметка</th><th></th></tr></thead>
         <tbody id="claimsBody"></tbody>
       </table>
       </div>
@@ -954,9 +954,13 @@
         <td>${esc(o.shop||"")}</td>
         <td>${esc(o.productName||"—")}</td>
         <td>${esc(statusLabelKaspi(o.kaspiStatus))}</td>
+        <td class="mono" style="white-space:nowrap;" title="Дата последней синхронизации с этим статусом — точное поле даты отмены от Kaspi ещё не подтверждено, см. «Детали»">${fmtDate((o.updatedAt||"").slice(0,10))}</td>
         <td style="max-width:220px;font-size:12.5px;color:var(--ink-soft);">${esc(o.claimNote||"")}</td>
-        <td><button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__openClaim('${o.id}')">${o.claimResolved?'Открыть':'Обработать'}</button></td>
-      </tr>`).join("") || `<tr><td colspan="7" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет отмен/возвратов${showClosed?'':' (не закрытых)'}</td></tr>`;
+        <td style="white-space:nowrap;">
+          <button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__openClaim('${o.id}')">${o.claimResolved?'Открыть':'Обработать'}</button>
+          <button class="btn secondary" style="padding:4px 8px;font-size:12px" onclick="window.__openKaspiDetail('${o.id}')">Детали</button>
+        </td>
+      </tr>`).join("") || `<tr><td colspan="8" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет отмен/возвратов${showClosed?'':' (не закрытых)'}</td></tr>`;
   }
 
   window.__openClaim = function(id){
@@ -1172,12 +1176,18 @@
     const sd = stageDef(o.stage);
     const paymentLabels = { PAY_WITH_CREDIT: "В кредит", CASH: "Наличными", PREPAID: "Предоплата" };
     const paymentText = paymentLabels[raw.paymentMode] || (raw.paymentMode ? esc(raw.paymentMode) : "не указано в данных Kaspi");
+    const customer = raw.customer || {};
+    const customerText = (customer.name || customer.cellPhone)
+      ? `${esc(customer.name||"")} ${customer.cellPhone?('· '+esc(customer.cellPhone)):''}`
+      : "нет данных о клиенте в этом заказе";
     const summaryRows = [
       ["Стадия", `<span class="stamp" style="color:${sd.color};background:${sd.bg};border-color:${sd.color};">${esc(sd.label)}</span>`],
       ["Наименование", esc(o.productName||"—")],
+      ["Клиент", customerText],
       ["Способ оплаты", paymentText],
       ["Плановая дата отправки/передачи курьеру", fmtDate(o.courierHandoverDate)||"пока не назначена"],
       ["Дата передачи в логистику Kaspi", fmtDate(o.courierTransmissionDate)||"ещё не передан"],
+      ["Дата последнего обновления в нашей системе", fmtDate((o.updatedAt||"").slice(0,10))+" — приблизительно, точное поле даты отмены от Kaspi см. ниже в технических полях"],
       ["Накладная (грузовое место)", o.waybillUrl
         ? `<button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__printWaybill('${o.id}')">🖨️ Печать</button>${o.printed?' <span style="color:var(--green);font-size:11px;">✓ распечатано</span>':''}`
         : `<span style="color:var(--ink-soft);">ещё не сформирована (появится после упаковки)</span>`]
