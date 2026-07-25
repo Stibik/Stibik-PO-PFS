@@ -34,6 +34,7 @@ function rowToOrder(row) {
     deliveryPrice: row.delivery_price,
     salePrice: row.sale_price,
     category: row.category,
+    actualQty: row.actual_qty,
     status: row.status,
     statusLabel: STATUS_LABELS[row.status] || row.status,
     kaspiStatus: row.kaspi_status,
@@ -104,7 +105,7 @@ router.put("/:id", (req, res) => {
     article: "article", name: "name", qty: "qty", note: "note", photo: "photo",
     receiveStatus: "receive_status", orderDate: "order_date",
     buyPriceCny: "buy_price_cny", buyPriceKzt: "buy_price_kzt", deliveryPrice: "delivery_price",
-    salePrice: "sale_price", category: "category",
+    salePrice: "sale_price", category: "category", actualQty: "actual_qty",
     claimNote: "claim_note", claimResolved: "claim_resolved", printed: "printed"
   };
   for (const [jsKey, col] of Object.entries(map)) {
