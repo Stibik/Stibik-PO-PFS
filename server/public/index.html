@@ -1050,8 +1050,15 @@
     if(order.status !== "shipped" && order.status !== "cancelled"){
       const cancelBtn = document.createElement("button");
       cancelBtn.className = "btn danger";
+      cancelBtn.style.marginLeft = "24px";
+      cancelBtn.style.opacity = "0.85";
       cancelBtn.textContent = "Отменить заказ";
-      cancelBtn.onclick = ()=>doTransition(order.id, "cancelled");
+      cancelBtn.onclick = ()=>{
+        if(!confirm("Вы точно хотите отменить этот заказ? Это действие сложно обратить.")) return;
+        const reason = prompt("Укажите причину отмены (обязательно):");
+        if(!reason || !reason.trim()){ toast("Без причины отмена не выполнена"); return; }
+        doTransition(order.id, "cancelled", reason.trim());
+      };
       actions.appendChild(cancelBtn);
     }
     if(myRole === "admin"){
