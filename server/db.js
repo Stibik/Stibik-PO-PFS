@@ -193,6 +193,7 @@ export function ensureSchema() {
   safeAddColumn("price_items", "kaspi_total_points INTEGER");    // всего ПВЗ в выгрузке
   safeAddColumn("price_items", "kaspi_preorder_days INTEGER");   // дни допоставки
   safeAddColumn("price_items", "kaspi_synced_at TEXT");          // когда последний раз обновлено импортом
+  safeAddColumn("price_items", "subgroup TEXT");                 // "Подраздел" — второй уровень группировки внутри категории (type), для печатного прайса
 
   const kaspiShopsRow = db.prepare("SELECT value FROM settings WHERE key = 'kaspi_shops'").get();
   if (!kaspiShopsRow) {
