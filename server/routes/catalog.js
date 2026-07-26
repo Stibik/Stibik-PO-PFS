@@ -142,4 +142,49 @@ router.delete("/:id", (req, res) => {
   res.json({ ok: true });
 });
 
+// Массовое обновление ручных полей — сценарий "выгрузили в Excel, заполнили
+// материалы/расценки/группы для многих товаров разом, загружаем обратно".
+// Сопоставление по article (SKU). НЕ создаёт новые позиции и не трогает
+// kaspi_* поля — только уже существующие строки и только ручные колонки.
+router.post("/bulk-update", (req, res) => {
+  const items = Array.isArray(req.body?.items) ? req.body.items : [];
+  if (!items.length) return res.status(400).json({ error: "empty_items", message: "Список пуст" });
+
+  const map = {
+    printName: "name", category: "type", subgroup: "subgroup",
+    material: "material", color: "color", height: "height", diameter: "diameter",
+    weight: "weight", mount: "mount", note: "note",
+    laborRate: "labor_rate", materialCost: "material_cost", miscCost: "misc_cost", ragsCost: "rags_cost",
+    costPrice: "cost", retailPrice: "retail"
+  };
+  const numericFields = new Set(["height","diameter","weight","laborRate","materialCost","miscCost","ragsCost","costPrice","retailPrice"]);
+
+  let updated = 0, notFound = 0;
+  for (const it of items) {
+    const sku = String(it.article || "").trim();
+    if (!sku) continue;
+    const existing = db.prepare("SELECT id FROM price_items WHERE article = ?").get(sku);
+    if (!existing) { notFound++; continue; }
+
+    const updates = [];
+    const params = [];
+    for (const [jsKey, col] of Object.entries(map)) {
+      if (Object.prototype.hasOwnProperty.call(it, jsKey)) {
+        updates.push(`${col} = ?`);
+        let v = it[jsKey];
+        if (numericFields.has(jsKey) && v !== null && v !== "") v = Number(v) || 0;
+        if (numericFields.has(jsKey) && (v === "" || v === undefined)) v = null;
+        params.push(v);
+      }
+    }
+    if (updates.length) {
+      params.push(existing.id);
+      db.prepare(`UPDATE price_items SET ${updates.join(", ")} WHERE id = ?`).run(...params);
+      updated++;
+    }
+  }
+  logAudit({ user: req.session.username, action: "catalog_bulk_update", comment: `~${updated} (не найдено: ${notFound})` });
+  res.json({ updated, notFound });
+});
+
 export default router;
