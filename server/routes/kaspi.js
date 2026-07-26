@@ -18,6 +18,24 @@ function getConfiguredShops() {
   return shops;
 }
 
+// Достаём артикул (SKU) товара из сырых данных о позициях заказа — та же
+// структура entriesRaw.data[0].attributes.offer.code, что разбирали раньше.
+// Берём только первую позицию — для заказов с несколькими товарами это
+// упрощение, производство пока привязывается к первому товару в заказе.
+function extractArticle(entriesRaw) {
+  try {
+    return entriesRaw?.data?.[0]?.attributes?.offer?.code || null;
+  } catch (e) { return null; }
+}
+function extractOfferName(entriesRaw) {
+  try {
+    return entriesRaw?.data?.[0]?.attributes?.offer?.name || null;
+  } catch (e) { return null; }
+}
+function genId(prefix) {
+  return prefix + "_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+
 router.get("/shops", (req, res) => {
   res.json(getConfiguredShops().map(s => s.name));
 });
@@ -67,6 +85,20 @@ router.post("/sync", async (req, res) => {
                  ko.productPhoto || null, ko.waybillUrl, JSON.stringify(ko.raw || {}),
                  JSON.stringify(ko.entriesRaw || {}), updatedAtValue, existing.id);
           updated++;
+
+          // Пополнение виртуального склада: если заказ только что стал отменён
+          // или возвращён, а товар уже был собран (assembled=true) — значит
+          // физически готовое изделие освободилось и его можно отдать под
+          // следующий такой же заказ вместо нового производства.
+          const justCancelledOrReturned = statusChanged && (ko.status === "CANCELLED" || ko.status === "RETURNED");
+          if (justCancelledOrReturned && ko.assembled) {
+            const article = extractArticle(ko.entriesRaw);
+            db.prepare(`INSERT INTO warehouse_stock
+              (id, article, product_name, source, source_order_id, qty, consumed, created_at)
+              VALUES (?, ?, ?, ?, ?, 1, 0, ?)`)
+              .run(genId("wh"), article, ko.productName || extractOfferName(ko.entriesRaw),
+                   ko.status === "CANCELLED" ? "cancelled" : "returned", existing.id, now);
+          }
         } else {
           if (ko.deliveryState === "ARCHIVE" && !includeArchive) { skippedArchive++; continue; }
           const displayNumber = nextKaspiNumber(shop.name);
@@ -81,6 +113,14 @@ router.post("/sync", async (req, res) => {
                  ko.totalPrice, ko.productName, ko.productPhoto || null, ko.waybillUrl,
                  JSON.stringify(ko.raw || {}), JSON.stringify(ko.entriesRaw || {}), now, now);
           added++;
+
+          // Каждый новый заказ автоматически создаёт запись в "Производстве" —
+          // ждёт решения (списать с остатков / присвоить исполнителя / перекрыть
+          // возвратом), пока decision не заполнен (NULL).
+          const article = extractArticle(ko.entriesRaw);
+          db.prepare(`INSERT INTO production (id, order_id, article, product_name, created_at)
+                      VALUES (?, ?, ?, ?, ?)`)
+            .run(genId("prod"), id, article, ko.productName || extractOfferName(ko.entriesRaw), now);
         }
       }
       results.push({ shop: shop.name, ok: true, added, updated, skippedArchive, total: kaspiOrders.length });
