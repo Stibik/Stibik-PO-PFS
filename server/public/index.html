@@ -217,8 +217,8 @@
       <div id="catalogStats" style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:14px;"></div>
       <div class="tbl-wrap">
         <table>
-          <thead><tr><th>SKU</th><th>Название (Kaspi)</th><th>Название для печати</th><th>Цена Kaspi</th><th>Себестоимость</th><th>Наличие</th><th>Допоставка</th></tr></thead>
-          <tbody id="catalogBody"><tr><td colspan="7" style="text-align:center;color:var(--ink-soft);padding:20px;">Справочник пуст — нажмите «Импорт из Kaspi», чтобы загрузить файл выгрузки активных товаров</td></tr></tbody>
+          <thead><tr><th>SKU</th><th>Название (Kaspi)</th><th>Название для печати</th><th>Категория</th><th>Подраздел</th><th>Цена Kaspi</th><th>Себестоимость</th><th>Наличие</th><th>Допоставка</th><th></th></tr></thead>
+          <tbody id="catalogBody"><tr><td colspan="10" style="text-align:center;color:var(--ink-soft);padding:20px;">Справочник пуст — нажмите «Импорт из Kaspi», чтобы загрузить файл выгрузки активных товаров</td></tr></tbody>
         </table>
       </div>
     </section>
@@ -807,7 +807,7 @@
 
     const body = document.getElementById("catalogBody");
     if(!catalogItems.length){
-      body.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--ink-soft);padding:20px;">Справочник пуст — нажмите «Импорт из Kaspi», чтобы загрузить файл выгрузки активных товаров</td></tr>`;
+      body.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--ink-soft);padding:20px;">Справочник пуст — нажмите «Импорт из Kaspi», чтобы загрузить файл выгрузки активных товаров</td></tr>`;
       return;
     }
     body.innerHTML = catalogItems.map((it)=>`
@@ -815,10 +815,13 @@
         <td class="mono" style="font-size:11.5px;">${esc(it.article)}</td>
         <td>${esc(it.kaspiName||"—")}</td>
         <td><input type="text" data-catalog-id="${it.id}" data-field="printName" value="${esc(it.printName)}" placeholder="Своё название..." style="width:100%;"></td>
+        <td><input type="text" data-catalog-id="${it.id}" data-field="category" value="${esc(it.category)}" placeholder="Категория..." style="width:100%;"></td>
+        <td><input type="text" data-catalog-id="${it.id}" data-field="subgroup" value="${esc(it.subgroup)}" placeholder="Подраздел..." style="width:100%;"></td>
         <td class="num">${it.kaspiPrice ? money(it.kaspiPrice)+" ₸" : "—"}</td>
         <td class="num"><input type="number" data-catalog-id="${it.id}" data-field="costPrice" value="${it.costPrice??''}" placeholder="—" style="width:90px;text-align:right;"></td>
         <td>${it.totalPoints ? it.inStockPoints+"/"+it.totalPoints : "—"}</td>
         <td>${it.preorderDays ? it.preorderDays+' дн.' : '—'}</td>
+        <td><button class="btn danger" style="padding:4px 10px;font-size:12px" onclick="window.__deleteCatalogItem('${it.id}')">Удалить</button></td>
       </tr>`).join("");
     body.querySelectorAll("input[data-catalog-id]").forEach(inp=>{
       inp.addEventListener("change", async ()=>{
@@ -837,6 +840,17 @@
       });
     });
   }
+
+  window.__deleteCatalogItem = async function(id){
+    const it = catalogItems.find(x=>x.id===id);
+    const label = it ? (it.printName || it.kaspiName || it.article) : id;
+    if(!confirm(`Удалить «${label}» из справочника? Это действие необратимо.`)) return;
+    try{
+      await api("/catalog/"+id, {method:"DELETE"});
+      await loadCatalog();
+      toast("Удалено из справочника");
+    }catch(e){ toast("Ошибка удаления: "+e.message); }
+  };
 
   document.getElementById("btnLogout").addEventListener("click", async ()=>{
     stopAutoSync();
