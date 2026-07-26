@@ -145,6 +145,42 @@ CREATE TABLE IF NOT EXISTS categories (
   name TEXT PRIMARY KEY
 );
 
+CREATE TABLE IF NOT EXISTS employees (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  active INTEGER DEFAULT 1,
+  created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS production (
+  id TEXT PRIMARY KEY,
+  order_id TEXT NOT NULL,
+  article TEXT,
+  product_name TEXT,
+  decision TEXT,              -- 'stock' | 'assigned' | 'return_offset' | NULL (пока не решено)
+  employee_id TEXT,
+  paid INTEGER DEFAULT 0,      -- оплачено ли исполнителю (актуально для decision='assigned')
+  warehouse_stock_id TEXT,     -- если списано со склада — какая именно запись использована
+  created_at TEXT,
+  resolved_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS warehouse_stock (
+  id TEXT PRIMARY KEY,
+  article TEXT,
+  product_name TEXT,
+  source TEXT,                -- 'cancelled' | 'returned' | 'overproduced'
+  source_order_id TEXT,
+  qty INTEGER DEFAULT 1,
+  consumed INTEGER DEFAULT 0,
+  consumed_by_order_id TEXT,
+  created_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_production_order ON production(order_id);
+CREATE INDEX IF NOT EXISTS idx_warehouse_article ON warehouse_stock(article);
+CREATE INDEX IF NOT EXISTS idx_warehouse_consumed ON warehouse_stock(consumed);
+
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT
