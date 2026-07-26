@@ -298,13 +298,10 @@
         <h3 style="font-family:var(--serif); font-weight:400; margin-bottom:6px;">Нумерация заказов</h3>
         <p style="font-size:12.5px; color:var(--ink-soft); margin-top:0;">
           Внутренний короткий номер заказа (тот, что видят сотрудники и печатается на этикетках) — не код Kaspi.
+          У каждого магазина свой отдельный счётчик, чтобы номера SA и PFS не путались между собой.
           Можно продолжить счёт с того места, где остановились в PRODIX или на бумаге, вместо того чтобы начинать с 1.
         </p>
-        <div style="display:flex; gap:10px; align-items:center;">
-          <span style="font-size:13px;">Следующий заказ получит номер:</span>
-          <input type="number" id="orderNumberingInput" min="1" style="width:120px;">
-          <button class="btn secondary" id="btnSaveOrderNumbering" style="padding:7px 14px;">Сохранить</button>
-        </div>
+        <div id="orderNumberingShops"></div>
         <div id="orderNumberingMsg" style="margin-top:8px; font-size:12.5px;"></div>
       </div>
     </section>
@@ -1714,25 +1711,35 @@
 
   // ---------- Нумерация заказов (внутренний короткий номер, не код Kaspi) ----------
   async function loadOrderNumbering(){
+    const wrap = document.getElementById("orderNumberingShops");
     try{
       const data = await api("/counters/order-numbering");
-      document.getElementById("orderNumberingInput").value = data.nextNumber;
+      wrap.innerHTML = data.shops.length ? data.shops.map(s=>`
+        <div style="display:flex; gap:10px; align-items:center; margin-bottom:8px;">
+          <span style="font-size:13px; min-width:140px;">${esc(s.shop)} — следующий номер:</span>
+          <input type="number" min="1" class="order-numbering-input" data-shop="${esc(s.shop)}" value="${s.nextNumber}" style="width:120px;">
+          <button class="btn secondary" style="padding:6px 12px;font-size:13px;" data-save-shop="${esc(s.shop)}">Сохранить</button>
+        </div>`).join("") : `<div style="color:var(--ink-soft);font-size:13px;">Сначала заполните и сохраните токены магазинов выше</div>`;
+      wrap.querySelectorAll("[data-save-shop]").forEach(btn=>{
+        btn.addEventListener("click", ()=>saveOrderNumbering(btn.dataset.saveShop));
+      });
     }catch(e){
-      document.getElementById("orderNumberingMsg").textContent = "Ошибка загрузки: "+e.message;
+      wrap.innerHTML = `<div style="color:var(--red);font-size:13px;">Ошибка загрузки: ${esc(e.message)}</div>`;
     }
   }
-  document.getElementById("btnSaveOrderNumbering").addEventListener("click", async ()=>{
-    const val = parseInt(document.getElementById("orderNumberingInput").value, 10);
+  async function saveOrderNumbering(shopName){
+    const input = document.querySelector(`.order-numbering-input[data-shop="${CSS.escape(shopName)}"]`);
+    const val = parseInt(input.value, 10);
     if(!Number.isFinite(val) || val < 1){
       document.getElementById("orderNumberingMsg").textContent = "Укажите целое число, 1 или больше";
       return;
     }
     try{
-      await api("/counters/order-numbering", {method:"POST", body:JSON.stringify({nextNumber: val})});
-      document.getElementById("orderNumberingMsg").textContent = `Сохранено — следующий заказ получит номер ${val}`;
+      await api("/counters/order-numbering", {method:"POST", body:JSON.stringify({shop: shopName, nextNumber: val})});
+      document.getElementById("orderNumberingMsg").textContent = `Сохранено для «${shopName}» — следующий заказ получит номер ${val}`;
       toast("Нумерация обновлена");
     }catch(e){ document.getElementById("orderNumberingMsg").textContent = "Ошибка: "+e.message; }
-  });
+  }
 
   // Общая функция синхронизации — использует и кнопка, и автосинхронизация.
   // silent=true — не перезаписываем текстовый блок результата (чтобы не мешать,
