@@ -1694,11 +1694,11 @@
 
   // ================= Обработка заказа (статусная машина, грузовые места, печать) =================
   const STATUS_LABELS_WF = {
-    preorder: "Предзаказ", packing: "Упаковка", label_printed: "Этикетка распечатана",
+    preorder: "Новый", packing: "Собираем", label_printed: "Этикетка готова",
     ready: "Готов к отгрузке", shipped: "Отгружен", cancelled: "Отменён"
   };
   const NEXT_ACTION_LABEL = {
-    preorder: "Передать в упаковку",
+    preorder: "Начать сборку",
     packing: "Распечатать этикетку",
     label_printed: "Готово к отгрузке",
     ready: "Отгружено"
