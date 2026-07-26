@@ -283,11 +283,30 @@
       </div>
     </section>
     <section id="tab-production" style="display:none">
-      <div style="text-align:center; padding:60px 20px; color:var(--ink-soft);">
-        <div style="font-size:16px; margin-bottom:8px; color:var(--ink);">Раздел «Производство» — в разработке</div>
-        <div style="font-size:13px; max-width:420px; margin:0 auto;">Будет связан со справочником товаров — подключим следующим шагом</div>
+      <div class="toolbar">
+        <label style="font-size:12.5px;"><input type="checkbox" id="prodShowResolved"> Показывать решённые</label>
+        <button class="btn secondary" id="btnManageEmployees" style="margin-left:auto;">Сотрудники</button>
       </div>
+      <div id="prodStats" style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:14px;"></div>
+      <div id="prodList"></div>
     </section>
+
+    <!-- Управление сотрудниками -->
+    <div class="overlay" id="employeesOverlay">
+      <div class="modal" style="max-width:420px;">
+        <h3>Сотрудники</h3>
+        <div style="display:flex; gap:8px; margin-bottom:14px;">
+          <input type="text" id="newEmployeeInput" placeholder="Имя сотрудника" style="flex:1;">
+          <button class="btn amber" id="btnAddEmployee">Добавить</button>
+        </div>
+        <div id="employeesManageBody"></div>
+        <div class="modal-actions">
+          <div></div>
+          <button class="btn secondary" id="employeesManageClose">Закрыть</button>
+        </div>
+      </div>
+    </div>
+
     <section id="tab-kaspi" style="display:none">
       <p>Введите токены API для каждого магазина (получаются в кабинете продавца Kaspi, раздел API). Без токена синхронизация для этого магазина работать не будет.</p>
       <div id="kaspiShopForms"></div>
@@ -385,7 +404,28 @@
     <h3 id="wfTitle">Обработка заказа</h3>
     <div id="wfStatusRow" style="margin-bottom:14px;"></div>
 
-    <div id="wfActionsRow" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px;"></div>
+    <div id="wfActionsRow" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;"></div>
+
+    <!-- Безопасная отмена: два явных отдельных шага, никаких браузерных confirm/prompt.
+         Шаг 1 — указать причину. Шаг 2 — отдельный экран с финальным подтверждением. -->
+    <div id="wfCancelStep1" style="display:none; background:#FDF3F1; border:1px solid var(--red); border-radius:6px; padding:14px; margin-bottom:14px;">
+      <div style="font-size:13px; font-weight:600; margin-bottom:8px;">Отмена заказа — шаг 1 из 2</div>
+      <label style="display:block; font-size:12px; color:var(--ink-soft); margin-bottom:4px;">Причина отмены (обязательно)</label>
+      <textarea id="wfCancelReason" style="width:100%; min-height:60px; margin-bottom:10px;"></textarea>
+      <div style="display:flex; gap:8px;">
+        <button class="btn secondary" id="wfCancelStep1Back" style="padding:6px 14px;font-size:13px;">Назад, не отменять</button>
+        <button class="btn danger" id="wfCancelStep1Next" style="padding:6px 14px;font-size:13px;">Далее →</button>
+      </div>
+    </div>
+
+    <div id="wfCancelStep2" style="display:none; background:#FDF3F1; border:2px solid var(--red); border-radius:6px; padding:14px; margin-bottom:14px;">
+      <div style="font-size:13px; font-weight:700; color:var(--red); margin-bottom:8px;">⚠ Последнее подтверждение — это действие необратимо</div>
+      <div id="wfCancelStep2Text" style="font-size:13px; margin-bottom:12px;"></div>
+      <div style="display:flex; gap:8px;">
+        <button class="btn secondary" id="wfCancelStep2Back" style="padding:6px 14px;font-size:13px;">Нет, оставить заказ</button>
+        <button class="btn danger" id="wfCancelStep2Confirm" style="padding:6px 14px;font-size:13px;font-weight:700;">Да, отменить заказ окончательно</button>
+      </div>
+    </div>
 
     <div style="border-top:1px solid var(--line); padding-top:12px; margin-bottom:14px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
@@ -396,8 +436,11 @@
     </div>
 
     <div style="border-top:1px solid var(--line); padding-top:12px; margin-bottom:14px;">
-      <b style="font-size:13px;">История статусов</b>
-      <div id="wfHistory" style="font-size:12px; color:var(--ink-soft); margin-top:6px;"></div>
+      <div id="wfHistoryToggle" style="display:flex; justify-content:space-between; align-items:center; cursor:pointer;">
+        <b style="font-size:13px;" id="wfHistoryLabel">История статусов</b>
+        <span id="wfHistoryArrow" style="color:var(--ink-soft); font-size:12px;">▾ показать</span>
+      </div>
+      <div id="wfHistory" style="display:none; font-size:12px; color:var(--ink-soft); margin-top:8px;"></div>
     </div>
 
     <div class="modal-actions">
@@ -1123,6 +1166,162 @@
     w.document.close();
   });
 
+  // ---------- Производство ----------
+  // Каждый новый заказ уже создаёт запись автоматически (на сервере, при
+  // синхронизации). Здесь — только интерфейс принятия решения по ней.
+  let productionItems = [];
+  let employeesList = [];
+
+  async function loadProduction(){
+    try{
+      const showResolved = document.getElementById("prodShowResolved").checked;
+      productionItems = await api("/production" + (showResolved ? "" : "?resolved=false"));
+      employeesList = await api("/employees");
+      renderProduction();
+    }catch(e){
+      document.getElementById("prodList").innerHTML = `<div style="color:var(--red);padding:20px;">Ошибка загрузки: ${esc(e.message)}</div>`;
+    }
+  }
+  document.getElementById("prodShowResolved").addEventListener("change", loadProduction);
+
+  function decisionLabel(d){
+    if(d==="stock") return "📦 Списано с остатков";
+    if(d==="assigned") return "👤 Назначен исполнитель";
+    if(d==="return_offset") return "↩️ Перекрыто возвратом";
+    return "Ждёт решения";
+  }
+
+  function renderProduction(){
+    const pending = productionItems.filter(p=>!p.decision).length;
+    document.getElementById("prodStats").innerHTML = `
+      <div class="stat-card" style="background:#fff;border:1px solid var(--line);border-left:4px solid var(--amber);padding:12px 16px;">
+        <div style="font-size:11px;text-transform:uppercase;color:var(--ink-soft);">Ждут решения</div>
+        <div style="font-family:var(--serif,serif);font-size:22px;">${pending}</div>
+      </div>`;
+
+    const list = document.getElementById("prodList");
+    if(!productionItems.length){
+      list.innerHTML = `<div style="padding:30px;text-align:center;color:var(--ink-soft);">Пусто — новые заказы появятся тут автоматически</div>`;
+      return;
+    }
+
+    list.innerHTML = productionItems.map(p=>{
+      const order = p.order || {};
+      const isPending = !p.decision;
+      return `
+      <div style="background:#fff; border:1px solid var(--line); border-radius:8px; padding:14px 16px; margin-bottom:10px;" data-prod-id="${p.id}">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:${isPending?'10px':'0'};">
+          <div>
+            <div style="font-size:11px; color:var(--ink-soft);">Заказ №${esc(order.displayNumber||"")} · ${esc(order.shop||"")}</div>
+            <div style="font-weight:600;">${esc(p.productName||"—")}</div>
+          </div>
+          ${!isPending ? `<span class="stamp" style="white-space:nowrap;">${decisionLabel(p.decision)}</span>` : ""}
+        </div>
+        ${isPending ? `
+        <div class="prod-warehouse-hint" data-article="${esc(p.article||"")}" data-prod-id="${p.id}" style="display:none; align-items:flex-start; gap:8px; background:#E6F1FB; border-radius:6px; padding:8px 10px; margin-bottom:10px; font-size:12.5px;">
+          <span></span>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:6px;">
+          <button class="btn secondary prod-action-stock" data-prod-id="${p.id}" style="text-align:left; padding:8px 12px;">📦 Списать с остатков</button>
+          <div class="prod-assign-row" style="display:flex; gap:6px;">
+            <select class="prod-employee-select" data-prod-id="${p.id}" style="flex:1;">
+              <option value="">Выбрать сотрудника...</option>
+              ${employeesList.map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join("")}
+            </select>
+            <button class="btn amber prod-action-assign" data-prod-id="${p.id}" style="padding:8px 14px;">Назначить</button>
+          </div>
+          <button class="btn secondary prod-action-return" data-prod-id="${p.id}" style="text-align:left; padding:8px 12px;">↩️ Перекрыть возвратом</button>
+        </div>
+        ` : (p.decision==="assigned" ? `
+        <div style="margin-top:8px; font-size:12.5px; display:flex; align-items:center; gap:8px;">
+          <span>Исполнитель: ${esc((employeesList.find(e=>e.id===p.employeeId)||{}).name || "—")}</span>
+          <label style="margin-left:auto;"><input type="checkbox" class="prod-paid-check" data-prod-id="${p.id}" ${p.paid?'checked':''}> Оплачено</label>
+        </div>` : "")}
+      </div>`;
+    }).join("");
+
+    // Проверяем совпадение со складом для каждой ожидающей записи (по артикулу)
+    list.querySelectorAll(".prod-warehouse-hint").forEach(async (hint)=>{
+      const prodId = hint.dataset.prodId;
+      if(!hint.dataset.article){ return; }
+      try{
+        const res = await api("/production/"+prodId+"/warehouse-match");
+        if(res.match){
+          hint.style.display = "flex";
+          hint.querySelector("span").textContent = `На складе есть подходящий товар (${res.match.source==='cancelled'?'из отменённого':'из возврата'} заказа)`;
+          const stockBtn = list.querySelector(`.prod-action-stock[data-prod-id="${prodId}"]`);
+          if(stockBtn) stockBtn.textContent = "📦 Списать с остатков (есть в наличии)";
+        }
+      }catch(e){}
+    });
+
+    list.querySelectorAll(".prod-action-stock").forEach(btn=>{
+      btn.addEventListener("click", ()=>resolveProduction(btn.dataset.prodId, "stock"));
+    });
+    list.querySelectorAll(".prod-action-return").forEach(btn=>{
+      btn.addEventListener("click", ()=>resolveProduction(btn.dataset.prodId, "return_offset"));
+    });
+    list.querySelectorAll(".prod-action-assign").forEach(btn=>{
+      btn.addEventListener("click", ()=>{
+        const select = list.querySelector(`.prod-employee-select[data-prod-id="${btn.dataset.prodId}"]`);
+        if(!select.value){ toast("Сначала выберите сотрудника"); return; }
+        resolveProduction(btn.dataset.prodId, "assigned", { employeeId: select.value });
+      });
+    });
+    list.querySelectorAll(".prod-paid-check").forEach(cb=>{
+      cb.addEventListener("change", async ()=>{
+        try{
+          await api("/production/"+cb.dataset.prodId+"/paid", {method:"PUT", body:JSON.stringify({paid: cb.checked})});
+          toast(cb.checked ? "Отмечено как оплачено" : "Отмечено как неоплачено");
+        }catch(e){ toast("Ошибка: "+e.message); }
+      });
+    });
+  }
+
+  async function resolveProduction(prodId, decision, extra){
+    try{
+      await api("/production/"+prodId+"/resolve", {method:"POST", body:JSON.stringify({decision, ...(extra||{})})});
+      toast("Решение сохранено");
+      await loadProduction();
+    }catch(e){
+      toast("Ошибка: "+(e.message==="no_stock" ? "на складе не нашлось подходящего товара" : e.message));
+    }
+  }
+
+  // ---------- Управление сотрудниками ----------
+  document.getElementById("btnManageEmployees").addEventListener("click", async ()=>{
+    await renderEmployeesManagePanel();
+    document.getElementById("employeesOverlay").classList.add("show");
+  });
+  async function renderEmployeesManagePanel(){
+    employeesList = await api("/employees");
+    const body = document.getElementById("employeesManageBody");
+    body.innerHTML = employeesList.length ? employeesList.map(e=>`
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--line);">
+        <span>${esc(e.name)}</span>
+        <button class="btn danger" style="padding:4px 10px;font-size:12px" onclick="window.__deleteEmployee('${e.id}')">Удалить</button>
+      </div>`).join("") : `<div style="color:var(--ink-soft);">Пока нет сотрудников</div>`;
+  }
+  document.getElementById("btnAddEmployee").addEventListener("click", async ()=>{
+    const input = document.getElementById("newEmployeeInput");
+    const name = input.value.trim();
+    if(!name) return;
+    try{
+      await api("/employees", {method:"POST", body:JSON.stringify({name})});
+      input.value = "";
+      await renderEmployeesManagePanel();
+    }catch(e){ toast("Ошибка: "+e.message); }
+  });
+  window.__deleteEmployee = async function(id){
+    if(!confirm("Убрать сотрудника из списка выбора?")) return;
+    await api("/employees/"+id, {method:"DELETE"});
+    await renderEmployeesManagePanel();
+  };
+  document.getElementById("employeesManageClose").addEventListener("click", ()=>{
+    document.getElementById("employeesOverlay").classList.remove("show");
+    loadProduction(); // обновить список исполнителей в выпадающих списках
+  });
+
   document.getElementById("btnLogout").addEventListener("click", async ()=>{
     stopAutoSync();
     await api("/auth/logout", {method:"POST"});
@@ -1136,6 +1335,7 @@
       ["orders","kaspiOrders","claims","price","catalog","salary","production","kaspi","audit","users"].forEach(t=> document.getElementById("tab-"+t).style.display = (t===b.dataset.tab)?"":"none");
       if(b.dataset.tab === "catalog") loadCatalog();
       if(b.dataset.tab === "price") loadPricePreview();
+      if(b.dataset.tab === "production") loadProduction();
       if(b.dataset.tab === "kaspiOrders") renderKaspiOrders();
       if(b.dataset.tab === "claims") { if(!kaspiOrders.length) renderKaspiOrders().then(renderClaims); else renderClaims(); }
       if(b.dataset.tab === "kaspi") { loadKaspiSettings(); loadOrderNumbering(); }
@@ -1483,6 +1683,7 @@
       + (order.printed ? ` <span style="font-size:12px;color:var(--green);">🖨️ распечатано (${esc(order.printCount)}×), последний раз: ${esc(order.lastPrintedAt||"").slice(0,16).replace('T',' ')} — ${esc(order.lastPrintedBy||"")}</span>` : "");
 
     const actions = document.getElementById("wfActionsRow");
+    actions.style.display = "flex";
     actions.innerHTML = "";
     if(order.status === "packing"){
       const btn = document.createElement("button");
@@ -1503,12 +1704,7 @@
       cancelBtn.style.marginLeft = "24px";
       cancelBtn.style.opacity = "0.85";
       cancelBtn.textContent = "Отменить заказ";
-      cancelBtn.onclick = ()=>{
-        if(!confirm("Вы точно хотите отменить этот заказ? Это действие сложно обратить.")) return;
-        const reason = prompt("Укажите причину отмены (обязательно):");
-        if(!reason || !reason.trim()){ toast("Без причины отмена не выполнена"); return; }
-        doTransition(order.id, "cancelled", reason.trim());
-      };
+      cancelBtn.onclick = ()=>openCancelStep1();
       actions.appendChild(cancelBtn);
     }
     if(myRole === "admin"){
@@ -1530,12 +1726,59 @@
         <button class="btn danger" style="padding:3px 8px;font-size:11px;" onclick="window.__deleteCargoPlace('${p.id}')">✕</button>
       </div>`).join("") : `<div style="color:var(--ink-soft);font-size:12.5px;">Пока не сформировано ни одного места</div>`;
 
-    // история
+    // история — сворачиваема по умолчанию, чтобы не забивать карточку простынёй текста
     const history = await api("/orders/"+order.id+"/history");
+    document.getElementById("wfHistoryLabel").textContent = `История статусов (${history.length})`;
     document.getElementById("wfHistory").innerHTML = history.length ? history.map(h=>
-      `<div>${esc((h.createdAt||"").slice(0,16).replace('T',' '))} — ${esc(STATUS_LABELS_WF[h.from]||h.from||"—")} → <b>${esc(STATUS_LABELS_WF[h.to]||h.to)}</b> (${esc(h.user||"")})${h.isCorrection?' <span style="color:var(--red);">[исправление]</span>':''}${h.reason?': '+esc(h.reason):''}</div>`
+      `<div style="padding:3px 0;">${esc((h.createdAt||"").slice(0,16).replace('T',' '))} — ${esc(STATUS_LABELS_WF[h.from]||h.from||"—")} → <b>${esc(STATUS_LABELS_WF[h.to]||h.to)}</b> (${esc(h.user||"")})${h.isCorrection?' <span style="color:var(--red);">[исправление]</span>':''}${h.reason?': '+esc(h.reason):''}</div>`
     ).join("") : "Пока нет изменений статуса";
+
+    // Закрываем шаги отмены при каждой перерисовке (например, после отмены другого действия)
+    document.getElementById("wfCancelStep1").style.display = "none";
+    document.getElementById("wfCancelStep2").style.display = "none";
   }
+
+  // ---------- Сворачиваемая история статусов ----------
+  document.getElementById("wfHistoryToggle").addEventListener("click", ()=>{
+    const body = document.getElementById("wfHistory");
+    const arrow = document.getElementById("wfHistoryArrow");
+    const isHidden = body.style.display === "none";
+    body.style.display = isHidden ? "" : "none";
+    arrow.textContent = isHidden ? "▴ скрыть" : "▾ показать";
+  });
+
+  // ---------- Безопасная отмена заказа — два отдельных шага, без браузерных confirm/prompt ----------
+  function openCancelStep1(){
+    document.getElementById("wfActionsRow").style.display = "none";
+    document.getElementById("wfCancelReason").value = "";
+    document.getElementById("wfCancelStep1").style.display = "";
+    document.getElementById("wfCancelStep2").style.display = "none";
+  }
+  function closeCancelFlow(){
+    document.getElementById("wfActionsRow").style.display = "flex";
+    document.getElementById("wfCancelStep1").style.display = "none";
+    document.getElementById("wfCancelStep2").style.display = "none";
+  }
+  document.getElementById("wfCancelStep1Back").addEventListener("click", closeCancelFlow);
+  document.getElementById("wfCancelStep1Next").addEventListener("click", ()=>{
+    const reason = document.getElementById("wfCancelReason").value.trim();
+    if(!reason){ toast("Укажите причину — без неё дальше нельзя"); return; }
+    const order = wfCurrentOrder;
+    document.getElementById("wfCancelStep2Text").innerHTML =
+      `Заказ №${esc(order.displayNumber||order.receiptNumber||"")} — <b>${esc(order.productName||order.name||order.article||"")}</b><br>`
+      + `Причина: «${esc(reason)}»<br><br>После отмены заказ уйдёт в архив отменённых. Отменить это действие будет нельзя.`;
+    document.getElementById("wfCancelStep1").style.display = "none";
+    document.getElementById("wfCancelStep2").style.display = "";
+  });
+  document.getElementById("wfCancelStep2Back").addEventListener("click", closeCancelFlow);
+  document.getElementById("wfCancelStep2Confirm").addEventListener("click", async ()=>{
+    const reason = document.getElementById("wfCancelReason").value.trim();
+    const btn = document.getElementById("wfCancelStep2Confirm");
+    btn.disabled = true; btn.textContent = "Отменяем...";
+    await doTransition(wfCurrentOrder.id, "cancelled", reason);
+    btn.disabled = false; btn.textContent = "Да, отменить заказ окончательно";
+    closeCancelFlow();
+  });
 
   async function doTransition(orderId, to, reason){
     try{
