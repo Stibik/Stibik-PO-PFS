@@ -18,6 +18,7 @@ function rowToCatalogItem(row) {
     article: row.article,           // SKU (из Kaspi или введённый вручную)
     printName: row.name,            // "Название для печати" — ручное поле
     category: row.type,             // категория — ручное поле
+    subgroup: row.subgroup,         // подраздел (второй уровень группировки) — ручное поле
     costPrice: row.cost,            // себестоимость — ручное поле
     retailPrice: row.retail,        // наша розничная цена — ручное поле
     photo: row.photo,
@@ -90,7 +91,7 @@ router.put("/:id", (req, res) => {
 
   const updates = [];
   const params = [];
-  const map = { printName: "name", category: "type", costPrice: "cost", retailPrice: "retail" };
+  const map = { printName: "name", category: "type", subgroup: "subgroup", costPrice: "cost", retailPrice: "retail" };
   for (const [jsKey, col] of Object.entries(map)) {
     if (Object.prototype.hasOwnProperty.call(b, jsKey)) {
       updates.push(`${col} = ?`);
@@ -105,6 +106,21 @@ router.put("/:id", (req, res) => {
   }
   const updated = db.prepare("SELECT * FROM price_items WHERE id = ?").get(req.params.id);
   res.json(rowToCatalogItem(updated));
+});
+
+// Удаление позиции из справочника (в т.ч. тех, что попали туда через "Прайс" —
+// это одна и та же таблица, удаление отсюда работает независимо от того,
+// откуда запись изначально появилась)
+router.delete("/:id", (req, res) => {
+  const row = db.prepare("SELECT * FROM price_items WHERE id = ?").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  db.prepare("DELETE FROM price_items WHERE id = ?").run(req.params.id);
+  logAudit({
+    user: req.session.username,
+    action: "catalog_delete",
+    comment: `${row.article || ""} — ${row.name || row.kaspi_name || ""}`
+  });
+  res.json({ ok: true });
 });
 
 export default router;
