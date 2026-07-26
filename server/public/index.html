@@ -220,8 +220,8 @@
       <div id="catalogStats" style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:14px;"></div>
       <div class="tbl-wrap">
         <table>
-          <thead><tr><th>SKU</th><th>Название (Kaspi)</th><th>Название для печати</th><th>Группа</th><th>Подраздел</th><th>Розница</th><th>Наличие</th><th></th></tr></thead>
-          <tbody id="catalogBody"><tr><td colspan="8" style="text-align:center;color:var(--ink-soft);padding:20px;">Справочник пуст — нажмите «Импорт из Kaspi», чтобы загрузить файл выгрузки активных товаров</td></tr></tbody>
+          <thead><tr><th></th><th>SKU</th><th>Название (Kaspi)</th><th>Название для печати</th><th>Группа</th><th>Подраздел</th><th>Розница</th><th>Наличие</th><th></th></tr></thead>
+          <tbody id="catalogBody"><tr><td colspan="9" style="text-align:center;color:var(--ink-soft);padding:20px;">Справочник пуст — нажмите «Импорт из Kaspi», чтобы загрузить файл выгрузки активных товаров</td></tr></tbody>
         </table>
       </div>
     </section>
@@ -232,6 +232,18 @@
         <h3>Карточка товара</h3>
         <div id="catalogItemKaspiInfo" style="font-size:12.5px; color:var(--ink-soft); background:#F7F4EC; border-radius:6px; padding:10px 12px; margin-bottom:14px;"></div>
         <div class="grid2">
+          <div class="full">
+            <label>Фото (для прайса)</label>
+            <div style="display:flex; gap:12px; align-items:center;">
+              <img id="ci_photo_preview" style="width:70px;height:70px;object-fit:cover;border-radius:4px;border:1px solid var(--line); display:none;">
+              <div id="ci_photo_empty" style="width:70px;height:70px;border-radius:4px;border:1px dashed var(--line);display:flex;align-items:center;justify-content:center;color:var(--ink-soft);">📷</div>
+              <div>
+                <input type="file" id="ci_photo_input" accept="image/*" style="display:none">
+                <button class="btn secondary" type="button" id="ci_photo_btn" style="padding:6px 12px;font-size:12px;">Выбрать фото</button>
+                <button class="btn danger" type="button" id="ci_photo_clear" style="padding:6px 12px;font-size:12px;display:none;">Удалить</button>
+              </div>
+            </div>
+          </div>
           <div class="full"><label>Название для печати</label><input id="ci_printName" type="text" placeholder="Как будет видно клиенту"></div>
           <div><label>Группа</label><input id="ci_category" type="text" placeholder="напр. Манекены для борьбы и ММА"></div>
           <div><label>Подраздел</label><input id="ci_subgroup" type="text" placeholder="напр. 1-ноги, ПВХ"></div>
@@ -938,11 +950,12 @@
 
     const body = document.getElementById("catalogBody");
     if(!catalogItems.length){
-      body.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--ink-soft);padding:20px;">Справочник пуст — нажмите «Импорт из Kaspi», чтобы загрузить файл выгрузки активных товаров</td></tr>`;
+      body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--ink-soft);padding:20px;">Справочник пуст — нажмите «Импорт из Kaspi», чтобы загрузить файл выгрузки активных товаров</td></tr>`;
       return;
     }
     body.innerHTML = catalogItems.map((it)=>`
       <tr>
+        <td>${it.photo?`<img class="thumb" src="${esc(it.photo)}">`:`<div class="thumb-empty">—</div>`}</td>
         <td class="mono" style="font-size:11.5px;">${esc(it.article)}</td>
         <td>${esc(it.kaspiName||"—")}</td>
         <td>${esc(it.printName||"—")}</td>
@@ -988,9 +1001,42 @@
     document.getElementById("ci_costPrice").value = it.costPrice ?? "";
     document.getElementById("ci_retailPrice").value = it.retailPrice ?? "";
     document.getElementById("ci_note").value = it.note || "";
+    currentCatalogPhoto = it.photo || null;
+    updateCatalogPhotoPreview();
 
     catalogItemOverlay.classList.add("show");
   };
+
+  // ---------- Фото для карточки справочника (тот же /api/upload, что и у Прихода/Прайса) ----------
+  let currentCatalogPhoto = null;
+  document.getElementById("ci_photo_btn").addEventListener("click", ()=>document.getElementById("ci_photo_input").click());
+  document.getElementById("ci_photo_clear").addEventListener("click", ()=>{
+    currentCatalogPhoto = null;
+    updateCatalogPhotoPreview();
+  });
+  document.getElementById("ci_photo_input").addEventListener("change", async (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    const fd = new FormData();
+    fd.append("photo", file);
+    try{
+      const resp = await fetch("/api/upload", {method:"POST", body:fd, credentials:"same-origin"});
+      if(!resp.ok) throw new Error("upload_failed");
+      const data = await resp.json();
+      currentCatalogPhoto = data.path;
+      updateCatalogPhotoPreview();
+    }catch(err){ toast("Не удалось загрузить фото"); }
+  });
+  function updateCatalogPhotoPreview(){
+    const img = document.getElementById("ci_photo_preview");
+    const empty = document.getElementById("ci_photo_empty");
+    const clearBtn = document.getElementById("ci_photo_clear");
+    if(currentCatalogPhoto){
+      img.src = currentCatalogPhoto; img.style.display=""; empty.style.display="none"; clearBtn.style.display="";
+    } else {
+      img.style.display="none"; empty.style.display=""; clearBtn.style.display="none";
+    }
+  }
 
   document.getElementById("catalogItemCancelBtn").addEventListener("click", ()=>{
     catalogItemOverlay.classList.remove("show");
@@ -999,6 +1045,7 @@
   document.getElementById("catalogItemSaveBtn").addEventListener("click", async ()=>{
     const numOrNull = (elId)=>{ const v = document.getElementById(elId).value; return v===""? null : (parseFloat(v)||0); };
     const body = {
+      photo: currentCatalogPhoto,
       printName: document.getElementById("ci_printName").value.trim(),
       category: document.getElementById("ci_category").value.trim(),
       subgroup: document.getElementById("ci_subgroup").value.trim(),
