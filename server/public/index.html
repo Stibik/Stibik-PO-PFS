@@ -270,15 +270,11 @@
 
     <section id="tab-price" style="display:none">
       <div class="toolbar">
-        <button class="btn amber" id="btnAddPrice">+ Новая позиция</button>
-        <button class="btn secondary" id="btnExportPrice">Экспорт в Excel</button>
+        <button class="btn amber" id="btnPrintPrice">🖨️ Печать / Сохранить как PDF</button>
+        <label style="font-size:12.5px; margin-left:8px;"><input type="checkbox" id="priceOnlyReady" checked> Только с заполненным названием и ценой</label>
       </div>
-<div class="tbl-wrap">
-            <table>
-        <thead><tr><th></th><th>Артикул/Модель</th><th>Категория</th><th>Розница</th><th></th></tr></thead>
-        <tbody id="priceBody"></tbody>
-      </table>
-      </div>
+      <div id="pricePreviewInfo" style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;"></div>
+      <div id="pricePreview" style="background:#fff; border:1px solid var(--line); border-radius:8px; padding:24px; max-width:900px;"></div>
     </section>
     <section id="tab-salary" style="display:none">
       <div style="text-align:center; padding:60px 20px; color:var(--ink-soft);">
@@ -369,35 +365,6 @@
     <div class="modal-actions">
       <button class="btn danger" id="orderDeleteBtn" style="display:none">Удалить</button>
       <div><button class="btn secondary" id="orderCancelBtn">Отмена</button> <button class="btn amber" id="orderSaveBtn">Сохранить</button></div>
-    </div>
-  </div>
-</div>
-
-<!-- PRICE MODAL -->
-<div class="overlay" id="priceOverlay">
-  <div class="modal">
-    <h3 id="priceModalTitle">Новая позиция</h3>
-    <div class="grid2">
-      <div class="full">
-        <label>Фото</label>
-        <div style="display:flex; gap:12px; align-items:center;">
-          <img id="pr_photo_preview" style="width:70px;height:70px;object-fit:cover;border-radius:4px;border:1px solid var(--line); display:none;">
-          <div id="pr_photo_empty" style="width:70px;height:70px;border-radius:4px;border:1px dashed var(--line);display:flex;align-items:center;justify-content:center;color:var(--ink-soft);">📷</div>
-          <div>
-            <input type="file" id="pr_photo_input" accept="image/*" style="display:none">
-            <button class="btn secondary" type="button" id="pr_photo_btn" style="padding:6px 12px;font-size:12px;">Выбрать фото</button>
-            <button class="btn danger" type="button" id="pr_photo_clear" style="padding:6px 12px;font-size:12px;display:none;">Удалить</button>
-          </div>
-        </div>
-      </div>
-      <div><label>Артикул</label><input id="pr_article" type="text"></div>
-      <div><label>Модель</label><input id="pr_name" type="text"></div>
-      <div><label>Категория</label><select id="pr_type"></select></div>
-      <div><label>Розничная цена</label><input id="pr_retail" type="number"></div>
-    </div>
-    <div class="modal-actions">
-      <button class="btn danger" id="priceDeleteBtn" style="display:none">Удалить</button>
-      <div><button class="btn secondary" id="priceCancelBtn">Отмена</button> <button class="btn amber" id="priceSaveBtn">Сохранить</button></div>
     </div>
   </div>
 </div>
@@ -501,9 +468,9 @@
 <script>
 (function(){
   "use strict";
-  let orders = [], kaspiOrders = [], priceItems = [], categories = [];
+  let orders = [], kaspiOrders = [], categories = [];
   let myRole = "warehouse";
-  let editingOrderId = null, editingPriceId = null;
+  let editingOrderId = null;
 
   function toast(msg){
     const t = document.getElementById("toast");
@@ -758,16 +725,6 @@
       e.target.value = "";
     };
     reader.readAsArrayBuffer(file);
-  });
-  document.getElementById("btnExportPrice").addEventListener("click", ()=>{
-    if(!priceItems.length){ toast("Нет данных для экспорта"); return; }
-    const rows = priceItems.map(p=>({
-      "Артикул": p.article, "Модель": p.name, "Категория": p.type, "Розница": p.retail, "Фото (файл)": p.photo||""
-    }));
-    const ws = XLSX.utils.json_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Прайс");
-    XLSX.writeFile(wb, `прайс_${new Date().toISOString().slice(0,10)}.xlsx`);
   });
 
   // ---------- Справочник товаров (импорт из выгрузки Kaspi "Активные товары") ----------
@@ -1083,6 +1040,92 @@
     }catch(e){ toast("Ошибка удаления: "+e.message); }
   });
 
+  // ---------- Прайс для печати ----------
+  // Односторонний поток: Справочник -> Прайс. Прайс ничего не пишет обратно —
+  // это просто витрина поверх тех же данных, отфильтрованная и сгруппированная
+  // для показа клиенту. Редактирование — только через "Справочник".
+  async function loadPricePreview(){
+    document.getElementById("pricePreview").innerHTML = `<div style="padding:40px;text-align:center;color:var(--ink-soft);">Загрузка...</div>`;
+    try{
+      catalogItems = await api("/catalog");
+      renderPricePreview();
+    }catch(e){
+      document.getElementById("pricePreview").innerHTML = `<div style="padding:20px;color:var(--red);">Ошибка загрузки: ${esc(e.message)}</div>`;
+    }
+  }
+  document.getElementById("priceOnlyReady").addEventListener("change", renderPricePreview);
+
+  function renderPricePreview(){
+    const onlyReady = document.getElementById("priceOnlyReady").checked;
+    let items = catalogItems.slice();
+    if(onlyReady) items = items.filter(it=>it.printName && it.retailPrice);
+    else items = items.filter(it=>it.printName); // без названия для печати показывать нечего в любом случае
+
+    document.getElementById("pricePreviewInfo").textContent =
+      `Показано товаров: ${items.length} из ${catalogItems.length} в справочнике` +
+      (onlyReady ? " (скрыты те, где нет названия для печати или цены — заполните их в «Справочнике»)" : "");
+
+    if(!items.length){
+      document.getElementById("pricePreview").innerHTML = `<div style="padding:40px;text-align:center;color:var(--ink-soft);">Нечего показать — заполните «Название для печати» и «Розницу» хотя бы для нескольких товаров в Справочнике</div>`;
+      return;
+    }
+
+    // Группировка: Группа -> Подраздел -> товары
+    const groups = new Map();
+    for(const it of items){
+      const g = it.category || "Без категории";
+      const sg = it.subgroup || "";
+      if(!groups.has(g)) groups.set(g, new Map());
+      const subMap = groups.get(g);
+      if(!subMap.has(sg)) subMap.set(sg, []);
+      subMap.get(sg).push(it);
+    }
+
+    let html = "";
+    for(const [groupName, subMap] of groups){
+      html += `<div style="background:#F3E0BC; padding:12px 16px; margin:20px 0 4px; border-radius:4px; font-family:var(--serif,serif); font-size:18px;">${esc(groupName)}</div>`;
+      for(const [subName, list] of subMap){
+        if(subName) html += `<div style="color:var(--green); font-weight:600; font-size:13px; margin:10px 0 4px;">Подраздел: ${esc(subName)}</div>`;
+        html += `<table style="width:100%; border-collapse:collapse; margin-bottom:6px;">`;
+        for(const it of list){
+          html += `
+            <tr style="border-bottom:1px solid var(--line);">
+              <td style="padding:10px 8px; width:90px;">
+                ${it.photo?`<img src="${esc(it.photo)}" style="width:80px;height:80px;object-fit:cover;border-radius:6px;border:1px solid var(--line);">`
+                          :`<div style="width:80px;height:80px;border-radius:6px;border:1px dashed var(--line);display:flex;align-items:center;justify-content:center;color:var(--ink-soft);font-size:11px;">нет фото</div>`}
+              </td>
+              <td style="padding:10px 8px;">
+                <div style="font-weight:600;">${esc(it.printName)}</div>
+                ${it.material||it.height||it.weight ? `<div style="color:var(--ink-soft); font-size:12.5px; margin-top:2px;">${[it.material, it.height?it.height+' см':'', it.weight?it.weight+' кг':''].filter(Boolean).join(', ')}</div>` : ""}
+              </td>
+              <td style="padding:10px 8px; text-align:right; white-space:nowrap; font-weight:700; font-size:15px;">${money(it.retailPrice)} ₸</td>
+            </tr>`;
+        }
+        html += `</table>`;
+      }
+    }
+    document.getElementById("pricePreview").innerHTML = html;
+  }
+
+  document.getElementById("btnPrintPrice").addEventListener("click", ()=>{
+    const w = window.open("", "_blank");
+    if(!w){ toast("Браузер заблокировал открытие окна"); return; }
+    w.document.write(`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>Прайс-лист</title>
+    <style>
+      body{font-family:Arial,sans-serif; margin:0; padding:24px; color:#20242B;}
+      .toolbar{margin-bottom:16px;}
+      button{padding:8px 16px; background:#C8862B; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:14px;}
+      table{border-collapse:collapse;}
+      @media print{ .toolbar{display:none;} }
+    </style></head><body>
+      <div class="toolbar"><button onclick="window.print()">Печать / Сохранить как PDF</button></div>
+      <h1 style="font-family:Georgia,serif; font-weight:400; text-align:center;">Прайс-лист</h1>
+      <div style="text-align:center; color:#565B66; font-size:13px; margin-bottom:20px;">Актуально на ${new Date().toLocaleDateString('ru-RU')}</div>
+      ${document.getElementById("pricePreview").innerHTML}
+    </body></html>`);
+    w.document.close();
+  });
+
   document.getElementById("btnLogout").addEventListener("click", async ()=>{
     stopAutoSync();
     await api("/auth/logout", {method:"POST"});
@@ -1095,6 +1138,7 @@
       b.classList.add("active");
       ["orders","kaspiOrders","claims","price","catalog","salary","production","kaspi","audit","users"].forEach(t=> document.getElementById("tab-"+t).style.display = (t===b.dataset.tab)?"":"none");
       if(b.dataset.tab === "catalog") loadCatalog();
+      if(b.dataset.tab === "price") loadPricePreview();
       if(b.dataset.tab === "kaspiOrders") renderKaspiOrders();
       if(b.dataset.tab === "claims") { if(!kaspiOrders.length) renderKaspiOrders().then(renderClaims); else renderClaims(); }
       if(b.dataset.tab === "kaspi") { loadKaspiSettings(); loadOrderNumbering(); }
@@ -1122,12 +1166,9 @@
     }
 
     try{
-      const [p, c] = await Promise.all([api("/price"), api("/price/categories/list")]);
-      priceItems = p; categories = c;
-      renderPrice();
+      categories = await api("/price/categories/list");
     }catch(e){
       console.error(e);
-      document.getElementById("priceBody").innerHTML = `<tr><td colspan="6" style="color:var(--red);padding:20px;">Ошибка загрузки «Прайса»: ${esc(e.message)}</td></tr>`;
     }
 
     try{
@@ -1175,8 +1216,7 @@
   const STAGE_DEFS = [
     {key:"cancelled", label:"Отменён", color:"#B23A2E", bg:"#F5DEDA"},
     {key:"returns",   label:"Возврат", color:"#8B5E1F", bg:"#F3E0BC"},
-    {key:"preorder",  label:"Предзаказ", color:"#6B4FA0", bg:"#EAE0F5"},
-    {key:"packing",   label:"Упаковка", color:"#C8862B", bg:"#F3E0BC"},
+    {key:"packing",   label:"Нужно собрать", color:"#C8862B", bg:"#F3E0BC"},
     {key:"handover",  label:"Передача", color:"#2C6E8F", bg:"#DCEEF5"},
     {key:"toDelivery",label:"Передано на доставку", color:"#3E7D4C", bg:"#E0EEDF"},
     {key:"completed", label:"Завершён", color:"#3E7D4C", bg:"#E0EEDF"},
@@ -1190,7 +1230,9 @@
     if(o.kaspiStatus==="RETURN_REQUESTED" || o.kaspiStatus==="RETURNED") return "returns";
     if(o.deliveryState==="ARCHIVE") return "archive";
     if(o.kaspiStatus==="COMPLETED") return "completed";
-    if(o.preOrder && !o.assembled) return "preorder";
+    // Раньше тут было отдельное деление на "Предзаказ" (preOrder=true) и "Упаковка" —
+    // в кабинете Kaspi оба варианта выглядят как "нужно собрать", разница в preOrder
+    // не значима для рабочего процесса. Объединено в одну стадию.
     if(!o.assembled) return "packing";
     if(o.assembled && !o.courierTransmissionDate) return "handover";
     if(o.courierTransmissionDate) return "toDelivery";
@@ -1250,14 +1292,14 @@
       shopWrap.innerHTML = "";
     }
 
-    const nonTerminal = ["preorder","packing","handover","toDelivery","other"];
+    const nonTerminal = ["packing","handover","toDelivery","other"];
     const activeCount = kaspiOrders.filter(o=>nonTerminal.includes(o.stage) && kaspiShopFilter.has(o.shop)).length;
     const filterWrap = document.getElementById("kaspiStatusFilters");
     let html = `<button class="btn ${kaspiStageFilter==='active'?'amber':'secondary'}" style="padding:6px 14px;font-size:12.5px;" data-stage="active">Активные (${activeCount})</button>`
       + `<button class="btn ${kaspiStageFilter==='all'?'amber':'secondary'}" style="padding:6px 14px;font-size:12.5px;" data-stage="all">Все (${kaspiOrders.filter(o=>kaspiShopFilter.has(o.shop)).length})</button>`;
     STAGE_DEFS.forEach(sd=>{
       const count = kaspiOrders.filter(o=>o.stage===sd.key && kaspiShopFilter.has(o.shop)).length;
-      if(count===0 && !["preorder","packing","handover","toDelivery"].includes(sd.key)) return;
+      if(count===0 && !["packing","handover","toDelivery"].includes(sd.key)) return;
       html += `<button class="btn ${kaspiStageFilter===sd.key?'amber':'secondary'}" style="padding:6px 14px;font-size:12.5px;" data-stage="${sd.key}">${sd.label} (${count})</button>`;
     });
     filterWrap.innerHTML = html;
@@ -1307,7 +1349,7 @@
 
   document.getElementById("btnPrintKaspiList").addEventListener("click", ()=>{
     let list = kaspiOrders.slice().filter(o=>kaspiShopFilter.has(o.shop));
-    const nonTerminal = ["preorder","packing","handover","toDelivery","other"];
+    const nonTerminal = ["packing","handover","toDelivery","other"];
     if(kaspiStageFilter==="active") list = list.filter(o=>nonTerminal.includes(o.stage));
     else if(kaspiStageFilter!=="all") list = list.filter(o=>o.stage===kaspiStageFilter);
     if(!list.length){ toast("Нечего печатать — список пуст"); return; }
@@ -2001,7 +2043,6 @@
     categories = await api("/price/categories/list");
     renderCategoriesManagePanel();
     renderOrders(false);
-    renderPrice();
   };
   document.getElementById("btnAddCategoryManage").addEventListener("click", async ()=>{
     const input = document.getElementById("newCategoryInput");
@@ -2020,18 +2061,6 @@
     btn.style.display = selectedOrderIds.size ? "" : "none";
     btn.textContent = `🗑️ Удалить выбранное (${selectedOrderIds.size})`;
   }
-  function renderPrice(){
-    const body = document.getElementById("priceBody");
-    body.innerHTML = priceItems.map(p=>`
-      <tr>
-        <td>${p.photo?`<img class="thumb" src="${esc(p.photo)}">`:""}</td>
-        <td>${esc(p.name||p.article||"—")}<div style="font-size:11px;color:var(--ink-soft)">${esc(p.article||"")}</div></td>
-        <td>${esc(p.type||"")}</td>
-        <td>${p.retail||0}</td>
-        <td><button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__openPrice('${p.id}')">Открыть</button></td>
-      </tr>`).join("") || `<tr><td colspan="5" style="text-align:center;color:var(--ink-soft);padding:20px;">Прайс пуст</td></tr>`;
-  }
-
   // ORDER MODAL
   const orderOverlay = document.getElementById("orderOverlay");
   window.__openOrder = function(id){
@@ -2090,10 +2119,11 @@
     await loadAll(); toast("Удалено");
   });
 
-  // PRICE MODAL
-  const priceOverlay = document.getElementById("priceOverlay");
+  // Категории (общий список) — используется формой "Приход". Управление списком
+  // категорий — отдельная панель (btnManageCategories), редактирование самих
+  // товаров теперь только через "Справочник".
   function populateCategorySelect(sel, elId){
-    elId = elId || "pr_type";
+    elId = elId || "o_category";
     const el = document.getElementById(elId);
     el.innerHTML = categories.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join("") + `<option value="__add__">+ Добавить категорию...</option>`;
     el.value = categories.includes(sel) ? sel : (categories[0]||"__add__");
@@ -2107,73 +2137,7 @@
       } else populateCategorySelect(categories[0], elId);
     }
   }
-  document.getElementById("pr_type").addEventListener("change", (e)=>handleCategoryAdd(e, "pr_type"));
   document.getElementById("o_category").addEventListener("change", (e)=>handleCategoryAdd(e, "o_category"));
-  // ---------- Фото для прайса ----------
-  let currentPricePhoto = null;
-  document.getElementById("pr_photo_btn").addEventListener("click", ()=>document.getElementById("pr_photo_input").click());
-  document.getElementById("pr_photo_clear").addEventListener("click", ()=>{
-    currentPricePhoto = null; updatePricePhotoPreview();
-  });
-  document.getElementById("pr_photo_input").addEventListener("change", async (e)=>{
-    const file = e.target.files[0];
-    if(!file) return;
-    const fd = new FormData(); fd.append("photo", file);
-    try{
-      const resp = await fetch("/api/upload", {method:"POST", body:fd, credentials:"same-origin"});
-      if(!resp.ok) throw new Error("upload_failed");
-      const data = await resp.json();
-      currentPricePhoto = data.path;
-      updatePricePhotoPreview();
-    }catch(err){ toast("Не удалось загрузить фото"); }
-  });
-  function updatePricePhotoPreview(){
-    const img = document.getElementById("pr_photo_preview");
-    const empty = document.getElementById("pr_photo_empty");
-    const clearBtn = document.getElementById("pr_photo_clear");
-    if(currentPricePhoto){
-      img.src = currentPricePhoto; img.style.display=""; empty.style.display="none"; clearBtn.style.display="";
-    } else {
-      img.style.display="none"; empty.style.display=""; clearBtn.style.display="none";
-    }
-  }
-
-  window.__openPrice = function(id){
-    editingPriceId = id || null;
-    const p = id ? priceItems.find(x=>x.id===id) : null;
-    document.getElementById("priceModalTitle").textContent = p ? "Позиция прайса" : "Новая позиция";
-    document.getElementById("priceDeleteBtn").style.display = p ? "" : "none";
-    document.getElementById("pr_article").value = p?.article||"";
-    document.getElementById("pr_name").value = p?.name||"";
-    document.getElementById("pr_retail").value = p?.retail??"";
-    populateCategorySelect(p?.type||"");
-    currentPricePhoto = p?.photo || null;
-    updatePricePhotoPreview();
-    priceOverlay.classList.add("show");
-  };
-  document.getElementById("btnAddPrice").addEventListener("click", ()=>window.__openPrice(null));
-  document.getElementById("priceCancelBtn").addEventListener("click", ()=>priceOverlay.classList.remove("show"));
-  document.getElementById("priceSaveBtn").addEventListener("click", async ()=>{
-    const data = {
-      article: document.getElementById("pr_article").value.trim(),
-      name: document.getElementById("pr_name").value.trim(),
-      type: document.getElementById("pr_type").value,
-      retail: parseFloat(document.getElementById("pr_retail").value)||0,
-      photo: currentPricePhoto
-    };
-    try{
-      if(editingPriceId) await api("/price/"+editingPriceId, {method:"PUT", body:JSON.stringify(data)});
-      else await api("/price", {method:"POST", body:JSON.stringify(data)});
-      priceOverlay.classList.remove("show");
-      await loadAll(); toast("Сохранено");
-    }catch(e){ toast("Ошибка: "+e.message); }
-  });
-  document.getElementById("priceDeleteBtn").addEventListener("click", async ()=>{
-    if(!editingPriceId || !confirm("Удалить позицию?")) return;
-    await api("/price/"+editingPriceId, {method:"DELETE"});
-    priceOverlay.classList.remove("show");
-    await loadAll(); toast("Удалено");
-  });
 
   // (старый обработчик кнопки синхронизации удалён — теперь используется btnSyncKaspi2 во вкладке «Заказы»)
 
