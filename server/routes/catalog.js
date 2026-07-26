@@ -105,7 +105,7 @@ router.put("/:id", (req, res) => {
   const map = {
     printName: "name", category: "type", subgroup: "subgroup",
     material: "material", color: "color", height: "height", diameter: "diameter",
-    weight: "weight", mount: "mount", note: "note",
+    weight: "weight", mount: "mount", note: "note", photo: "photo",
     laborRate: "labor_rate", materialCost: "material_cost", miscCost: "misc_cost", ragsCost: "rags_cost",
     costPrice: "cost", retailPrice: "retail"
   };
