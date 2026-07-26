@@ -195,6 +195,12 @@ export function ensureSchema() {
   safeAddColumn("price_items", "kaspi_synced_at TEXT");          // когда последний раз обновлено импортом
   safeAddColumn("price_items", "subgroup TEXT");                 // "Подраздел" — второй уровень группировки внутри категории (type), для печатного прайса
 
+  // ── Поля по образцу справочника PRODIX (расценка труда нужна для "Зарплаты") ──
+  safeAddColumn("price_items", "labor_rate REAL");     // РАСЦЕНКА ТРУДА — ставка за 1 шт, читает раздел "Зарплата"
+  safeAddColumn("price_items", "material_cost REAL");  // Затраты на материал
+  safeAddColumn("price_items", "misc_cost REAL");      // Прочие затраты
+  safeAddColumn("price_items", "rags_cost REAL");      // Ветошь (расходники на производстве)
+
   const kaspiShopsRow = db.prepare("SELECT value FROM settings WHERE key = 'kaspi_shops'").get();
   if (!kaspiShopsRow) {
     const defaultShops = [
