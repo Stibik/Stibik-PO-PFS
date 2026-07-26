@@ -19,6 +19,17 @@ function rowToCatalogItem(row) {
     printName: row.name,            // "Название для печати" — ручное поле
     category: row.type,             // категория — ручное поле
     subgroup: row.subgroup,         // подраздел (второй уровень группировки) — ручное поле
+    material: row.material,
+    color: row.color,
+    height: row.height,
+    diameter: row.diameter,
+    weight: row.weight,
+    mount: row.mount,               // крепление/кольцо (для груш и т.п.)
+    laborRate: row.labor_rate,      // расценка труда за 1 шт — читает "Зарплата"
+    materialCost: row.material_cost,
+    miscCost: row.misc_cost,
+    ragsCost: row.rags_cost,
+    note: row.note,
     costPrice: row.cost,            // себестоимость — ручное поле
     retailPrice: row.retail,        // наша розничная цена — ручное поле
     photo: row.photo,
@@ -91,12 +102,20 @@ router.put("/:id", (req, res) => {
 
   const updates = [];
   const params = [];
-  const map = { printName: "name", category: "type", subgroup: "subgroup", costPrice: "cost", retailPrice: "retail" };
+  const map = {
+    printName: "name", category: "type", subgroup: "subgroup",
+    material: "material", color: "color", height: "height", diameter: "diameter",
+    weight: "weight", mount: "mount", note: "note",
+    laborRate: "labor_rate", materialCost: "material_cost", miscCost: "misc_cost", ragsCost: "rags_cost",
+    costPrice: "cost", retailPrice: "retail"
+  };
+  const numericFields = new Set(["height","diameter","weight","laborRate","materialCost","miscCost","ragsCost","costPrice","retailPrice"]);
   for (const [jsKey, col] of Object.entries(map)) {
     if (Object.prototype.hasOwnProperty.call(b, jsKey)) {
       updates.push(`${col} = ?`);
       let v = b[jsKey];
-      if ((jsKey === "costPrice" || jsKey === "retailPrice") && v !== null) v = Number(v) || 0;
+      if (numericFields.has(jsKey) && v !== null && v !== "") v = Number(v) || 0;
+      if (numericFields.has(jsKey) && v === "") v = null;
       params.push(v);
     }
   }
