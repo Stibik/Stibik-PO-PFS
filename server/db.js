@@ -177,6 +177,18 @@ CREATE TABLE IF NOT EXISTS warehouse_stock (
   created_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS production_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  production_id TEXT NOT NULL,
+  from_stage TEXT,
+  to_stage TEXT,
+  user TEXT,
+  reason TEXT,
+  created_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_production_history_prod ON production_history(production_id);
+
 CREATE INDEX IF NOT EXISTS idx_production_order ON production(order_id);
 CREATE INDEX IF NOT EXISTS idx_warehouse_article ON warehouse_stock(article);
 CREATE INDEX IF NOT EXISTS idx_warehouse_consumed ON warehouse_stock(consumed);
@@ -236,6 +248,20 @@ export function ensureSchema() {
   safeAddColumn("price_items", "material_cost REAL");  // Затраты на материал
   safeAddColumn("price_items", "misc_cost REAL");      // Прочие затраты
   safeAddColumn("price_items", "rags_cost REAL");      // Ветошь (расходники на производстве)
+
+  // ── Полная цепочка стадий заказа в производстве (доработка по ТЗ) ──
+  // pending -> in_production/from_stock -> ready -> packed -> issued
+  // плюс отдельные ветки: cancelled, returned_to_stock, archived
+  safeAddColumn("production", "stage TEXT DEFAULT 'pending'");
+  safeAddColumn("production", "cancellation_reason TEXT"); // при отмене: одна из 5 причин (см. resolveCancellation)
+  safeAddColumn("production", "archived_at TEXT");
+  safeAddColumn("production", "quantity INTEGER DEFAULT 1");
+  safeAddColumn("production", "shop TEXT");
+
+  // ── Богаче поля для "Остатков" ──
+  safeAddColumn("warehouse_stock", "location TEXT");   // место хранения (свободный текст)
+  safeAddColumn("warehouse_stock", "status TEXT DEFAULT 'available'"); // available | reserved | damaged
+  safeAddColumn("warehouse_stock", "comment TEXT");
 
   const kaspiShopsRow = db.prepare("SELECT value FROM settings WHERE key = 'kaspi_shops'").get();
   if (!kaspiShopsRow) {
