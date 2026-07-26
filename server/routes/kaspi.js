@@ -69,7 +69,7 @@ router.post("/sync", async (req, res) => {
           updated++;
         } else {
           if (ko.deliveryState === "ARCHIVE" && !includeArchive) { skippedArchive++; continue; }
-          const displayNumber = nextKaspiNumber();
+          const displayNumber = nextKaspiNumber(shop.name);
           const id = "kord_" + ko.kaspiOrderId;
           db.prepare(`INSERT INTO orders
             (id, source, kaspi_order_id, kaspi_code, shop, display_number, status, kaspi_status,
