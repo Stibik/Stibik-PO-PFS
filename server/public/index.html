@@ -1435,11 +1435,13 @@
   // полям (assembled, courierTransmissionDate, preOrder, state, status), не точная копия.
   // Если после проверки что-то не совпадёт по конкретному заказу — поправим на реальном примере.
   const STAGE_DEFS = [
+    {key:"cancelledDelivery", label:"Отменены при доставке", color:"#B23A2E", bg:"#F5DEDA"},
     {key:"cancelled", label:"Отменён", color:"#B23A2E", bg:"#F5DEDA"},
     {key:"returns",   label:"Возврат", color:"#8B5E1F", bg:"#F3E0BC"},
-    {key:"packing",   label:"Нужно собрать", color:"#C8862B", bg:"#F3E0BC"},
+    {key:"preorder",  label:"Предзаказ", color:"#6B4FA0", bg:"#EAE0F5"},
+    {key:"packing",   label:"Упаковка", color:"#C8862B", bg:"#F3E0BC"},
     {key:"handover",  label:"Передача", color:"#2C6E8F", bg:"#DCEEF5"},
-    {key:"toDelivery",label:"Передано на доставку", color:"#3E7D4C", bg:"#E0EEDF"},
+    {key:"toDelivery",label:"Переданы на доставку", color:"#3E7D4C", bg:"#E0EEDF"},
     {key:"completed", label:"Завершён", color:"#3E7D4C", bg:"#E0EEDF"},
     {key:"archive",   label:"Архив", color:"#8A8F99", bg:"#EEEEEE"},
     {key:"other",     label:"Другое", color:"#565B66", bg:"#EFEFEF"}
@@ -1447,13 +1449,18 @@
   function stageDef(key){ return STAGE_DEFS.find(s=>s.key===key) || STAGE_DEFS[STAGE_DEFS.length-1]; }
 
   function classifyStage(o){
+    // "Отменены при доставке" (по скриншоту кабинета Kaspi) — предположительно
+    // это отмена уже ПОСЛЕ того, как заказ попал в доставку Kaspi (deliveryState
+    // уже был KASPI_DELIVERY). Это предположение, не подтверждено примером —
+    // если не совпадёт с реальностью, поправим на конкретном заказе.
+    if((o.kaspiStatus==="CANCELLED" || o.kaspiStatus==="CANCELLING") && o.deliveryState==="KASPI_DELIVERY") return "cancelledDelivery";
     if(o.kaspiStatus==="CANCELLED" || o.kaspiStatus==="CANCELLING") return "cancelled";
     if(o.kaspiStatus==="RETURN_REQUESTED" || o.kaspiStatus==="RETURNED") return "returns";
     if(o.deliveryState==="ARCHIVE") return "archive";
     if(o.kaspiStatus==="COMPLETED") return "completed";
-    // Раньше тут было отдельное деление на "Предзаказ" (preOrder=true) и "Упаковка" —
-    // в кабинете Kaspi оба варианта выглядят как "нужно собрать", разница в preOrder
-    // не значима для рабочего процесса. Объединено в одну стадию.
+    // Восстановлено разделение Предзаказ/Упаковка — в реальном кабинете Kaspi
+    // это два разных пункта с разными счётчиками, не одно и то же.
+    if(o.preOrder && !o.assembled) return "preorder";
     if(!o.assembled) return "packing";
     if(o.assembled && !o.courierTransmissionDate) return "handover";
     if(o.courierTransmissionDate) return "toDelivery";
@@ -1513,8 +1520,8 @@
       shopWrap.innerHTML = "";
     }
 
-    const nonTerminal = ["packing","handover","toDelivery","other"];
-    const terminalKeys = ["cancelled","returns","completed","archive"];
+    const nonTerminal = ["preorder","packing","handover","toDelivery","other"];
+    const terminalKeys = ["cancelled","cancelledDelivery","returns","completed","archive"];
     const activeCount = kaspiOrders.filter(o=>nonTerminal.includes(o.stage) && kaspiShopFilter.has(o.shop)).length;
     const filterWrap = document.getElementById("kaspiStatusFilters");
 
@@ -1593,7 +1600,7 @@
 
   document.getElementById("btnPrintKaspiList").addEventListener("click", ()=>{
     let list = kaspiOrders.slice().filter(o=>kaspiShopFilter.has(o.shop));
-    const nonTerminal = ["packing","handover","toDelivery","other"];
+    const nonTerminal = ["preorder","packing","handover","toDelivery","other"];
     if(kaspiStageFilter==="active") list = list.filter(o=>nonTerminal.includes(o.stage));
     else if(kaspiStageFilter!=="all") list = list.filter(o=>o.stage===kaspiStageFilter);
     if(!list.length){ toast("Нечего печатать — список пуст"); return; }
