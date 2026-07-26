@@ -217,11 +217,42 @@
       <div id="catalogStats" style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:14px;"></div>
       <div class="tbl-wrap">
         <table>
-          <thead><tr><th>SKU</th><th>Название (Kaspi)</th><th>Название для печати</th><th>Категория</th><th>Подраздел</th><th>Цена Kaspi</th><th>Себестоимость</th><th>Наличие</th><th>Допоставка</th><th></th></tr></thead>
-          <tbody id="catalogBody"><tr><td colspan="10" style="text-align:center;color:var(--ink-soft);padding:20px;">Справочник пуст — нажмите «Импорт из Kaspi», чтобы загрузить файл выгрузки активных товаров</td></tr></tbody>
+          <thead><tr><th>SKU</th><th>Название (Kaspi)</th><th>Название для печати</th><th>Группа</th><th>Подраздел</th><th>Розница</th><th>Наличие</th><th></th></tr></thead>
+          <tbody id="catalogBody"><tr><td colspan="8" style="text-align:center;color:var(--ink-soft);padding:20px;">Справочник пуст — нажмите «Импорт из Kaspi», чтобы загрузить файл выгрузки активных товаров</td></tr></tbody>
         </table>
       </div>
     </section>
+
+    <!-- CATALOG ITEM MODAL -->
+    <div class="overlay" id="catalogItemOverlay">
+      <div class="modal" style="max-width:640px;">
+        <h3>Карточка товара</h3>
+        <div id="catalogItemKaspiInfo" style="font-size:12.5px; color:var(--ink-soft); background:#F7F4EC; border-radius:6px; padding:10px 12px; margin-bottom:14px;"></div>
+        <div class="grid2">
+          <div class="full"><label>Название для печати</label><input id="ci_printName" type="text" placeholder="Как будет видно клиенту"></div>
+          <div><label>Группа</label><input id="ci_category" type="text" placeholder="напр. Манекены для борьбы и ММА"></div>
+          <div><label>Подраздел</label><input id="ci_subgroup" type="text" placeholder="напр. 1-ноги, ПВХ"></div>
+          <div><label>Материал</label><input id="ci_material" type="text"></div>
+          <div><label>Цвет</label><input id="ci_color" type="text"></div>
+          <div><label>Высота, см</label><input id="ci_height" type="number" step="0.1"></div>
+          <div><label>Диаметр, см</label><input id="ci_diameter" type="number" step="0.1"></div>
+          <div><label>Вес, кг</label><input id="ci_weight" type="number" step="0.1"></div>
+          <div><label>Крепление/кольцо</label><input id="ci_mount" type="text"></div>
+          <div><label>Расценка труда, ₸ (для Зарплаты)</label><input id="ci_laborRate" type="number" step="1"></div>
+          <div><label>Затраты на материал, ₸</label><input id="ci_materialCost" type="number" step="1"></div>
+          <div><label>Прочие затраты, ₸</label><input id="ci_miscCost" type="number" step="1"></div>
+          <div><label>Ветошь, ₸</label><input id="ci_ragsCost" type="number" step="1"></div>
+          <div><label>Себестоимость итого, ₸</label><input id="ci_costPrice" type="number" step="1"></div>
+          <div><label>Розница, ₸</label><input id="ci_retailPrice" type="number" step="1"></div>
+          <div class="full"><label>Заметка</label><textarea id="ci_note" style="width:100%"></textarea></div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn danger" id="catalogItemDeleteBtn">Удалить</button>
+          <div><button class="btn secondary" id="catalogItemCancelBtn">Отмена</button> <button class="btn amber" id="catalogItemSaveBtn">Сохранить</button></div>
+        </div>
+      </div>
+    </div>
+
     <section id="tab-price" style="display:none">
       <div class="toolbar">
         <button class="btn amber" id="btnAddPrice">+ Новая позиция</button>
@@ -251,6 +282,20 @@
       <div id="kaspiShopForms"></div>
       <button class="btn amber" id="btnSaveKaspiSettings">Сохранить настройки</button>
       <div id="kaspiSettingsMsg" style="margin-top:10px; font-size:12.5px;"></div>
+
+      <div style="margin-top:28px; padding-top:20px; border-top:1px solid var(--line);">
+        <h3 style="font-family:var(--serif); font-weight:400; margin-bottom:6px;">Нумерация заказов</h3>
+        <p style="font-size:12.5px; color:var(--ink-soft); margin-top:0;">
+          Внутренний короткий номер заказа (тот, что видят сотрудники и печатается на этикетках) — не код Kaspi.
+          Можно продолжить счёт с того места, где остановились в PRODIX или на бумаге, вместо того чтобы начинать с 1.
+        </p>
+        <div style="display:flex; gap:10px; align-items:center;">
+          <span style="font-size:13px;">Следующий заказ получит номер:</span>
+          <input type="number" id="orderNumberingInput" min="1" style="width:120px;">
+          <button class="btn secondary" id="btnSaveOrderNumbering" style="padding:7px 14px;">Сохранить</button>
+        </div>
+        <div id="orderNumberingMsg" style="margin-top:8px; font-size:12.5px;"></div>
+      </div>
     </section>
     <section id="tab-audit" style="display:none">
       <div class="tbl-wrap">
@@ -790,7 +835,7 @@
   function renderCatalog(){
     const totalCount = catalogItems.length;
     const withPrintName = catalogItems.filter(it=>it.printName).length;
-    const withCost = catalogItems.filter(it=>it.costPrice!=null).length;
+    const withLaborRate = catalogItems.filter(it=>it.laborRate!=null).length;
     document.getElementById("catalogStats").innerHTML = totalCount ? `
       <div class="stat-card" style="background:#fff;border:1px solid var(--line);border-left:4px solid var(--navy);padding:12px 16px;">
         <div style="font-size:11px;text-transform:uppercase;color:var(--ink-soft);">Всего в справочнике</div>
@@ -801,56 +846,109 @@
         <div style="font-family:var(--serif,serif);font-size:22px;">${totalCount-withPrintName}</div>
       </div>
       <div class="stat-card" style="background:#fff;border:1px solid var(--line);border-left:4px solid var(--amber);padding:12px 16px;">
-        <div style="font-size:11px;text-transform:uppercase;color:var(--ink-soft);">Без себестоимости</div>
-        <div style="font-family:var(--serif,serif);font-size:22px;">${totalCount-withCost}</div>
+        <div style="font-size:11px;text-transform:uppercase;color:var(--ink-soft);">Без расценки труда</div>
+        <div style="font-family:var(--serif,serif);font-size:22px;">${totalCount-withLaborRate}</div>
       </div>` : "";
 
     const body = document.getElementById("catalogBody");
     if(!catalogItems.length){
-      body.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--ink-soft);padding:20px;">Справочник пуст — нажмите «Импорт из Kaspi», чтобы загрузить файл выгрузки активных товаров</td></tr>`;
+      body.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--ink-soft);padding:20px;">Справочник пуст — нажмите «Импорт из Kaspi», чтобы загрузить файл выгрузки активных товаров</td></tr>`;
       return;
     }
     body.innerHTML = catalogItems.map((it)=>`
       <tr>
         <td class="mono" style="font-size:11.5px;">${esc(it.article)}</td>
         <td>${esc(it.kaspiName||"—")}</td>
-        <td><input type="text" data-catalog-id="${it.id}" data-field="printName" value="${esc(it.printName)}" placeholder="Своё название..." style="width:100%;"></td>
-        <td><input type="text" data-catalog-id="${it.id}" data-field="category" value="${esc(it.category)}" placeholder="Категория..." style="width:100%;"></td>
-        <td><input type="text" data-catalog-id="${it.id}" data-field="subgroup" value="${esc(it.subgroup)}" placeholder="Подраздел..." style="width:100%;"></td>
-        <td class="num">${it.kaspiPrice ? money(it.kaspiPrice)+" ₸" : "—"}</td>
-        <td class="num"><input type="number" data-catalog-id="${it.id}" data-field="costPrice" value="${it.costPrice??''}" placeholder="—" style="width:90px;text-align:right;"></td>
+        <td>${esc(it.printName||"—")}</td>
+        <td>${esc(it.category||"—")}</td>
+        <td>${esc(it.subgroup||"—")}</td>
+        <td class="num">${it.retailPrice ? money(it.retailPrice)+" ₸" : "—"}</td>
         <td>${it.totalPoints ? it.inStockPoints+"/"+it.totalPoints : "—"}</td>
-        <td>${it.preorderDays ? it.preorderDays+' дн.' : '—'}</td>
-        <td><button class="btn danger" style="padding:4px 10px;font-size:12px" onclick="window.__deleteCatalogItem('${it.id}')">Удалить</button></td>
+        <td style="white-space:nowrap;">
+          <button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__openCatalogItem('${it.id}')">Изменить</button>
+        </td>
       </tr>`).join("");
-    body.querySelectorAll("input[data-catalog-id]").forEach(inp=>{
-      inp.addEventListener("change", async ()=>{
-        const id = inp.dataset.catalogId;
-        const field = inp.dataset.field;
-        const value = field==="costPrice" ? (inp.value===""?null:parseFloat(inp.value)||0) : inp.value;
-        try{
-          await api("/catalog/"+id, {method:"PUT", body:JSON.stringify({[field]: value})});
-          const it = catalogItems.find(x=>x.id===id);
-          if(it) it[field] = value;
-          toast("Сохранено");
-        }catch(e){
-          toast("Ошибка сохранения: "+e.message);
-          await loadCatalog(); // откатываем визуально к тому, что реально в базе
-        }
-      });
-    });
   }
 
-  window.__deleteCatalogItem = async function(id){
+  let editingCatalogId = null;
+  const catalogItemOverlay = document.getElementById("catalogItemOverlay");
+
+  window.__openCatalogItem = function(id){
     const it = catalogItems.find(x=>x.id===id);
-    const label = it ? (it.printName || it.kaspiName || it.article) : id;
+    if(!it) return;
+    editingCatalogId = id;
+
+    const kaspiBits = [];
+    kaspiBits.push(`SKU: <span class="mono">${esc(it.article)}</span>`);
+    if(it.kaspiName) kaspiBits.push(`С Kaspi: «${esc(it.kaspiName)}» за ${money(it.kaspiPrice)} ₸`);
+    if(it.totalPoints) kaspiBits.push(`Наличие: ${it.inStockPoints}/${it.totalPoints} ПВЗ`);
+    if(it.preorderDays) kaspiBits.push(`Допоставка: ${it.preorderDays} дн.`);
+    if(it.syncedAt) kaspiBits.push(`Обновлено: ${fmtDate((it.syncedAt||"").slice(0,10))}`);
+    document.getElementById("catalogItemKaspiInfo").innerHTML = kaspiBits.join(" · ") || "Данных от Kaspi нет — товар добавлен вручную";
+
+    document.getElementById("ci_printName").value = it.printName || "";
+    document.getElementById("ci_category").value = it.category || "";
+    document.getElementById("ci_subgroup").value = it.subgroup || "";
+    document.getElementById("ci_material").value = it.material || "";
+    document.getElementById("ci_color").value = it.color || "";
+    document.getElementById("ci_height").value = it.height ?? "";
+    document.getElementById("ci_diameter").value = it.diameter ?? "";
+    document.getElementById("ci_weight").value = it.weight ?? "";
+    document.getElementById("ci_mount").value = it.mount || "";
+    document.getElementById("ci_laborRate").value = it.laborRate ?? "";
+    document.getElementById("ci_materialCost").value = it.materialCost ?? "";
+    document.getElementById("ci_miscCost").value = it.miscCost ?? "";
+    document.getElementById("ci_ragsCost").value = it.ragsCost ?? "";
+    document.getElementById("ci_costPrice").value = it.costPrice ?? "";
+    document.getElementById("ci_retailPrice").value = it.retailPrice ?? "";
+    document.getElementById("ci_note").value = it.note || "";
+
+    catalogItemOverlay.classList.add("show");
+  };
+
+  document.getElementById("catalogItemCancelBtn").addEventListener("click", ()=>{
+    catalogItemOverlay.classList.remove("show");
+  });
+
+  document.getElementById("catalogItemSaveBtn").addEventListener("click", async ()=>{
+    const numOrNull = (elId)=>{ const v = document.getElementById(elId).value; return v===""? null : (parseFloat(v)||0); };
+    const body = {
+      printName: document.getElementById("ci_printName").value.trim(),
+      category: document.getElementById("ci_category").value.trim(),
+      subgroup: document.getElementById("ci_subgroup").value.trim(),
+      material: document.getElementById("ci_material").value.trim(),
+      color: document.getElementById("ci_color").value.trim(),
+      mount: document.getElementById("ci_mount").value.trim(),
+      note: document.getElementById("ci_note").value.trim(),
+      height: numOrNull("ci_height"),
+      diameter: numOrNull("ci_diameter"),
+      weight: numOrNull("ci_weight"),
+      laborRate: numOrNull("ci_laborRate"),
+      materialCost: numOrNull("ci_materialCost"),
+      miscCost: numOrNull("ci_miscCost"),
+      ragsCost: numOrNull("ci_ragsCost"),
+      costPrice: numOrNull("ci_costPrice"),
+      retailPrice: numOrNull("ci_retailPrice"),
+    };
+    try{
+      await api("/catalog/"+editingCatalogId, {method:"PUT", body:JSON.stringify(body)});
+      catalogItemOverlay.classList.remove("show");
+      await loadCatalog();
+      toast("Сохранено");
+    }catch(e){ toast("Ошибка сохранения: "+e.message); }
+  });
+
+  document.getElementById("catalogItemDeleteBtn").addEventListener("click", async ()=>{
+    const it = catalogItems.find(x=>x.id===editingCatalogId);
+    const label = it ? (it.printName || it.kaspiName || it.article) : editingCatalogId;
     if(!confirm(`Удалить «${label}» из справочника? Это действие необратимо.`)) return;
     try{
-      await api("/catalog/"+id, {method:"DELETE"});
+      await api("/catalog/"+editingCatalogId, {method:"DELETE"});
+      catalogItemOverlay.classList.remove("show");
       await loadCatalog();
       toast("Удалено из справочника");
     }catch(e){ toast("Ошибка удаления: "+e.message); }
-  };
+  });
 
   document.getElementById("btnLogout").addEventListener("click", async ()=>{
     stopAutoSync();
@@ -866,7 +964,7 @@
       if(b.dataset.tab === "catalog") loadCatalog();
       if(b.dataset.tab === "kaspiOrders") renderKaspiOrders();
       if(b.dataset.tab === "claims") { if(!kaspiOrders.length) renderKaspiOrders().then(renderClaims); else renderClaims(); }
-      if(b.dataset.tab === "kaspi") loadKaspiSettings();
+      if(b.dataset.tab === "kaspi") { loadKaspiSettings(); loadOrderNumbering(); }
       if(b.dataset.tab === "audit") loadAudit();
       if(b.dataset.tab === "users") loadUsers();
     });
@@ -1437,6 +1535,28 @@
       await loadKaspiSettings();
       await loadAll();
     }catch(e){ document.getElementById("kaspiSettingsMsg").textContent = "Ошибка: "+e.message; }
+  });
+
+  // ---------- Нумерация заказов (внутренний короткий номер, не код Kaspi) ----------
+  async function loadOrderNumbering(){
+    try{
+      const data = await api("/counters/order-numbering");
+      document.getElementById("orderNumberingInput").value = data.nextNumber;
+    }catch(e){
+      document.getElementById("orderNumberingMsg").textContent = "Ошибка загрузки: "+e.message;
+    }
+  }
+  document.getElementById("btnSaveOrderNumbering").addEventListener("click", async ()=>{
+    const val = parseInt(document.getElementById("orderNumberingInput").value, 10);
+    if(!Number.isFinite(val) || val < 1){
+      document.getElementById("orderNumberingMsg").textContent = "Укажите целое число, 1 или больше";
+      return;
+    }
+    try{
+      await api("/counters/order-numbering", {method:"POST", body:JSON.stringify({nextNumber: val})});
+      document.getElementById("orderNumberingMsg").textContent = `Сохранено — следующий заказ получит номер ${val}`;
+      toast("Нумерация обновлена");
+    }catch(e){ document.getElementById("orderNumberingMsg").textContent = "Ошибка: "+e.message; }
   });
 
   // Общая функция синхронизации — использует и кнопка, и автосинхронизация.
