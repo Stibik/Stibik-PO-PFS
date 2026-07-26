@@ -216,8 +216,27 @@ export function ensureSchema() {
     if (!row) db.prepare("INSERT INTO meta (key, value) VALUES (?, ?)").run(key, String(def));
   };
   ensureMeta("next_receipt_number", 1);
-  ensureMeta("next_kaspi_number", 1);
+  ensureMeta("next_kaspi_number", 1); // старый общий счётчик — оставлен только для миграции ниже, дальше не используется
   ensureMeta("version", "1.0.0");
+
+  // ── Переход на раздельную нумерацию по магазинам ──
+  // Раньше был один общий счётчик на все магазины сразу (номера SA и PFS шли
+  // вперемешку). Теперь у каждого магазина свой счётчик. Чтобы новые номера не
+  // столкнулись с уже использованными старыми, для каждого настроенного
+  // магазина создаём отдельный счётчик, инициализируя его текущим значением
+  // старого общего — дальше можно развести по-своему через настройки.
+  {
+    const oldShared = db.prepare("SELECT value FROM meta WHERE key = 'next_kaspi_number'").get();
+    const startFrom = oldShared ? oldShared.value : "1";
+    const shopsRow2 = db.prepare("SELECT value FROM settings WHERE key = 'kaspi_shops'").get();
+    const shopsList = shopsRow2 ? JSON.parse(shopsRow2.value) : [];
+    for (const s of shopsList) {
+      if (!s.name) continue;
+      const perShopKey = `next_kaspi_number:${s.name}`;
+      const existing = db.prepare("SELECT value FROM meta WHERE key = ?").get(perShopKey);
+      if (!existing) db.prepare("INSERT INTO meta (key, value) VALUES (?, ?)").run(perShopKey, startFrom);
+    }
+  }
 }
 
 export function ensureBootstrapUser() {
@@ -249,9 +268,13 @@ export function nextReceiptNumber() {
   setMeta("next_receipt_number", n + 1);
   return n;
 }
-export function nextKaspiNumber() {
-  const n = parseInt(getMeta("next_kaspi_number") || "1", 10);
-  setMeta("next_kaspi_number", n + 1);
+export function nextKaspiNumber(shopName) {
+  // Свой счётчик на каждый магазин (SA/PFS не путаются). Без имени магазина —
+  // старый общий счётчик, оставлен только для обратной совместимости на случай
+  // вызова откуда-то ещё без параметра.
+  const key = shopName ? `next_kaspi_number:${shopName}` : "next_kaspi_number";
+  const n = parseInt(getMeta(key) || "1", 10);
+  setMeta(key, n + 1);
   return n;
 }
 
