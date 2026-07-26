@@ -22,12 +22,13 @@
   nav.tabs button.active{color:#1E2A44; background:var(--amber); font-weight:600;}
   main{padding:22px 26px 60px; max-width:1300px; margin:0 auto;}
   .toolbar{display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:14px;}
-  .btn{padding:8px 16px; border-radius:6px; border:1px solid var(--navy); background:var(--navy); color:#fff; font-size:13px; cursor:pointer; transition:filter .15s;}
+  .btn{padding:8px 16px; border-radius:8px; border:1px solid var(--navy); background:var(--navy); color:#fff; font-size:13px; cursor:pointer; transition:filter .15s, transform .08s;}
   .btn:hover{filter:brightness(1.1);}
+  .btn:active{transform:scale(0.97);}
   .btn.secondary{background:#fff; color:var(--navy);}
   .btn.amber{background:var(--amber); border-color:var(--amber);}
   .btn.danger{background:#fff; color:var(--red); border-color:var(--red);}
-  input[type=text],input[type=number],input[type=password],select,textarea{padding:7px 9px; border:1px solid var(--line); border-radius:6px; font-size:13.5px;}
+  input[type=text],input[type=number],input[type=password],select,textarea{padding:7px 9px; border:1px solid var(--line); border-radius:8px; font-size:13.5px;}
   table{width:100%; border-collapse:collapse; background:#fff; border-radius:8px; overflow:hidden; box-shadow:0 2px 8px rgba(30,42,68,0.08);}
   thead th{background:#F0EAD9; text-align:left; font-size:11px; text-transform:uppercase; padding:8px; border-bottom:2px solid var(--line); white-space:nowrap;}
   thead th.sortable{cursor:pointer; user-select:none;}
@@ -38,6 +39,20 @@
   .thumb{width:40px; height:40px; object-fit:cover; border-radius:3px; border:1px solid var(--line);}
   .thumb-empty{width:40px; height:40px; border-radius:3px; border:1px dashed var(--line); display:flex; align-items:center; justify-content:center; color:var(--ink-soft); font-size:11px;}
   .stamp{font-family:var(--mono); font-size:10.5px; font-weight:700; padding:3px 9px; border-radius:20px; border:1.5px solid currentColor; white-space:nowrap; display:inline-block;}
+
+  /* Панель-блок: группирует связанные элементы управления в один визуальный узел */
+  .panel{background:#fff; border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:16px;}
+  .panel + .panel{margin-top:-4px;}
+  .panel-divider{border-top:1px solid var(--line); margin:14px 0;}
+  .panel-label{font-size:11px; text-transform:uppercase; letter-spacing:.03em; color:var(--ink-soft); margin-bottom:8px; font-weight:600;}
+
+  /* Современные фильтр-пилюли — вместо обычных кнопок для переключателей */
+  .pill-row{display:flex; flex-wrap:wrap; gap:8px;}
+  .pill{padding:7px 15px; border-radius:20px; border:1px solid var(--line); background:#fff; color:var(--ink); font-size:13px; cursor:pointer; transition:all .15s; white-space:nowrap;}
+  .pill:hover{border-color:var(--amber); color:var(--amber);}
+  .pill.active{background:var(--navy); border-color:var(--navy); color:#fff;}
+  .pill.active.amber-active{background:var(--amber); border-color:var(--amber); color:#fff;}
+  .pill .count{opacity:.75; font-size:11.5px; margin-left:2px;}
   .stamp.new{color:#5B7FA6; background:#E4ECF5;}
   .stamp.transit{color:var(--amber); background:var(--amber-light);}
   .stamp.arrived{color:var(--green); background:#E0EEDF;}
@@ -50,7 +65,7 @@
   .error{color:var(--red); font-size:12.5px; min-height:16px;}
   .overlay{position:fixed; inset:0; background:rgba(20,24,30,0.55); display:none; align-items:flex-start; justify-content:center; padding:40px 16px; overflow:auto; z-index:50;}
   .overlay.show{display:flex;}
-  .modal{background:#fff; border-radius:6px; max-width:600px; width:100%; padding:22px 24px;}
+  .modal{background:#fff; border-radius:10px; max-width:600px; width:100%; padding:22px 24px;}
   .modal h3{font-family:var(--serif); font-weight:400; border-bottom:2px solid var(--amber); padding-bottom:8px;}
   .grid2{display:grid; grid-template-columns:1fr 1fr; gap:10px 14px;}
   .grid2 label{display:block; font-size:11px; color:var(--ink-soft); margin-bottom:3px;}
@@ -164,30 +179,39 @@
       </div>
     </section>
     <section id="tab-kaspiOrders" style="display:none">
-      <div class="toolbar">
-        <button class="btn amber" id="btnSyncKaspi2">Синхронизировать сейчас</button>
-        <label style="font-size:12.5px;"><input type="checkbox" id="includeArchiveCheck"> включая архив</label>
-        <span id="shopList2" style="font-size:12.5px;color:var(--ink-soft)"></span>
+      <div class="panel">
+        <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+          <button class="btn amber" id="btnSyncKaspi2">Синхронизировать сейчас</button>
+          <label style="font-size:12.5px; color:var(--ink-soft);"><input type="checkbox" id="includeArchiveCheck"> включая архив</label>
+          <span id="shopList2" style="font-size:12.5px;color:var(--ink-soft); margin-left:auto;"></span>
+        </div>
+        <div id="kaspiResult2"></div>
+
+        <div class="panel-divider"></div>
+        <div class="panel-label">Магазин</div>
+        <div class="pill-row" id="kaspiShopFilters"></div>
+
+        <div class="panel-divider"></div>
+        <div class="panel-label">Статус</div>
+        <div class="pill-row" id="kaspiStatusFilters"></div>
       </div>
-      <div id="kaspiResult2"></div>
-      <div class="toolbar" id="kaspiShopFilters" style="flex-wrap:wrap;"></div>
-      <div class="toolbar" id="kaspiStatusFilters" style="flex-wrap:wrap;"></div>
-      <div class="toolbar">
+
+      <div class="panel" style="display:flex; align-items:center; gap:10px; padding:12px 18px;">
         <button class="btn secondary" id="btnPrintKaspiList" style="padding:7px 12px;">🖨️ Печать списка (текущий фильтр)</button>
-      </div>
-      <div class="toolbar" style="position:relative;">
-        <button class="btn secondary" id="btnColSettings" style="padding:7px 12px;">⚙️ Колонки</button>
-        <div id="colSettingsPopover" style="display:none; position:absolute; top:40px; left:0; background:#fff; border:1px solid var(--line); border-radius:8px; box-shadow:0 6px 20px rgba(0,0,0,0.15); padding:12px 16px; z-index:20; min-width:220px;">
-          <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="photo" checked> Фото</label>
-          <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="num" checked> №</label>
-          <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="code" checked> Kaspi код</label>
-          <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="shop" checked> Магазин</label>
-          <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="name" checked> Наименование</label>
-          <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="courier" checked> Дата передачи курьеру</label>
-          <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="price" checked> Сумма</label>
-          <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="status" checked> Статус</label>
-          <label style="display:block; font-size:12.5px;"><input type="checkbox" class="kcol" data-col="delivery" checked> Доставка</label>
-          <label style="display:block; font-size:12.5px; margin-top:6px;"><input type="checkbox" class="kcol" data-col="waybill" checked> Накладная</label>
+        <div style="position:relative; margin-left:auto;">
+          <button class="btn secondary" id="btnColSettings" style="padding:7px 12px;">⚙️ Колонки</button>
+          <div id="colSettingsPopover" style="display:none; position:absolute; top:40px; right:0; background:#fff; border:1px solid var(--line); border-radius:8px; box-shadow:0 6px 20px rgba(0,0,0,0.15); padding:12px 16px; z-index:20; min-width:220px;">
+            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="photo" checked> Фото</label>
+            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="num" checked> №</label>
+            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="code" checked> Kaspi код</label>
+            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="shop" checked> Магазин</label>
+            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="name" checked> Наименование</label>
+            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="courier" checked> Дата передачи курьеру</label>
+            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="price" checked> Сумма</label>
+            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="status" checked> Статус</label>
+            <label style="display:block; font-size:12.5px;"><input type="checkbox" class="kcol" data-col="delivery" checked> Доставка</label>
+            <label style="display:block; font-size:12.5px; margin-top:6px;"><input type="checkbox" class="kcol" data-col="waybill" checked> Накладная</label>
+          </div>
         </div>
       </div>
 <div class="tbl-wrap">
@@ -1472,10 +1496,10 @@
     if(kaspiShopFilter===null) kaspiShopFilter = new Set(shopNames); // по умолчанию — все выбраны
     const shopWrap = document.getElementById("kaspiShopFilters");
     if(shopNames.length > 1){
-      shopWrap.innerHTML = `<span style="font-size:12px;color:var(--ink-soft);align-self:center;margin-right:4px;">Магазины:</span>` + shopNames.map(s=>{
+      shopWrap.innerHTML = shopNames.map(s=>{
         const count = kaspiOrders.filter(o=>o.shop===s).length;
         const active = kaspiShopFilter.has(s);
-        return `<button class="btn ${active?'amber':'secondary'}" style="padding:6px 14px;font-size:12.5px;" data-shop="${esc(s)}">${esc(s)} (${count})</button>`;
+        return `<button class="pill ${active?'active':''}" data-shop="${esc(s)}">${esc(s)} <span class="count">${count}</span></button>`;
       }).join("");
       shopWrap.querySelectorAll("button").forEach(b=>{
         b.addEventListener("click", ()=>{
@@ -1490,15 +1514,38 @@
     }
 
     const nonTerminal = ["packing","handover","toDelivery","other"];
+    const terminalKeys = ["cancelled","returns","completed","archive"];
     const activeCount = kaspiOrders.filter(o=>nonTerminal.includes(o.stage) && kaspiShopFilter.has(o.shop)).length;
     const filterWrap = document.getElementById("kaspiStatusFilters");
-    let html = `<button class="btn ${kaspiStageFilter==='active'?'amber':'secondary'}" style="padding:6px 14px;font-size:12.5px;" data-stage="active">Активные (${activeCount})</button>`
-      + `<button class="btn ${kaspiStageFilter==='all'?'amber':'secondary'}" style="padding:6px 14px;font-size:12.5px;" data-stage="all">Все (${kaspiOrders.filter(o=>kaspiShopFilter.has(o.shop)).length})</button>`;
-    STAGE_DEFS.forEach(sd=>{
+
+    function stagePill(sd, count){
+      const isActive = kaspiStageFilter===sd.key;
+      // Цвет пилюли берётся из той же палитры, что и бейдж статуса в таблице —
+      // тут просто группировка по смыслу, слова и цвета статуса не меняются.
+      const style = isActive ? `border-color:${sd.color};background:${sd.bg};color:${sd.color};` : "";
+      return `<button class="pill" style="${style}" data-stage="${sd.key}">${sd.label} <span class="count">${count}</span></button>`;
+    }
+
+    let html = `<div style="font-size:11px;color:var(--ink-soft);margin-bottom:6px;">Обзор</div><div class="pill-row" style="margin-bottom:14px;">`
+      + `<button class="pill ${kaspiStageFilter==='active'?'active':''}" data-stage="active">Активные <span class="count">${activeCount}</span></button>`
+      + `<button class="pill ${kaspiStageFilter==='all'?'active':''}" data-stage="all">Все <span class="count">${kaspiOrders.filter(o=>kaspiShopFilter.has(o.shop)).length}</span></button>`
+      + `</div>`;
+
+    const working = STAGE_DEFS.filter(sd=>nonTerminal.includes(sd.key));
+    const workingHtml = working.map(sd=>{
       const count = kaspiOrders.filter(o=>o.stage===sd.key && kaspiShopFilter.has(o.shop)).length;
-      if(count===0 && !["packing","handover","toDelivery"].includes(sd.key)) return;
-      html += `<button class="btn ${kaspiStageFilter===sd.key?'amber':'secondary'}" style="padding:6px 14px;font-size:12.5px;" data-stage="${sd.key}">${sd.label} (${count})</button>`;
-    });
+      if(count===0 && sd.key==="other") return "";
+      return stagePill(sd, count);
+    }).join("");
+    if(workingHtml) html += `<div style="font-size:11px;color:var(--ink-soft);margin-bottom:6px;">В работе</div><div class="pill-row" style="margin-bottom:14px;">${workingHtml}</div>`;
+
+    const terminal = STAGE_DEFS.filter(sd=>terminalKeys.includes(sd.key));
+    const terminalHtml = terminal.map(sd=>{
+      const count = kaspiOrders.filter(o=>o.stage===sd.key && kaspiShopFilter.has(o.shop)).length;
+      return stagePill(sd, count);
+    }).join("");
+    html += `<div style="font-size:11px;color:var(--ink-soft);margin-bottom:6px;">Завершено</div><div class="pill-row">${terminalHtml}</div>`;
+
     filterWrap.innerHTML = html;
     filterWrap.querySelectorAll("button").forEach(b=>{
       b.addEventListener("click", ()=>{ kaspiStageFilter = b.dataset.stage; renderKaspiOrders(false); });
