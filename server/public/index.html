@@ -212,6 +212,9 @@
       <div class="toolbar">
         <button class="btn amber" id="btnImportCatalog">Импорт из Kaspi (Excel)</button>
         <input type="file" id="importCatalogInput" accept=".xlsx,.xls" style="display:none">
+        <button class="btn secondary" id="btnExportCatalog">Экспорт в Excel</button>
+        <button class="btn secondary" id="btnImportCatalogFilled">Загрузить заполненный файл</button>
+        <input type="file" id="importCatalogFilledInput" accept=".xlsx,.xls" style="display:none">
         <span id="catalogImportInfo" style="font-size:12.5px;color:var(--ink-soft);"></span>
       </div>
       <div id="catalogStats" style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:14px;"></div>
@@ -775,6 +778,89 @@
       document.getElementById("catalogBody").innerHTML = `<tr><td colspan="7" style="color:var(--red);padding:20px;">Ошибка загрузки справочника: ${esc(e.message)}</td></tr>`;
     }
   }
+
+  // Экспорт справочника целиком — чтобы удобно заполнить материалы/расценки/
+  // группы сразу для многих товаров в Excel, а не по одному через карточку.
+  // Колонки со справочными Kaspi-данными помечены "(справка)" — их менять не
+  // обязательно, при обратной загрузке они игнорируются (не перезаписываются).
+  document.getElementById("btnExportCatalog").addEventListener("click", ()=>{
+    if(!catalogItems.length){ toast("Справочник пуст — нечего экспортировать"); return; }
+    const rows = catalogItems.map(it=>({
+      "SKU": it.article,
+      "Название с Kaspi (справка)": it.kaspiName||"",
+      "Название для печати": it.printName||"",
+      "Группа": it.category||"",
+      "Подраздел": it.subgroup||"",
+      "Материал": it.material||"",
+      "Цвет": it.color||"",
+      "Высота см": it.height??"",
+      "Диаметр см": it.diameter??"",
+      "Вес кг": it.weight??"",
+      "Крепление": it.mount||"",
+      "Расценка труда": it.laborRate??"",
+      "Затраты на материал": it.materialCost??"",
+      "Прочие затраты": it.miscCost??"",
+      "Ветошь": it.ragsCost??"",
+      "Себестоимость": it.costPrice??"",
+      "Розница": it.retailPrice??"",
+      "Заметка": it.note||"",
+      "Цена Kaspi (справка)": it.kaspiPrice||"",
+      "Наличие ПВЗ (справка)": it.totalPoints ? it.inStockPoints+"/"+it.totalPoints : "",
+      "Допоставка дн (справка)": it.preorderDays||""
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Справочник");
+    XLSX.writeFile(wb, `справочник_${new Date().toISOString().slice(0,10)}.xlsx`);
+  });
+
+  // Обратная загрузка заполненного файла — сопоставление по колонке SKU.
+  // Обновляет только ручные поля (название для печати, группа, материалы,
+  // расценка труда и т.д.), kaspi_* поля не трогает. Строки с SKU, которого
+  // нет в справочнике, пропускаются (не создаёт новые товары через этот путь).
+  document.getElementById("btnImportCatalogFilled").addEventListener("click", ()=>document.getElementById("importCatalogFilledInput").click());
+  document.getElementById("importCatalogFilledInput").addEventListener("change",(e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = async function(ev){
+      try{
+        const wb = XLSX.read(ev.target.result, {type:"array"});
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, {defval:""});
+        if(!rows.length){ toast("Файл пуст"); return; }
+        const numOrNull = (v)=> (v==="" || v==null) ? null : (parseFloat(v)||0);
+        const items = rows.map(r=>({
+          article: String(r["SKU"]||"").trim(),
+          printName: String(r["Название для печати"]||"").trim(),
+          category: String(r["Группа"]||"").trim(),
+          subgroup: String(r["Подраздел"]||"").trim(),
+          material: String(r["Материал"]||"").trim(),
+          color: String(r["Цвет"]||"").trim(),
+          height: numOrNull(r["Высота см"]),
+          diameter: numOrNull(r["Диаметр см"]),
+          weight: numOrNull(r["Вес кг"]),
+          mount: String(r["Крепление"]||"").trim(),
+          laborRate: numOrNull(r["Расценка труда"]),
+          materialCost: numOrNull(r["Затраты на материал"]),
+          miscCost: numOrNull(r["Прочие затраты"]),
+          ragsCost: numOrNull(r["Ветошь"]),
+          costPrice: numOrNull(r["Себестоимость"]),
+          retailPrice: numOrNull(r["Розница"]),
+          note: String(r["Заметка"]||"").trim()
+        })).filter(it=>it.article);
+        if(!items.length){ toast("Не нашлось строк с заполненным SKU"); return; }
+        const result = await api("/catalog/bulk-update", {method:"POST", body:JSON.stringify({items})});
+        await loadCatalog();
+        toast(`Обновлено: ${result.updated}${result.notFound?`, не найдено в справочнике: ${result.notFound}`:''}`);
+      }catch(err){
+        console.error(err);
+        toast("Ошибка: "+(err.message||"не удалось прочитать файл"));
+      }
+      e.target.value = "";
+    };
+    reader.readAsArrayBuffer(file);
+  });
 
   document.getElementById("btnImportCatalog").addEventListener("click", ()=>document.getElementById("importCatalogInput").click());
   document.getElementById("importCatalogInput").addEventListener("change",(e)=>{
