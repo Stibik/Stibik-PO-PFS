@@ -32,6 +32,11 @@ function extractOfferName(entriesRaw) {
     return entriesRaw?.data?.[0]?.attributes?.offer?.name || null;
   } catch (e) { return null; }
 }
+function extractQuantity(entriesRaw) {
+  try {
+    return entriesRaw?.data?.[0]?.attributes?.quantity || 1;
+  } catch (e) { return 1; }
+}
 function genId(prefix) {
   return prefix + "_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
@@ -118,9 +123,10 @@ router.post("/sync", async (req, res) => {
           // ждёт решения (списать с остатков / присвоить исполнителя / перекрыть
           // возвратом), пока decision не заполнен (NULL).
           const article = extractArticle(ko.entriesRaw);
-          db.prepare(`INSERT INTO production (id, order_id, article, product_name, created_at)
-                      VALUES (?, ?, ?, ?, ?)`)
-            .run(genId("prod"), id, article, ko.productName || extractOfferName(ko.entriesRaw), now);
+          db.prepare(`INSERT INTO production (id, order_id, article, product_name, quantity, shop, stage, created_at)
+                      VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`)
+            .run(genId("prod"), id, article, ko.productName || extractOfferName(ko.entriesRaw),
+                 extractQuantity(ko.entriesRaw), ko.shop, now);
         }
       }
       results.push({ shop: shop.name, ok: true, added, updated, skippedArchive, total: kaspiOrders.length });
