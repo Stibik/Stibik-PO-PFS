@@ -37,6 +37,13 @@ function extractQuantity(entriesRaw) {
     return entriesRaw?.data?.[0]?.attributes?.quantity || 1;
   } catch (e) { return 1; }
 }
+// Настоящая дата создания заказа В KASPI (не путать с нашим created_at —
+// когда мы впервые увидели заказ у себя в базе, это разные даты!)
+function extractKaspiCreationDate(raw) {
+  try {
+    return raw?.creationDate ? new Date(raw.creationDate).toISOString() : null;
+  } catch (e) { return null; }
+}
 function genId(prefix) {
   return prefix + "_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
@@ -51,14 +58,15 @@ function genId(prefix) {
 // без ограничения по дате — https://kaspi.kz/shop/api/v2/orders?filter[orders][code]=...
 // Раз в синхронизацию проверяем таким способом небольшую пачку самых старых
 // зависших активных заказов (не все разом — чтобы не перегружать Kaspi API).
-async function refreshStaleOrders(token, shopName, limit = 20) {
+async function refreshStaleOrders(token, shopName, limit = 50) {
   const staleOrders = db.prepare(`
     SELECT * FROM orders
     WHERE shop = ? AND source = 'kaspi'
       AND kaspi_status NOT IN ('CANCELLED', 'COMPLETED', 'RETURNED')
       AND delivery_state != 'ARCHIVE'
-      AND datetime(created_at) < datetime('now', '-13 days')
-    ORDER BY created_at ASC
+      AND kaspi_creation_date IS NOT NULL
+      AND datetime(kaspi_creation_date) < datetime('now', '-13 days')
+    ORDER BY kaspi_creation_date ASC
     LIMIT ?
   `).all(shopName, limit);
 
@@ -125,6 +133,7 @@ router.post("/sync", async (req, res) => {
   }
   const results = [];
   for (const shop of shops) {
+    let syncOk = false;
     try {
       let daysBack = 14;
       if (shop.syncFromDate) {
@@ -152,14 +161,15 @@ router.post("/sync", async (req, res) => {
           // Теперь трогаем updated_at только если статус или состояние реально другие.
           const statusChanged = existing.kaspi_status !== ko.status || existing.delivery_state !== ko.deliveryState;
           const updatedAtValue = statusChanged ? now : existing.updated_at;
+          const kaspiCreationDate = extractKaspiCreationDate(ko.raw) || existing.kaspi_creation_date;
           db.prepare(`UPDATE orders SET
             kaspi_code=?, shop=?, kaspi_status=?, delivery_state=?, pre_order=?, assembled=?,
             courier_transmission_date=?, courier_handover_date=?, total_price=?, product_name=?,
-            product_photo=?, waybill_url=?, raw=?, entries_raw=?, updated_at=? WHERE id=?`)
+            product_photo=?, waybill_url=?, raw=?, entries_raw=?, kaspi_creation_date=?, updated_at=? WHERE id=?`)
             .run(ko.kaspiCode, ko.shop, ko.status, ko.deliveryState, ko.preOrder ? 1 : 0, ko.assembled ? 1 : 0,
                  ko.courierTransmissionDate, ko.courierHandoverDate, ko.totalPrice, ko.productName,
                  ko.productPhoto || null, ko.waybillUrl, JSON.stringify(ko.raw || {}),
-                 JSON.stringify(ko.entriesRaw || {}), updatedAtValue, existing.id);
+                 JSON.stringify(ko.entriesRaw || {}), kaspiCreationDate, updatedAtValue, existing.id);
           updated++;
 
           // Пополнение виртуального склада: если заказ только что стал отменён
@@ -182,12 +192,12 @@ router.post("/sync", async (req, res) => {
           db.prepare(`INSERT INTO orders
             (id, source, kaspi_order_id, kaspi_code, shop, display_number, status, kaspi_status,
              delivery_state, pre_order, assembled, courier_transmission_date, courier_handover_date,
-             total_price, product_name, product_photo, waybill_url, raw, entries_raw, created_at, updated_at)
-            VALUES (?, 'kaspi', ?, ?, ?, ?, 'preorder', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+             total_price, product_name, product_photo, waybill_url, raw, entries_raw, kaspi_creation_date, created_at, updated_at)
+            VALUES (?, 'kaspi', ?, ?, ?, ?, 'preorder', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
             .run(id, ko.kaspiOrderId, ko.kaspiCode, ko.shop, displayNumber, ko.status, ko.deliveryState,
                  ko.preOrder ? 1 : 0, ko.assembled ? 1 : 0, ko.courierTransmissionDate, ko.courierHandoverDate,
                  ko.totalPrice, ko.productName, ko.productPhoto || null, ko.waybillUrl,
-                 JSON.stringify(ko.raw || {}), JSON.stringify(ko.entriesRaw || {}), now, now);
+                 JSON.stringify(ko.raw || {}), JSON.stringify(ko.entriesRaw || {}), extractKaspiCreationDate(ko.raw), now, now);
           added++;
 
           // Каждый новый заказ автоматически создаёт запись в "Производстве" —
@@ -201,22 +211,25 @@ router.post("/sync", async (req, res) => {
         }
       }
       results.push({ shop: shop.name, ok: true, added, updated, skippedArchive, total: kaspiOrders.length });
-
-      // Отдельный проход: точечно "дотягиваем" статус старых зависших активных
-      // заказов, которые обычная синхронизация по дате больше не видит.
-      try {
-        const stale = await refreshStaleOrders(shop.token, shop.name);
-        results[results.length - 1].staleChecked = stale.checked;
-        results[results.length - 1].staleChanged = stale.changed;
-        results[results.length - 1].staleErrors = stale.errors;
-      } catch (staleErr) {
-        console.error(`[kaspi/sync] Ошибка обновления зависших заказов (${shop.name}):`, staleErr.message);
-      }
-
+      syncOk = true;
       logAudit({ user: req.session.username, action: "kaspi_sync", comment: `${shop.name}: +${added} ~${updated}` });
     } catch (err) {
       results.push({ shop: shop.name, ok: false, error: err.message });
       logAudit({ user: req.session.username, action: "kaspi_sync_error", comment: `${shop.name}: ${err.message}` });
+    }
+
+    // Обновление "зависших" заказов — НЕЗАВИСИМО от того, упала ли основная
+    // синхронизация выше. Раньше это было внутри того же try — если syncShop()
+    // падал с ошибкой (нет сети, протухший токен), до сюда просто не доходило.
+    try {
+      const stale = await refreshStaleOrders(shop.token, shop.name);
+      const target = results.find(r => r.shop === shop.name) || {};
+      target.staleChecked = stale.checked;
+      target.staleChanged = stale.changed;
+      target.staleErrors = stale.errors;
+      if (!results.includes(target)) results.push(target);
+    } catch (staleErr) {
+      console.error(`[kaspi/sync] Ошибка обновления зависших заказов (${shop.name}):`, staleErr.message);
     }
   }
   res.json({ results });
