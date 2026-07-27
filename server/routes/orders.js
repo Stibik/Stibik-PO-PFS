@@ -2,6 +2,7 @@ import express from "express";
 import { db, nextReceiptNumber, logAudit } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
 import { isValidNormalTransition, getNextStatus, STATUS_LABELS } from "../statusMachine.js";
+import { getKaspiBadge } from "../kaspiStatus.js";
 
 const router = express.Router();
 router.use(requireAuth);
@@ -13,7 +14,7 @@ function uid() {
 // Приводим строку БД (snake_case) к формату, который ожидает фронтенд (camelCase)
 function rowToOrder(row) {
   if (!row) return null;
-  return {
+  const order = {
     id: row.id,
     source: row.source,
     kaspiOrderId: row.kaspi_order_id,
@@ -42,6 +43,7 @@ function rowToOrder(row) {
     preOrder: !!row.pre_order,
     assembled: !!row.assembled,
     courierTransmissionDate: row.courier_transmission_date,
+    courierTransmissionPlanningDate: row.courier_transmission_planning_date,
     courierHandoverDate: row.courier_handover_date,
     totalPrice: row.total_price,
     productName: row.product_name,
@@ -58,6 +60,12 @@ function rowToOrder(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
+
+  // Родной статус Kaspi (не путать с внутренним status выше) — даёт бейдж
+  // вроде "Можно забирать со склада" / "Отмена в процессе" и т.д.
+  order.kaspiBadge = getKaspiBadge(order);
+
+  return order;
 }
 
 router.get("/", (req, res) => {
