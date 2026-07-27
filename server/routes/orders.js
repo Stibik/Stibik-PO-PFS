@@ -2,7 +2,6 @@ import express from "express";
 import { db, nextReceiptNumber, logAudit } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
 import { isValidNormalTransition, getNextStatus, STATUS_LABELS } from "../statusMachine.js";
-import { getKaspiBadge } from "../kaspiStatus.js";
 
 const router = express.Router();
 router.use(requireAuth);
@@ -61,9 +60,9 @@ function rowToOrder(row) {
     updatedAt: row.updated_at
   };
 
-  // Родной статус Kaspi (не путать с внутренним status выше) — даёт бейдж
-  // вроде "Можно забирать со склада" / "Отмена в процессе" и т.д.
-  order.kaspiBadge = getKaspiBadge(order);
+  // Статус/стадия заказа из Kaspi считается во фронтенде через classifyStage()
+  // (там же учитывается срок упаковки, отмены, возвраты и т.д.) — здесь
+  // достаточно отдать сырые kaspiStatus/deliveryState, что и происходит выше.
 
   return order;
 }
