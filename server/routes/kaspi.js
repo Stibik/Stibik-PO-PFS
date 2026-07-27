@@ -41,6 +41,70 @@ function genId(prefix) {
   return prefix + "_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
 
+// Обычная синхронизация (syncShop) ищет заказы по диапазону дат СОЗДАНИЯ,
+// максимум 14 дней — это ограничение самого Kaspi API. Заказ, который старше
+// 14 дней, но всё ещё активен (не завершён/не отменён/не архив), просто
+// перестаёт попадать в эту выборку — и его статус у нас "замерзает" навсегда,
+// даже если в Kaspi он давно изменился.
+//
+// Чиним точечно: у Kaspi есть отдельный метод получить ОДИН заказ по коду,
+// без ограничения по дате — https://kaspi.kz/shop/api/v2/orders?filter[orders][code]=...
+// Раз в синхронизацию проверяем таким способом небольшую пачку самых старых
+// зависших активных заказов (не все разом — чтобы не перегружать Kaspi API).
+async function refreshStaleOrders(token, shopName, limit = 20) {
+  const staleOrders = db.prepare(`
+    SELECT * FROM orders
+    WHERE shop = ? AND source = 'kaspi'
+      AND kaspi_status NOT IN ('CANCELLED', 'COMPLETED', 'RETURNED')
+      AND delivery_state != 'ARCHIVE'
+      AND datetime(created_at) < datetime('now', '-13 days')
+    ORDER BY created_at ASC
+    LIMIT ?
+  `).all(shopName, limit);
+
+  let refreshed = 0, changed = 0, errors = 0;
+  const now = new Date().toISOString();
+
+  for (const existing of staleOrders) {
+    try {
+      const resp = await fetch(
+        `https://kaspi.kz/shop/api/v2/orders?filter[orders][code]=${encodeURIComponent(existing.kaspi_code)}`,
+        { headers: { "Content-Type": "application/vnd.api+json", "X-Auth-Token": token } }
+      );
+      if (!resp.ok) { errors++; continue; }
+      const json = await resp.json();
+      const attrs = json?.data?.[0]?.attributes;
+      if (!attrs) { errors++; continue; }
+
+      const newStatus = attrs.status;
+      const newState = attrs.state;
+      const newAssembled = !!attrs.assembled;
+      const statusChanged = existing.kaspi_status !== newStatus || existing.delivery_state !== newState;
+
+      db.prepare(`UPDATE orders SET kaspi_status=?, delivery_state=?, assembled=?, updated_at=? WHERE id=?`)
+        .run(newStatus, newState, newAssembled ? 1 : 0, statusChanged ? now : existing.updated_at, existing.id);
+
+      // Тот же хук пополнения виртуального склада, что и в обычной синхронизации
+      if (statusChanged && (newStatus === "CANCELLED" || newStatus === "RETURNED") && newAssembled) {
+        let entriesRaw = null;
+        try { entriesRaw = existing.entries_raw ? JSON.parse(existing.entries_raw) : null; } catch (e) {}
+        const article = extractArticle(entriesRaw);
+        db.prepare(`INSERT INTO warehouse_stock
+          (id, article, product_name, source, source_order_id, qty, consumed, created_at)
+          VALUES (?, ?, ?, ?, ?, 1, 0, ?)`)
+          .run(genId("wh"), article, existing.product_name,
+               newStatus === "CANCELLED" ? "cancelled" : "returned", existing.id, now);
+      }
+
+      refreshed++;
+      if (statusChanged) changed++;
+    } catch (e) {
+      errors++;
+    }
+  }
+  return { checked: staleOrders.length, refreshed, changed, errors };
+}
+
 router.get("/shops", (req, res) => {
   res.json(getConfiguredShops().map(s => s.name));
 });
@@ -130,6 +194,17 @@ router.post("/sync", async (req, res) => {
         }
       }
       results.push({ shop: shop.name, ok: true, added, updated, skippedArchive, total: kaspiOrders.length });
+
+      // Отдельный проход: точечно "дотягиваем" статус старых зависших активных
+      // заказов, которые обычная синхронизация по дате больше не видит.
+      try {
+        const stale = await refreshStaleOrders(shop.token, shop.name);
+        results[results.length - 1].staleChecked = stale.checked;
+        results[results.length - 1].staleChanged = stale.changed;
+      } catch (staleErr) {
+        console.error(`[kaspi/sync] Ошибка обновления зависших заказов (${shop.name}):`, staleErr.message);
+      }
+
       logAudit({ user: req.session.username, action: "kaspi_sync", comment: `${shop.name}: +${added} ~${updated}` });
     } catch (err) {
       results.push({ shop: shop.name, ok: false, error: err.message });
