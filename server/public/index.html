@@ -488,7 +488,7 @@
     </label>
     <div class="modal-actions">
       <button class="btn secondary" id="printCancelBtn">Отмена</button>
-      <button class="btn amber" id="printConfirmBtn">Подтвердить</button>
+      <button class="btn amber" id="printConfirmBtn" disabled style="opacity:.5;cursor:not-allowed;">Подтвердить</button>
     </div>
   </div>
 </div>
@@ -1881,6 +1881,7 @@
     wfPrintOrderId = orderId;
     const order = wfCurrentOrder;
     document.getElementById("printConfirmCheck").checked = false;
+    updatePrintConfirmBtnState();
     document.getElementById("printReasonInput").value = "";
     if(order.printed){
       document.getElementById("printWarningBox").style.display = "";
@@ -1897,6 +1898,14 @@
   document.getElementById("printCancelBtn").addEventListener("click", ()=>{
     document.getElementById("printConfirmOverlay").classList.remove("show");
   });
+  function updatePrintConfirmBtnState(){
+    const btn = document.getElementById("printConfirmBtn");
+    const checked = document.getElementById("printConfirmCheck").checked;
+    btn.disabled = !checked;
+    btn.style.opacity = checked ? "1" : ".5";
+    btn.style.cursor = checked ? "pointer" : "not-allowed";
+  }
+  document.getElementById("printConfirmCheck").addEventListener("change", updatePrintConfirmBtnState);
   document.getElementById("printConfirmBtn").addEventListener("click", async ()=>{
     if(!document.getElementById("printConfirmCheck").checked){
       toast("Нужно подтвердить галочкой, что документ распечатан");
@@ -2051,7 +2060,8 @@
       const data = await api("/kaspi/sync", {method:"POST", body: JSON.stringify({includeArchive})});
       if(!opts.silent){
         box.innerHTML = data.results.map(r=>
-          r.ok ? `<div class="kaspi-result">✅ ${esc(r.shop)}: добавлено ${r.added}, обновлено ${r.updated}${r.skippedArchive?', пропущено архивных: '+r.skippedArchive:''} (всего в ответе ${r.total})</div>`
+          r.ok ? `<div class="kaspi-result">✅ ${esc(r.shop)}: добавлено ${r.added}, обновлено ${r.updated}${r.skippedArchive?', пропущено архивных: '+r.skippedArchive:''} (всего в ответе ${r.total})
+            ${r.staleChecked!=null ? `<br><span style="color:var(--ink-soft);font-size:11.5px;">Зависшие старые: проверено ${r.staleChecked}, изменилось ${r.staleChanged}${r.staleErrors?', ошибок: '+r.staleErrors:''}</span>` : ""}</div>`
                : `<div class="kaspi-result" style="color:var(--red)">⚠️ ${esc(r.shop)}: ${esc(r.error)}</div>`
         ).join("");
       }
