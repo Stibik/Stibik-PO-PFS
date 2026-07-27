@@ -231,6 +231,7 @@ export function ensureSchema() {
   safeAddColumn("orders", "category TEXT");
   safeAddColumn("orders", "actual_qty REAL");
   safeAddColumn("orders", "kaspi_creation_date TEXT"); // настоящая дата создания заказа В KASPI (не в нашей базе!)
+  safeAddColumn("orders", "courier_transmission_planning_date TEXT"); // срок упаковки от Kaspi — по нему кабинет переводит заказ в "Упаковка"
 
   // ── Единоразовая доначистка: для заказов, у которых kaspi_creation_date ещё
   // пуст, достаём creationDate из уже сохранённого raw (сырой JSON от Kaspi) —
