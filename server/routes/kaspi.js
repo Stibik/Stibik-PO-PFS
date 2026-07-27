@@ -71,10 +71,16 @@ async function refreshStaleOrders(token, shopName, limit = 20) {
         `https://kaspi.kz/shop/api/v2/orders?filter[orders][code]=${encodeURIComponent(existing.kaspi_code)}`,
         { headers: { "Content-Type": "application/vnd.api+json", "X-Auth-Token": token } }
       );
-      if (!resp.ok) { errors++; continue; }
+      if (!resp.ok) {
+        console.error(`[kaspi/stale] Kaspi API вернул ${resp.status} для заказа ${existing.kaspi_code} (${shopName})`);
+        errors++; continue;
+      }
       const json = await resp.json();
       const attrs = json?.data?.[0]?.attributes;
-      if (!attrs) { errors++; continue; }
+      if (!attrs) {
+        console.error(`[kaspi/stale] Пустой ответ для заказа ${existing.kaspi_code} (${shopName})`);
+        errors++; continue;
+      }
 
       const newStatus = attrs.status;
       const newState = attrs.state;
@@ -99,6 +105,7 @@ async function refreshStaleOrders(token, shopName, limit = 20) {
       refreshed++;
       if (statusChanged) changed++;
     } catch (e) {
+      console.error(`[kaspi/stale] Ошибка обновления заказа ${existing.kaspi_code} (${shopName}):`, e.message);
       errors++;
     }
   }
@@ -201,6 +208,7 @@ router.post("/sync", async (req, res) => {
         const stale = await refreshStaleOrders(shop.token, shop.name);
         results[results.length - 1].staleChecked = stale.checked;
         results[results.length - 1].staleChanged = stale.changed;
+        results[results.length - 1].staleErrors = stale.errors;
       } catch (staleErr) {
         console.error(`[kaspi/sync] Ошибка обновления зависших заказов (${shop.name}):`, staleErr.message);
       }
