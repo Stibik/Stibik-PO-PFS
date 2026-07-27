@@ -93,10 +93,13 @@ async function refreshStaleOrders(token, shopName, limit = 50) {
       const newStatus = attrs.status;
       const newState = attrs.state;
       const newAssembled = !!attrs.assembled;
+      const newPreOrder = !!attrs.preOrder;
+      const newPlanningDate = attrs.kaspiDelivery?.courierTransmissionPlanningDate
+        ? new Date(attrs.kaspiDelivery.courierTransmissionPlanningDate).toISOString() : null;
       const statusChanged = existing.kaspi_status !== newStatus || existing.delivery_state !== newState;
 
-      db.prepare(`UPDATE orders SET kaspi_status=?, delivery_state=?, assembled=?, updated_at=? WHERE id=?`)
-        .run(newStatus, newState, newAssembled ? 1 : 0, statusChanged ? now : existing.updated_at, existing.id);
+      db.prepare(`UPDATE orders SET kaspi_status=?, delivery_state=?, assembled=?, pre_order=?, courier_transmission_planning_date=?, updated_at=? WHERE id=?`)
+        .run(newStatus, newState, newAssembled ? 1 : 0, newPreOrder ? 1 : 0, newPlanningDate, statusChanged ? now : existing.updated_at, existing.id);
 
       // Тот же хук пополнения виртуального склада, что и в обычной синхронизации
       if (statusChanged && (newStatus === "CANCELLED" || newStatus === "RETURNED") && newAssembled) {
@@ -164,10 +167,10 @@ router.post("/sync", async (req, res) => {
           const kaspiCreationDate = extractKaspiCreationDate(ko.raw) || existing.kaspi_creation_date;
           db.prepare(`UPDATE orders SET
             kaspi_code=?, shop=?, kaspi_status=?, delivery_state=?, pre_order=?, assembled=?,
-            courier_transmission_date=?, courier_handover_date=?, total_price=?, product_name=?,
+            courier_transmission_date=?, courier_transmission_planning_date=?, courier_handover_date=?, total_price=?, product_name=?,
             product_photo=?, waybill_url=?, raw=?, entries_raw=?, kaspi_creation_date=?, updated_at=? WHERE id=?`)
             .run(ko.kaspiCode, ko.shop, ko.status, ko.deliveryState, ko.preOrder ? 1 : 0, ko.assembled ? 1 : 0,
-                 ko.courierTransmissionDate, ko.courierHandoverDate, ko.totalPrice, ko.productName,
+                 ko.courierTransmissionDate, ko.courierTransmissionPlanningDate, ko.courierHandoverDate, ko.totalPrice, ko.productName,
                  ko.productPhoto || null, ko.waybillUrl, JSON.stringify(ko.raw || {}),
                  JSON.stringify(ko.entriesRaw || {}), kaspiCreationDate, updatedAtValue, existing.id);
           updated++;
@@ -191,11 +194,11 @@ router.post("/sync", async (req, res) => {
           const id = "kord_" + ko.kaspiOrderId;
           db.prepare(`INSERT INTO orders
             (id, source, kaspi_order_id, kaspi_code, shop, display_number, status, kaspi_status,
-             delivery_state, pre_order, assembled, courier_transmission_date, courier_handover_date,
+             delivery_state, pre_order, assembled, courier_transmission_date, courier_transmission_planning_date, courier_handover_date,
              total_price, product_name, product_photo, waybill_url, raw, entries_raw, kaspi_creation_date, created_at, updated_at)
-            VALUES (?, 'kaspi', ?, ?, ?, ?, 'preorder', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+            VALUES (?, 'kaspi', ?, ?, ?, ?, 'preorder', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
             .run(id, ko.kaspiOrderId, ko.kaspiCode, ko.shop, displayNumber, ko.status, ko.deliveryState,
-                 ko.preOrder ? 1 : 0, ko.assembled ? 1 : 0, ko.courierTransmissionDate, ko.courierHandoverDate,
+                 ko.preOrder ? 1 : 0, ko.assembled ? 1 : 0, ko.courierTransmissionDate, ko.courierTransmissionPlanningDate, ko.courierHandoverDate,
                  ko.totalPrice, ko.productName, ko.productPhoto || null, ko.waybillUrl,
                  JSON.stringify(ko.raw || {}), JSON.stringify(ko.entriesRaw || {}), extractKaspiCreationDate(ko.raw), now, now);
           added++;
