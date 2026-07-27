@@ -1458,15 +1458,18 @@
     if(o.kaspiStatus==="RETURN_REQUESTED" || o.kaspiStatus==="RETURNED") return "returns";
     if(o.deliveryState==="ARCHIVE") return "archive";
     if(o.kaspiStatus==="COMPLETED") return "completed";
-    // Раньше здесь смотрели на preOrder — но реальный пример (заказ №7) это
-    // опроверг: preOrder=true, а Kaspi всё равно показывает его в "Упаковке",
-    // не в "Предзаказе". preOrder — судя по всему, просто статичный признак
-    // товара, а не текущая стадия. Настоящий признак — назначил ли Kaspi дату
-    // передачи курьеру (courierTransmissionPlanningDate внутри kaspiDelivery,
-    // видно в сырых данных заказа). Нет даты — реально рано, "Предзаказ".
-    // Есть дата (любая, даже далёкая) — уже пора готовить, "Упаковка".
-    const planningDate = o.raw?.kaspiDelivery?.courierTransmissionPlanningDate;
-    if(!planningDate) return "preorder";
+    // Кабинет Kaspi переводит заказ в "Упаковка" не по флагу assembled, а когда
+    // приближается срок упаковки (courierTransmissionPlanningDate) — даже если
+    // preOrder ещё true и assembled ещё false. Проверено на реальном заказе:
+    // preOrder=true, assembled=false, но в кабинете уже "Упаковка", потому что
+    // до courierTransmissionPlanningDate оставалось меньше 2 дней.
+    // Порог "≤ 2 дня" — приближение по единственному проверенному примеру;
+    // если на других заказах не совпадёт, поправим порог по факту.
+    if(!o.assembled && o.courierTransmissionPlanningDate){
+      const daysUntilPacking = (new Date(o.courierTransmissionPlanningDate).getTime() - Date.now()) / 86400000;
+      if(daysUntilPacking <= 2) return "packing";
+    }
+    if(o.preOrder && !o.assembled) return "preorder";
     if(!o.assembled) return "packing";
     if(o.assembled && !o.courierTransmissionDate) return "handover";
     if(o.courierTransmissionDate) return "toDelivery";
