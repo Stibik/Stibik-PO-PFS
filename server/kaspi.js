@@ -7,7 +7,9 @@
 // - a.status  — статус заказа (ACCEPTED_BY_MERCHANT, COMPLETED, CANCELLED, ...) — это то,
 //   что нужно показывать пользователю как "Статус"
 // - a.state   — скорее логистическая стадия (KASPI_DELIVERY, ARCHIVE) — показываем отдельно
-// - a.preOrder — булево, это и есть "Предзаказ" из кабинета продавца
+// - a.preOrder — булево, ранее считали, что это и есть "Предзаказ" из кабинета продавца,
+//   но реальный пример опроверг: preOrder=true, а кабинет уже показывал "Упаковка" —
+//   похоже, preOrder это статичный признак товара, а не текущая стадия
 // - Названия товара В ЗАКАЗЕ НЕТ — нужен отдельный запрос к позициям заказа (entries)
 
 const BASE_URL = "https://kaspi.kz/shop/api/v2";
@@ -106,6 +108,12 @@ export function mapKaspiOrder(raw, shopName) {
     courierTransmissionDate: kd.courierTransmissionDate
       ? new Date(kd.courierTransmissionDate).toISOString().slice(0, 10)
       : "",
+    // Срок, до которого продавец должен упаковать заказ — именно по этому полю
+    // кабинет Kaspi переводит заказ в раздел "Упаковка" (раньше, чем assembled
+    // становится true). Без него наша классификация стадии расходилась с кабинетом.
+    courierTransmissionPlanningDate: kd.courierTransmissionPlanningDate
+      ? new Date(kd.courierTransmissionPlanningDate).toISOString()
+      : null,
     waybillUrl: kd.waybill || "",
     orderDate: a.creationDate ? new Date(a.creationDate).toISOString().slice(0, 10) : "",
     totalPrice: a.totalPrice || 0,
