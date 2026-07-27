@@ -230,6 +230,30 @@ export function ensureSchema() {
   safeAddColumn("orders", "sale_price REAL");
   safeAddColumn("orders", "category TEXT");
   safeAddColumn("orders", "actual_qty REAL");
+  safeAddColumn("orders", "kaspi_creation_date TEXT"); // настоящая дата создания заказа В KASPI (не в нашей базе!)
+
+  // ── Единоразовая доначистка: для заказов, у которых kaspi_creation_date ещё
+  // пуст, достаём creationDate из уже сохранённого raw (сырой JSON от Kaspi) —
+  // это чинит СУЩЕСТВУЮЩИЕ старые заказы сразу, не дожидаясь их пересинхронизации
+  // (которая для по-настоящему зависших заказов и так не происходит — в этом и
+  // была вся проблема).
+  {
+    const needsBackfill = db.prepare(
+      "SELECT id, raw FROM orders WHERE source = 'kaspi' AND kaspi_creation_date IS NULL AND raw IS NOT NULL"
+    ).all();
+    for (const row of needsBackfill) {
+      try {
+        const raw = JSON.parse(row.raw || "{}");
+        if (raw.creationDate) {
+          const iso = new Date(raw.creationDate).toISOString();
+          db.prepare("UPDATE orders SET kaspi_creation_date = ? WHERE id = ?").run(iso, row.id);
+        }
+      } catch (e) { /* битый raw — пропускаем, забэкфилится при следующей синхронизации */ }
+    }
+    if (needsBackfill.length) {
+      console.log(`[db] Доначистка kaspi_creation_date: обработано ${needsBackfill.length} заказов`);
+    }
+  }
 
   // ── Справочник товаров: поля, подтягиваемые из выгрузки Kaspi "Активные товары" ──
   // article (уже существующее поле) используется как SKU для сопоставления.
