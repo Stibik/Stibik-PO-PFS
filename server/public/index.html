@@ -1458,9 +1458,15 @@
     if(o.kaspiStatus==="RETURN_REQUESTED" || o.kaspiStatus==="RETURNED") return "returns";
     if(o.deliveryState==="ARCHIVE") return "archive";
     if(o.kaspiStatus==="COMPLETED") return "completed";
-    // Восстановлено разделение Предзаказ/Упаковка — в реальном кабинете Kaspi
-    // это два разных пункта с разными счётчиками, не одно и то же.
-    if(o.preOrder && !o.assembled) return "preorder";
+    // Раньше здесь смотрели на preOrder — но реальный пример (заказ №7) это
+    // опроверг: preOrder=true, а Kaspi всё равно показывает его в "Упаковке",
+    // не в "Предзаказе". preOrder — судя по всему, просто статичный признак
+    // товара, а не текущая стадия. Настоящий признак — назначил ли Kaspi дату
+    // передачи курьеру (courierTransmissionPlanningDate внутри kaspiDelivery,
+    // видно в сырых данных заказа). Нет даты — реально рано, "Предзаказ".
+    // Есть дата (любая, даже далёкая) — уже пора готовить, "Упаковка".
+    const planningDate = o.raw?.kaspiDelivery?.courierTransmissionPlanningDate;
+    if(!planningDate) return "preorder";
     if(!o.assembled) return "packing";
     if(o.assembled && !o.courierTransmissionDate) return "handover";
     if(o.courierTransmissionDate) return "toDelivery";
