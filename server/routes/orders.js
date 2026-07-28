@@ -288,10 +288,26 @@ router.post("/:id/kaspi-assemble", async (req, res) => {
     let kaspiJson = null;
     try { kaspiJson = JSON.parse(text); } catch (e) { /* не критично, вернём как есть */ }
 
-    db.prepare("UPDATE orders SET assembled = 1, updated_at = ? WHERE id = ?").run(new Date().toISOString(), req.params.id);
+    const now = new Date().toISOString();
+    // Реальный мир (Kaspi подтвердил "собран") важнее нашего внутреннего
+    // чек-листа — если внутренний статус ещё не дошёл до "ready", подтягиваем
+    // его вперёд. Назад никогда не двигаем (мало ли что уже отмечено).
+    const STATUS_ORDER = ["preorder", "packing", "label_printed", "ready", "shipped"];
+    const currentIdx = STATUS_ORDER.indexOf(row.status);
+    const readyIdx = STATUS_ORDER.indexOf("ready");
+    let newInternalStatus = row.status;
+    if (currentIdx >= 0 && currentIdx < readyIdx) {
+      newInternalStatus = "ready";
+      db.prepare("UPDATE orders SET status = ? WHERE id = ?").run(newInternalStatus, req.params.id);
+      db.prepare(`INSERT INTO status_history (order_id, from_status, to_status, user, reason, created_at)
+                  VALUES (?, ?, 'ready', ?, 'Автоматически после передачи в Kaspi', ?)`)
+        .run(req.params.id, row.status, req.session.username, now);
+    }
+
+    db.prepare("UPDATE orders SET assembled = 1, updated_at = ? WHERE id = ?").run(now, req.params.id);
     logAudit({ user: req.session.username, action: "kaspi_assemble", orderId: req.params.id, comment: `numberOfSpace=${numberOfSpace}` });
 
-    res.json({ ok: true, numberOfSpace, kaspiResponse: kaspiJson });
+    res.json({ ok: true, numberOfSpace, kaspiResponse: kaspiJson, internalStatus: newInternalStatus });
   } catch (e) {
     res.status(500).json({ error: "request_failed", message: e.message });
   }
