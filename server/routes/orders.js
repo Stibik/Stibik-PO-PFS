@@ -1,5 +1,5 @@
 import express from "express";
-import { db, nextReceiptNumber, logAudit } from "../db.js";
+import { db, nextReceiptNumber, logAudit, getKaspiShops } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
 import { isValidNormalTransition, getNextStatus, STATUS_LABELS } from "../statusMachine.js";
 
@@ -244,6 +244,57 @@ router.get("/:id/print-log", (req, res) => {
   res.json(rows.map(r => ({
     id: r.id, user: r.user, printedAt: r.printed_at, isReprint: !!r.is_reprint, reason: r.reason
   })));
+});
+
+// ---------- Двусторонняя синхронизация: толкаем статус обратно в Kaspi ----------
+// По документации Kaspi ("сформировать накладную для передачи заказа на Kaspi
+// Доставку") — единственный найденный способ реально продвинуть заказ дальше
+// стадии "Упаковка" со своей стороны. numberOfSpace = сколько грузовых мест
+// сформировано у нас — ровно то же число, что и в "Грузовые места" ниже.
+// НЕ ПРОВЕРЕНО на реальном токене (в песочнице разработки нет сети до
+// kaspi.kz) — первый реальный вызов стоит сделать на некритичном заказе.
+router.post("/:id/kaspi-assemble", async (req, res) => {
+  const row = db.prepare("SELECT * FROM orders WHERE id = ?").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  if (row.source !== "kaspi" || !row.kaspi_order_id) {
+    return res.status(400).json({ error: "not_kaspi_order", message: "Это не заказ из Kaspi — передавать некуда" });
+  }
+
+  const shops = getKaspiShops();
+  const shopConfig = shops.find(s => s.name === row.shop);
+  if (!shopConfig || !shopConfig.token) {
+    return res.status(400).json({ error: "no_token", message: `Не найден токен Kaspi для магазина «${row.shop}»` });
+  }
+
+  const formedPlaces = db.prepare("SELECT COUNT(*) as c FROM cargo_places WHERE order_id = ? AND formed = 1").get(req.params.id).c;
+  const numberOfSpace = formedPlaces > 0 ? formedPlaces : 1;
+
+  try {
+    const resp = await fetch("https://kaspi.kz/shop/api/v2/orders", {
+      method: "POST",
+      headers: { "Content-Type": "application/vnd.api+json", "X-Auth-Token": shopConfig.token },
+      body: JSON.stringify({
+        data: {
+          type: "orders",
+          id: row.kaspi_order_id,
+          attributes: { status: "ASSEMBLE", numberOfSpace: String(numberOfSpace) }
+        }
+      })
+    });
+    const text = await resp.text();
+    if (!resp.ok) {
+      return res.status(502).json({ error: "kaspi_error", message: `Kaspi ответил ${resp.status}: ${text.slice(0, 300)}` });
+    }
+    let kaspiJson = null;
+    try { kaspiJson = JSON.parse(text); } catch (e) { /* не критично, вернём как есть */ }
+
+    db.prepare("UPDATE orders SET assembled = 1, updated_at = ? WHERE id = ?").run(new Date().toISOString(), req.params.id);
+    logAudit({ user: req.session.username, action: "kaspi_assemble", orderId: req.params.id, comment: `numberOfSpace=${numberOfSpace}` });
+
+    res.json({ ok: true, numberOfSpace, kaspiResponse: kaspiJson });
+  } catch (e) {
+    res.status(500).json({ error: "request_failed", message: e.message });
+  }
 });
 
 // ---------- Грузовые места ----------
