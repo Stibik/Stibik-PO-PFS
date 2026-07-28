@@ -1546,6 +1546,7 @@
 
   async function renderKaspiOrders(refetch){
     if(refetch !== false) kaspiOrders = await api("/orders?source=kaspi");
+    if(!catalogItems.length){ try{ catalogItems = await api("/catalog"); }catch(e){} }
 
     kaspiOrders.forEach(o=>{ o.stage = classifyStage(o); });
     renderKaspiStatCards();
@@ -1612,7 +1613,7 @@
 
     // заголовок таблицы по видимым колонкам
     const cols = KCOL_DEFS.filter(c=>kaspiVisibleCols[c.key]);
-    document.getElementById("kaspiOrdersHead").innerHTML = "<tr>"+cols.map(c=>`<th>${c.label}</th>`).join("")+"<th></th></tr>";
+    document.getElementById("kaspiOrdersHead").innerHTML = `<tr><th style="width:32px;"><input type="checkbox" id="kaspiSelectAllCheckbox"></th>`+cols.map(c=>`<th>${c.label}</th>`).join("")+"<th></th></tr>";
 
     let list = kaspiOrders.slice().filter(o=>kaspiShopFilter.has(o.shop));
     if(kaspiStageFilter==="active") list = list.filter(o=>nonTerminal.includes(o.stage));
@@ -1629,8 +1630,19 @@
     list.sort((a,b)=>(a.displayNumber||0)-(b.displayNumber||0));
 
     const body = document.getElementById("kaspiOrdersBody");
+    const catalogPhotoByArticle = {};
+    catalogItems.forEach(c=>{ if(c.article && c.photo) catalogPhotoByArticle[c.article] = c.photo; });
     const cellFor = (o,key)=>{
-      if(key==="photo") return o.productPhoto ? `<img class="thumb" src="${esc(o.productPhoto)}" style="cursor:zoom-in;" onclick="window.open('${esc(o.productPhoto)}','_blank')">` : `<div class="thumb-empty">—</div>`;
+      if(key==="photo"){
+        let photo = o.productPhoto;
+        if(!photo){
+          // У Kaspi в API заказов фото товара нет в принципе (подтверждено
+          // документацией) — берём из Справочника по совпадению артикула
+          const article = o.entriesRaw?.data?.[0]?.attributes?.offer?.code;
+          if(article && catalogPhotoByArticle[article]) photo = catalogPhotoByArticle[article];
+        }
+        return photo ? `<img class="thumb" src="${esc(photo)}" style="cursor:zoom-in;" onclick="window.open('${esc(photo)}','_blank')">` : `<div class="thumb-empty">—</div>`;
+      }
       if(key==="num") return esc(o.displayNumber||"");
       if(key==="code") return `<span class="mono">${esc(o.kaspiCode||"")}</span>`;
       if(key==="shop") return esc(o.shop||"");
@@ -1651,12 +1663,70 @@
     };
     body.innerHTML = list.map(o=>`
       <tr>
+        <td><input type="checkbox" class="kaspi-order-select" data-id="${o.id}" ${selectedKaspiOrderIds.has(o.id)?'checked':''}></td>
         ${cols.map(c=>`<td>${cellFor(o,c.key)}</td>`).join("")}
         <td>
           <button class="btn amber" style="padding:4px 10px;font-size:12px" onclick="window.__openWorkflow('${o.id}')">Обработка</button>
           <button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__openKaspiDetail('${o.id}')">Детали</button>
         </td>
-      </tr>`).join("") || `<tr><td colspan="${cols.length+1}" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет заказов на этой стадии</td></tr>`;
+      </tr>`).join("") || `<tr><td colspan="${cols.length+2}" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет заказов на этой стадии</td></tr>`;
+
+    body.querySelectorAll(".kaspi-order-select").forEach(cb=>{
+      cb.addEventListener("change", ()=>{
+        if(cb.checked) selectedKaspiOrderIds.add(cb.dataset.id); else selectedKaspiOrderIds.delete(cb.dataset.id);
+        updateKaspiBulkBar();
+      });
+    });
+    const selectAllCb = document.getElementById("kaspiSelectAllCheckbox");
+    if(selectAllCb){
+      selectAllCb.checked = list.length>0 && list.every(o=>selectedKaspiOrderIds.has(o.id));
+      selectAllCb.addEventListener("change", ()=>{
+        if(selectAllCb.checked) list.forEach(o=>selectedKaspiOrderIds.add(o.id));
+        else list.forEach(o=>selectedKaspiOrderIds.delete(o.id));
+        renderKaspiOrders(false);
+      });
+    }
+    updateKaspiBulkBar();
+  }
+
+  // ---------- Групповые действия по выбранным заказам Kaspi ----------
+  function updateKaspiBulkBar(){
+    let bar = document.getElementById("kaspiBulkBar");
+    const count = selectedKaspiOrderIds.size;
+    if(!bar){
+      bar = document.createElement("div");
+      bar.id = "kaspiBulkBar";
+      bar.className = "panel";
+      bar.style.cssText = "display:flex; align-items:center; gap:10px; padding:10px 18px; background:var(--navy); color:#fff;";
+      document.getElementById("kaspiOrdersHead").closest("div.tbl-wrap").insertAdjacentElement("beforebegin", bar);
+    }
+    if(count===0){ bar.style.display="none"; return; }
+    bar.style.display = "flex";
+    bar.innerHTML = `
+      <span>Выбрано: ${count}</span>
+      <button class="btn secondary" id="kaspiBulkPrint" style="margin-left:12px;">🖨️ Печать накладных</button>
+      <button class="btn secondary" id="kaspiBulkPushKaspi">📤 Передать в Kaspi</button>
+      <button class="btn secondary" id="kaspiBulkClear" style="margin-left:auto;">Снять выбор</button>
+    `;
+    document.getElementById("kaspiBulkClear").onclick = ()=>{ selectedKaspiOrderIds.clear(); renderKaspiOrders(false); };
+    document.getElementById("kaspiBulkPrint").onclick = ()=>{
+      const ids = Array.from(selectedKaspiOrderIds);
+      const withWaybill = kaspiOrders.filter(o=>ids.includes(o.id) && o.waybillUrl);
+      if(!withWaybill.length){ toast("У выбранных заказов ещё нет накладной"); return; }
+      withWaybill.forEach(o=>window.open(o.waybillUrl, "_blank"));
+    };
+    document.getElementById("kaspiBulkPushKaspi").onclick = async ()=>{
+      const ids = Array.from(selectedKaspiOrderIds);
+      if(!confirm(`Передать в Kaspi статус "собран" сразу для ${ids.length} заказов? Это реальные запросы к Kaspi.`)) return;
+      let ok=0, fail=0;
+      for(const id of ids){
+        try{ await api("/orders/"+id+"/kaspi-assemble", {method:"POST"}); ok++; }
+        catch(e){ fail++; }
+      }
+      toast(`Передано: ${ok}${fail?', ошибок: '+fail:''}`);
+      selectedKaspiOrderIds.clear();
+      await renderKaspiOrders();
+    };
   }
 
   document.getElementById("btnPrintKaspiList").addEventListener("click", ()=>{
@@ -2227,6 +2297,7 @@
     return Math.round(Number(n)||0).toLocaleString('ru-RU');
   }
   let selectedOrderIds = new Set();
+  let selectedKaspiOrderIds = new Set();
   const OCOL_DEFS = [
     {key:"num", label:"№", sort:"receiptNumber", always:true},
     {key:"photo", label:"", always:true},
