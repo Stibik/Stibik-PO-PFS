@@ -1869,19 +1869,26 @@
 
     const actions = document.getElementById("wfActionsRow");
     actions.style.display = "flex";
+    actions.style.flexDirection = "column";
+    actions.style.gap = "0";
     actions.innerHTML = "";
+
+    const primaryRow = document.createElement("div");
+    primaryRow.style.cssText = "display:flex; gap:8px; flex-wrap:wrap;";
+    actions.appendChild(primaryRow);
+
     if(order.status === "packing"){
       const btn = document.createElement("button");
       btn.className = "btn amber";
       btn.textContent = "🖨️ Распечатать";
       btn.onclick = ()=>openPrintConfirm(order.id);
-      actions.appendChild(btn);
+      primaryRow.appendChild(btn);
     } else if(NEXT_STATUS[order.status]){
       const btn = document.createElement("button");
       btn.className = "btn amber";
       btn.textContent = NEXT_ACTION_LABEL[order.status] || "Далее";
       btn.onclick = ()=>doTransition(order.id, NEXT_STATUS[order.status]);
-      actions.appendChild(btn);
+      primaryRow.appendChild(btn);
     }
     // Двусторонняя синхронизация: пока Kaspi не знает, что мы собрали заказ
     // (assembled=false у нас — это то же самое поле, что читаем при синхронизации),
@@ -1890,26 +1897,31 @@
     if(!order.assembled && order.status !== "cancelled" && order.status !== "shipped"){
       const kaspiBtn = document.createElement("button");
       kaspiBtn.className = "btn secondary";
-      kaspiBtn.style.marginLeft = "8px";
       kaspiBtn.textContent = "📤 Передать в Kaspi Доставку";
       kaspiBtn.onclick = ()=>pushToKaspi(order.id);
-      actions.appendChild(kaspiBtn);
-    }
-    if(order.status !== "shipped" && order.status !== "cancelled"){
-      const cancelBtn = document.createElement("button");
-      cancelBtn.className = "btn danger";
-      cancelBtn.style.marginLeft = "24px";
-      cancelBtn.style.opacity = "0.85";
-      cancelBtn.textContent = "Отменить заказ";
-      cancelBtn.onclick = ()=>openCancelStep1();
-      actions.appendChild(cancelBtn);
+      primaryRow.appendChild(kaspiBtn);
     }
     if(myRole === "admin"){
       const fixBtn = document.createElement("button");
       fixBtn.className = "btn secondary";
       fixBtn.textContent = "⚙ Исправить статус вручную";
       fixBtn.onclick = ()=>adminFixStatus(order.id);
-      actions.appendChild(fixBtn);
+      primaryRow.appendChild(fixBtn);
+    }
+
+    // "Отменить заказ" — намеренно на отдельной строке, подальше от обычных
+    // кнопок, с разделителем сверху. Это редкое и рискованное действие, ему
+    // не место в одном ряду с повседневными "Начать сборку"/"Передать в Kaspi".
+    if(order.status !== "shipped" && order.status !== "cancelled"){
+      const cancelRow = document.createElement("div");
+      cancelRow.style.cssText = "margin-top:14px; padding-top:12px; border-top:1px dashed var(--line);";
+      const cancelBtn = document.createElement("button");
+      cancelBtn.className = "btn danger";
+      cancelBtn.style.opacity = "0.85";
+      cancelBtn.textContent = "Отменить заказ";
+      cancelBtn.onclick = ()=>openCancelStep1();
+      cancelRow.appendChild(cancelBtn);
+      actions.appendChild(cancelRow);
     }
 
     // грузовые места
