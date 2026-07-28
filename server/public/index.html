@@ -1813,6 +1813,18 @@
       btn.onclick = ()=>doTransition(order.id, NEXT_STATUS[order.status]);
       actions.appendChild(btn);
     }
+    // Двусторонняя синхронизация: пока Kaspi не знает, что мы собрали заказ
+    // (assembled=false у нас — это то же самое поле, что читаем при синхронизации),
+    // показываем кнопку "толкнуть" статус туда. Не проверено на реальном
+    // токене — первый раз пробуйте на некритичном заказе.
+    if(!order.assembled && order.status !== "cancelled" && order.status !== "shipped"){
+      const kaspiBtn = document.createElement("button");
+      kaspiBtn.className = "btn secondary";
+      kaspiBtn.style.marginLeft = "8px";
+      kaspiBtn.textContent = "📤 Передать в Kaspi Доставку";
+      kaspiBtn.onclick = ()=>pushToKaspi(order.id);
+      actions.appendChild(kaspiBtn);
+    }
     if(order.status !== "shipped" && order.status !== "cancelled"){
       const cancelBtn = document.createElement("button");
       cancelBtn.className = "btn danger";
@@ -1894,6 +1906,18 @@
     btn.disabled = false; btn.textContent = "Да, отменить заказ окончательно";
     closeCancelFlow();
   });
+
+  async function pushToKaspi(orderId){
+    if(!confirm("Передать статус \"собран\" в сам Kaspi? Это реальный запрос к Kaspi, не только внутри нашей системы.")) return;
+    try{
+      const result = await api("/orders/"+orderId+"/kaspi-assemble", {method:"POST"});
+      toast(`Передано в Kaspi (мест: ${result.numberOfSpace})`);
+      wfCurrentOrder = await api("/orders/"+orderId);
+      await renderWorkflow();
+    }catch(e){
+      toast("Kaspi не принял: "+e.message);
+    }
+  }
 
   async function doTransition(orderId, to, reason){
     try{
