@@ -268,20 +268,23 @@ router.post("/:id/kaspi-assemble", async (req, res) => {
 
   const formedPlaces = db.prepare("SELECT COUNT(*) as c FROM cargo_places WHERE order_id = ? AND formed = 1").get(req.params.id).c;
   const numberOfSpace = formedPlaces > 0 ? formedPlaces : 1;
+  const requestBody = {
+    data: {
+      type: "orders",
+      id: row.kaspi_order_id,
+      attributes: { status: "ASSEMBLE", numberOfSpace: String(numberOfSpace) }
+    }
+  };
+  console.log(`[kaspi-assemble] Заказ ${row.id} (kaspi_order_id=${row.kaspi_order_id}, магазин=${row.shop}) — отправляю запрос:`, JSON.stringify(requestBody));
 
   try {
     const resp = await fetch("https://kaspi.kz/shop/api/v2/orders", {
       method: "POST",
       headers: { "Content-Type": "application/vnd.api+json", "X-Auth-Token": shopConfig.token },
-      body: JSON.stringify({
-        data: {
-          type: "orders",
-          id: row.kaspi_order_id,
-          attributes: { status: "ASSEMBLE", numberOfSpace: String(numberOfSpace) }
-        }
-      })
+      body: JSON.stringify(requestBody)
     });
     const text = await resp.text();
+    console.log(`[kaspi-assemble] Ответ Kaspi: статус ${resp.status}, тело:`, text.slice(0, 1000));
     if (!resp.ok) {
       return res.status(502).json({ error: "kaspi_error", message: `Kaspi ответил ${resp.status}: ${text.slice(0, 300)}` });
     }
@@ -309,6 +312,7 @@ router.post("/:id/kaspi-assemble", async (req, res) => {
 
     res.json({ ok: true, numberOfSpace, kaspiResponse: kaspiJson, internalStatus: newInternalStatus });
   } catch (e) {
+    console.error(`[kaspi-assemble] Исключение для заказа ${row.id}:`, e.message, e.stack);
     res.status(500).json({ error: "request_failed", message: e.message });
   }
 });
