@@ -1719,16 +1719,19 @@
     document.getElementById("kaspiBulkPushKaspi").onclick = async ()=>{
       const ids = Array.from(selectedKaspiOrderIds);
       if(!confirm(`Передать в Kaspi статус "собран" сразу для ${ids.length} заказов? Это реальные запросы к Kaspi.`)) return;
-      let ok=0; const errors = [];
+      let ok=0, alreadyDone=0; const errors = [];
       for(const id of ids){
         const o = kaspiOrders.find(x=>x.id===id);
-        try{ await api("/orders/"+id+"/kaspi-assemble", {method:"POST"}); ok++; }
+        try{
+          const r = await api("/orders/"+id+"/kaspi-assemble", {method:"POST"});
+          if(r.alreadyAssembled) alreadyDone++; else ok++;
+        }
         catch(e){ errors.push(`№${o?.displayNumber||id}: ${e.message}`); }
       }
       if(errors.length){
-        alert(`Передано успешно: ${ok}\n\nОшибки (${errors.length}):\n`+errors.join("\n"));
+        alert(`Передано успешно: ${ok}${alreadyDone?`\nБыли уже собраны у Kaspi (просто обновили у себя): ${alreadyDone}`:''}\n\nОшибки (${errors.length}):\n`+errors.join("\n"));
       } else {
-        toast(`Передано: ${ok}`);
+        toast(`Передано: ${ok}${alreadyDone?`, уже было готово: ${alreadyDone}`:''}`);
       }
       selectedKaspiOrderIds.clear();
       await renderKaspiOrders();
@@ -2004,7 +2007,7 @@
       toast("Kaspi не принял: "+e.message);
       return;
     }
-    toast(`Передано в Kaspi (мест: ${result.numberOfSpace})`);
+    toast(result.alreadyAssembled ? "ℹ️ "+result.message : `Передано в Kaspi (мест: ${result.numberOfSpace})`);
     // Обновление карточки — отдельно от основного результата: если тут что-то
     // споткнётся, это не должно перекрывать уже показанный тост об успехе.
     try{
