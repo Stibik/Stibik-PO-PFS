@@ -1991,13 +1991,21 @@
 
   async function pushToKaspi(orderId){
     if(!confirm("Передать статус \"собран\" в сам Kaspi? Это реальный запрос к Kaspi, не только внутри нашей системы.")) return;
+    let result;
     try{
-      const result = await api("/orders/"+orderId+"/kaspi-assemble", {method:"POST"});
-      toast(`Передано в Kaspi (мест: ${result.numberOfSpace})`);
+      result = await api("/orders/"+orderId+"/kaspi-assemble", {method:"POST"});
+    }catch(e){
+      toast("Kaspi не принял: "+e.message);
+      return;
+    }
+    toast(`Передано в Kaspi (мест: ${result.numberOfSpace})`);
+    // Обновление карточки — отдельно от основного результата: если тут что-то
+    // споткнётся, это не должно перекрывать уже показанный тост об успехе.
+    try{
       wfCurrentOrder = await api("/orders/"+orderId);
       await renderWorkflow();
     }catch(e){
-      toast("Kaspi не принял: "+e.message);
+      console.error("Не удалось обновить карточку после передачи в Kaspi:", e);
     }
   }
 
