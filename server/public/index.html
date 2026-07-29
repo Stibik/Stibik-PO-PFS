@@ -1,2729 +1,371 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Учёт заказов — онлайн</title>
-<script src="/xlsx.core.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/JsBarcode/3.11.5/JsBarcode.all.min.js"></script>
-<style>
-  :root{
-    --paper:#FAF7F0; --ink:#20242B; --ink-soft:#565B66; --navy:#1E2A44; --navy-light:#2C3B5C;
-    --amber:#C8862B; --amber-light:#F3E0BC; --green:#3E7D4C; --red:#B23A2E; --line:#DDD3BE;
-    --mono: ui-monospace, Consolas, monospace; --serif: Georgia, serif; --sans: -apple-system, Arial, sans-serif;
-  }
-  *{box-sizing:border-box;}
-  body{margin:0; background:var(--paper); color:var(--ink); font-family:var(--sans);}
-  header.top{background:var(--navy); color:#fff; padding:16px 26px; display:flex; justify-content:space-between; align-items:center; border-bottom:4px solid var(--amber);}
-  header.top h1{font-family:var(--serif); font-weight:400; font-size:22px; margin:0;}
-  nav.tabs{display:flex; gap:6px; background:var(--navy-light); padding:10px 26px;}
-  nav.tabs button{background:transparent; border:none; color:#C7CEDD; padding:9px 18px; cursor:pointer; font-size:13.5px; border-radius:20px; transition:background .15s, color .15s;}
-  nav.tabs button:hover{background:rgba(255,255,255,0.08); color:#fff;}
-  nav.tabs button.active{color:#1E2A44; background:var(--amber); font-weight:600;}
-  main{padding:22px 26px 60px; max-width:1300px; margin:0 auto;}
-  .toolbar{display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:14px;}
-  .btn{padding:8px 16px; border-radius:8px; border:1px solid var(--navy); background:var(--navy); color:#fff; font-size:13px; cursor:pointer; transition:filter .15s, transform .08s;}
-  .btn:hover{filter:brightness(1.1);}
-  .btn:active{transform:scale(0.97);}
-  .btn.secondary{background:#fff; color:var(--navy);}
-  .btn.amber{background:var(--amber); border-color:var(--amber);}
-  .btn.danger{background:#fff; color:var(--red); border-color:var(--red);}
-  input[type=text],input[type=number],input[type=password],select,textarea{padding:7px 9px; border:1px solid var(--line); border-radius:8px; font-size:13.5px;}
-  table{width:100%; border-collapse:collapse; background:#fff; border-radius:8px; overflow:hidden; box-shadow:0 2px 8px rgba(30,42,68,0.08);}
-  thead th{background:#F0EAD9; text-align:left; font-size:11px; text-transform:uppercase; padding:8px; border-bottom:2px solid var(--line); white-space:nowrap;}
-  thead th.sortable{cursor:pointer; user-select:none;}
-  thead th.sortable:hover{color:var(--navy); background:#e8dfc4;}
-  .mono{white-space:nowrap;}
-  td.num, th.num{ text-align:right; white-space:nowrap; }
-  tbody td{padding:7px 8px; border-bottom:1px solid var(--line); font-size:13px;}
-  .thumb{width:40px; height:40px; object-fit:cover; border-radius:3px; border:1px solid var(--line);}
-  .thumb-empty{width:40px; height:40px; border-radius:3px; border:1px dashed var(--line); display:flex; align-items:center; justify-content:center; color:var(--ink-soft); font-size:11px;}
-  .stamp{font-family:var(--mono); font-size:10.5px; font-weight:700; padding:3px 9px; border-radius:20px; border:1.5px solid currentColor; white-space:nowrap; display:inline-block;}
+import express from "express";
+import { db, nextReceiptNumber, logAudit, getKaspiShops } from "../db.js";
+import { requireAuth } from "../middleware/auth.js";
+import { isValidNormalTransition, getNextStatus, STATUS_LABELS } from "../statusMachine.js";
 
-  /* Панель-блок: группирует связанные элементы управления в один визуальный узел */
-  .panel{background:#fff; border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:16px;}
-  .panel + .panel{margin-top:-4px;}
-  .panel-divider{border-top:1px solid var(--line); margin:14px 0;}
-  .panel-label{font-size:11px; text-transform:uppercase; letter-spacing:.03em; color:var(--ink-soft); margin-bottom:8px; font-weight:600;}
+const router = express.Router();
+router.use(requireAuth);
 
-  /* Современные фильтр-пилюли — вместо обычных кнопок для переключателей */
-  .pill-row{display:flex; flex-wrap:wrap; gap:8px;}
-  .pill{padding:7px 15px; border-radius:20px; border:1px solid var(--line); background:#fff; color:var(--ink); font-size:13px; cursor:pointer; transition:all .15s; white-space:nowrap;}
-  .pill:hover{border-color:var(--amber); color:var(--amber);}
-  .pill.active{background:var(--navy); border-color:var(--navy); color:#fff;}
-  .pill.active.amber-active{background:var(--amber); border-color:var(--amber); color:#fff;}
-  .pill .count{opacity:.75; font-size:11.5px; margin-left:2px;}
+function uid() {
+  return "o" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
 
-  /* Карточки-показатели вверху "Заказов" — по образцу референса */
-  .stat-card-v2{border-radius:12px; padding:16px 18px; display:flex; align-items:center; gap:14px;}
-  .stat-card-v2 .icon{width:44px; height:44px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:20px; flex-shrink:0;}
-  .stat-card-v2 .num{font-size:24px; font-weight:700; line-height:1.1;}
-  .stat-card-v2 .lbl{font-size:12px; color:var(--ink-soft);}
-  .stamp.new{color:#5B7FA6; background:#E4ECF5;}
-  .stamp.transit{color:var(--amber); background:var(--amber-light);}
-  .stamp.arrived{color:var(--green); background:#E0EEDF;}
-  .stamp.problem{color:var(--red); background:#F5DEDA;}
-  .login-wrap{min-height:100vh; display:flex; align-items:center; justify-content:center; background:linear-gradient(160deg,var(--navy),#0F1626);}
-  .login-box{background:#fff; padding:30px; border-radius:6px; width:320px; border-top:4px solid var(--amber);}
-  .login-box h2{font-family:var(--serif); font-weight:400; margin-top:0;}
-  .login-box input{width:100%; margin-bottom:10px;}
-  .login-box .btn{width:100%;}
-  .error{color:var(--red); font-size:12.5px; min-height:16px;}
-  .overlay{position:fixed; inset:0; background:rgba(20,24,30,0.55); display:none; align-items:flex-start; justify-content:center; padding:40px 16px; overflow:auto; z-index:50;}
-  .overlay.show{display:flex;}
-  .modal{background:#fff; border-radius:10px; max-width:600px; width:100%; padding:22px 24px;}
-  .modal h3{font-family:var(--serif); font-weight:400; border-bottom:2px solid var(--amber); padding-bottom:8px;}
-  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:10px 14px;}
-  .grid2 label{display:block; font-size:11px; color:var(--ink-soft); margin-bottom:3px;}
-  .grid2 .full{grid-column:1/-1;}
-  .modal-actions{display:flex; justify-content:space-between; margin-top:16px;}
-  footer{text-align:center; padding:18px; color:var(--ink-soft); font-size:11.5px; font-family:var(--mono);}
-  .kaspi-result{font-size:12.5px; margin-top:10px; background:#fff; border:1px solid var(--line); padding:10px; border-radius:4px;}
-  #toast{position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:var(--navy); color:#fff; padding:10px 18px; border-radius:4px; opacity:0; transition:opacity .2s; z-index:100;}
-  #toast.show{opacity:1;}
-
-  .tbl-wrap{ overflow-x:auto; -webkit-overflow-scrolling:touch; border-radius:8px; }
-  .tbl-wrap table{ min-width:640px; }
-
-  @media (max-width: 720px){
-    header.top{ padding:12px 14px; flex-wrap:wrap; gap:8px; }
-    header.top h1{ font-size:17px; }
-    nav.tabs{ padding:8px 10px; overflow-x:auto; -webkit-overflow-scrolling:touch; flex-wrap:nowrap; }
-    nav.tabs button{ white-space:nowrap; padding:8px 13px; font-size:12.5px; flex:none; }
-    main{ padding:14px 12px 40px; }
-    .toolbar{ gap:6px; }
-    .btn{ padding:8px 12px; font-size:12.5px; }
-    .grid2{ grid-template-columns:1fr; }
-    .modal{ padding:16px 14px; max-width:calc(100vw - 24px); }
-    .modal h3{ font-size:16px; }
-    thead th, tbody td{ font-size:12px; padding:6px; }
-    .login-box{ width:calc(100vw - 40px); }
-  }
-</style>
-</head>
-<body>
-
-<div id="loginScreen" class="login-wrap">
-  <div class="login-box">
-    <h2>Вход</h2>
-    <div class="error" id="loginError"></div>
-    <input id="loginUser" type="text" placeholder="Логин">
-    <input id="loginPass" type="password" placeholder="Пароль">
-    <button class="btn amber" id="btnLogin">Войти</button>
-  </div>
-</div>
-
-<div id="app" style="display:none">
-  <header class="top">
-    <h1>Учёт заказов — онлайн</h1>
-    <div style="display:flex; align-items:center; gap:14px;">
-      <span id="whoami" style="font-size:12.5px; color:#AEB9CF;"></span>
-      <button class="btn secondary" id="btnLogout" style="padding:5px 12px; font-size:12px;">Выйти</button>
-    </div>
-  </header>
-  <nav class="tabs">
-    <button class="tab-btn active" data-tab="orders">Приход</button>
-    <button class="tab-btn" data-tab="kaspiOrders">Заказы</button>
-    <button class="tab-btn" data-tab="claims">Отмены/возвраты</button>
-    <button class="tab-btn" data-tab="catalog">Справочник</button>
-    <button class="tab-btn" data-tab="price">Прайс</button>
-    <button class="tab-btn" data-tab="salary">Зарплата</button>
-    <button class="tab-btn" data-tab="production">Производство</button>
-    <button class="tab-btn" data-tab="kaspi">Kaspi: настройки</button>
-    <button class="tab-btn admin-only" data-tab="audit">Журнал</button>
-    <button class="tab-btn admin-only" data-tab="users">Пользователи</button>
-  </nav>
-  <main>
-    <section id="tab-orders">
-      <div class="toolbar">
-        <button class="btn amber" id="btnAddOrder">+ Новый приход</button>
-        <button class="btn secondary" id="btnImportOrders">Импорт из Excel</button>
-        <button class="btn secondary" id="btnExportOrders">Экспорт в Excel</button>
-        <button class="btn danger" id="btnBulkDeleteOrders" style="display:none;"></button>
-        <input type="file" id="importOrdersInput" accept=".xlsx,.xls" style="display:none">
-      </div>
-      <div id="ordersStats" style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:14px;"></div>
-      <div class="toolbar" style="flex-wrap:wrap;">
-        <div style="position:relative;">
-          <button class="btn secondary" id="btnOrdersColSettings" style="padding:7px 12px;">⚙️ Колонки</button>
-          <div id="ordersColPopover" style="display:none; position:absolute; top:40px; left:0; background:#fff; border:1px solid var(--line); border-radius:8px; box-shadow:0 6px 20px rgba(0,0,0,0.15); padding:12px 16px; z-index:20; min-width:200px;">
-            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="ocol" data-col="arrived" checked> Дата прихода</label>
-            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="ocol" data-col="days" checked> Дней в пути</label>
-            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="ocol" data-col="cny" checked> Юань</label>
-            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="ocol" data-col="kzt" checked> ₸/шт</label>
-            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="ocol" data-col="delivery" checked> Доставка</label>
-            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="ocol" data-col="total" checked> Итого</label>
-            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="ocol" data-col="sale" checked> Продажа</label>
-            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="ocol" data-col="margin" checked> Маржа</label>
-            <label style="display:block; font-size:12.5px;"><input type="checkbox" class="ocol" data-col="category" checked> Категория</label>
-          </div>
-        </div>
-        <button class="btn secondary" id="btnManageCategories" style="padding:7px 12px;">Категории</button>
-        <div style="position:relative; display:inline-block;">
-          <input type="text" id="ordersSearch" placeholder="Поиск по артикулу/названию..." style="padding:7px 28px 7px 10px; min-width:220px;">
-          <span id="ordersSearchClear" style="display:none; position:absolute; right:8px; top:50%; transform:translateY(-50%); cursor:pointer; color:var(--ink-soft); font-weight:700;" title="Очистить поиск">✕</span>
-        </div>
-        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-left:auto;">
-          <label style="font-size:12.5px; white-space:nowrap; color:var(--ink-soft);"><input type="checkbox" id="showArchivedOrders"> Показывать архив (>30 дн. с прихода)</label>
-          <select id="ordersFilterStatus" style="padding:7px 10px;">
-            <option value="all">Все статусы</option>
-            <option value="new">Новый</option>
-            <option value="transit">В пути</option>
-            <option value="arrived">Пришло</option>
-            <option value="problem">Проблема</option>
-          </select>
-          <select id="ordersFilterCategory" style="padding:7px 10px;">
-            <option value="all">Все категории</option>
-          </select>
-        </div>
-      </div>
-<div class="tbl-wrap">
-            <table>
-        <thead id="ordersHead"></thead>
-        <tbody id="ordersBody"></tbody>
-      </table>
-      </div>
-    </section>
-    <section id="tab-kaspiOrders" style="display:none">
-      <div id="kaspiStatCards" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(160px,1fr)); gap:12px; margin-bottom:16px;"></div>
-
-      <div class="panel">
-        <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
-          <button class="btn amber" id="btnSyncKaspi2">Синхронизировать сейчас</button>
-          <label style="font-size:12.5px; color:var(--ink-soft);"><input type="checkbox" id="includeArchiveCheck"> включая архив</label>
-          <span id="lastSyncIndicator" style="font-size:12.5px; color:var(--ink-soft); display:flex; align-items:center; gap:5px;"></span>
-          <span id="shopList2" style="font-size:12.5px;color:var(--ink-soft); margin-left:auto;"></span>
-        </div>
-        <div id="kaspiResult2"></div>
-
-        <div class="panel-divider"></div>
-        <div style="position:relative; max-width:420px;">
-          <span style="position:absolute; left:12px; top:50%; transform:translateY(-50%); color:var(--ink-soft); font-size:14px;">🔍</span>
-          <input type="text" id="kaspiOrdersSearch" placeholder="Поиск по номеру, клиенту, товару..." style="width:100%; padding:9px 12px 9px 34px;">
-        </div>
-
-        <div class="panel-divider"></div>
-        <div class="panel-label">Магазин</div>
-        <div class="pill-row" id="kaspiShopFilters"></div>
-
-        <div class="panel-divider"></div>
-        <div class="panel-label">Статус</div>
-        <div class="pill-row" id="kaspiStatusFilters"></div>
-      </div>
-
-      <div class="panel" style="display:flex; align-items:center; gap:10px; padding:12px 18px;">
-        <button class="btn secondary" id="btnPrintKaspiList" style="padding:7px 12px;">🖨️ Печать списка (текущий фильтр)</button>
-        <div style="position:relative; margin-left:auto;">
-          <button class="btn secondary" id="btnColSettings" style="padding:7px 12px;">⚙️ Колонки</button>
-          <div id="colSettingsPopover" style="display:none; position:absolute; top:40px; right:0; background:#fff; border:1px solid var(--line); border-radius:8px; box-shadow:0 6px 20px rgba(0,0,0,0.15); padding:12px 16px; z-index:20; min-width:220px;">
-            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="photo" checked> Фото</label>
-            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="num" checked> №</label>
-            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="code" checked> Kaspi код</label>
-            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="shop" checked> Магазин</label>
-            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="name" checked> Наименование</label>
-            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="courier" checked> Дата передачи курьеру</label>
-            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="price" checked> Сумма</label>
-            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="status" checked> Статус</label>
-            <label style="display:block; font-size:12.5px;"><input type="checkbox" class="kcol" data-col="delivery" checked> Доставка</label>
-            <label style="display:block; font-size:12.5px; margin-top:6px;"><input type="checkbox" class="kcol" data-col="waybill" checked> Накладная</label>
-          </div>
-        </div>
-      </div>
-<div class="tbl-wrap">
-            <table>
-        <thead id="kaspiOrdersHead"></thead>
-        <tbody id="kaspiOrdersBody"></tbody>
-      </table>
-      </div>
-    </section>
-    <section id="tab-claims" style="display:none">
-      <div class="toolbar">
-        <label style="font-size:13px;"><input type="checkbox" id="showClosedClaims"> Показывать закрытые</label>
-      </div>
-<div class="tbl-wrap">
-            <table>
-        <thead><tr><th>№</th><th>Kaspi код</th><th>Магазин</th><th>Наименование</th><th>Статус</th><th>Дата отмены (прибл.)</th><th>Дней с отмены</th><th>Заметка</th><th></th></tr></thead>
-        <tbody id="claimsBody"></tbody>
-      </table>
-      </div>
-    </section>
-    <section id="tab-catalog" style="display:none">
-      <div class="toolbar">
-        <button class="btn amber" id="btnImportCatalog">Импорт из Kaspi (Excel)</button>
-        <input type="file" id="importCatalogInput" accept=".xlsx,.xls" style="display:none">
-        <button class="btn secondary" id="btnExportCatalog">Экспорт в Excel</button>
-        <button class="btn secondary" id="btnImportCatalogFilled">Загрузить заполненный файл</button>
-        <input type="file" id="importCatalogFilledInput" accept=".xlsx,.xls" style="display:none">
-        <span id="catalogImportInfo" style="font-size:12.5px;color:var(--ink-soft);"></span>
-      </div>
-      <div id="catalogStats" style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:14px;"></div>
-      <div class="tbl-wrap">
-        <table>
-          <thead><tr><th></th><th>SKU</th><th>Название (Kaspi)</th><th>Название для печати</th><th>Группа</th><th>Подраздел</th><th>Розница</th><th>Наличие</th><th></th></tr></thead>
-          <tbody id="catalogBody"><tr><td colspan="9" style="text-align:center;color:var(--ink-soft);padding:20px;">Справочник пуст — нажмите «Импорт из Kaspi», чтобы загрузить файл выгрузки активных товаров</td></tr></tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- CATALOG ITEM MODAL -->
-    <div class="overlay" id="catalogItemOverlay">
-      <div class="modal" style="max-width:640px;">
-        <h3>Карточка товара</h3>
-        <div id="catalogItemKaspiInfo" style="font-size:12.5px; color:var(--ink-soft); background:#F7F4EC; border-radius:6px; padding:10px 12px; margin-bottom:14px;"></div>
-        <div class="grid2">
-          <div class="full">
-            <label>Фото (для прайса)</label>
-            <div style="display:flex; gap:12px; align-items:center;">
-              <img id="ci_photo_preview" style="width:70px;height:70px;object-fit:cover;border-radius:4px;border:1px solid var(--line); display:none;">
-              <div id="ci_photo_empty" style="width:70px;height:70px;border-radius:4px;border:1px dashed var(--line);display:flex;align-items:center;justify-content:center;color:var(--ink-soft);">📷</div>
-              <div>
-                <input type="file" id="ci_photo_input" accept="image/*" style="display:none">
-                <button class="btn secondary" type="button" id="ci_photo_btn" style="padding:6px 12px;font-size:12px;">Выбрать фото</button>
-                <button class="btn danger" type="button" id="ci_photo_clear" style="padding:6px 12px;font-size:12px;display:none;">Удалить</button>
-              </div>
-            </div>
-          </div>
-          <div class="full"><label>Название для печати</label><input id="ci_printName" type="text" placeholder="Как будет видно клиенту"></div>
-          <div><label>Группа</label><input id="ci_category" type="text" placeholder="напр. Манекены для борьбы и ММА"></div>
-          <div><label>Подраздел</label><input id="ci_subgroup" type="text" placeholder="напр. 1-ноги, ПВХ"></div>
-          <div><label>Материал</label><input id="ci_material" type="text"></div>
-          <div><label>Цвет</label><input id="ci_color" type="text"></div>
-          <div><label>Высота, см</label><input id="ci_height" type="number" step="0.1"></div>
-          <div><label>Диаметр, см</label><input id="ci_diameter" type="number" step="0.1"></div>
-          <div><label>Вес, кг</label><input id="ci_weight" type="number" step="0.1"></div>
-          <div><label>Крепление/кольцо</label><input id="ci_mount" type="text"></div>
-          <div><label>Расценка труда, ₸ (для Зарплаты)</label><input id="ci_laborRate" type="number" step="1"></div>
-          <div><label>Затраты на материал, ₸</label><input id="ci_materialCost" type="number" step="1"></div>
-          <div><label>Прочие затраты, ₸</label><input id="ci_miscCost" type="number" step="1"></div>
-          <div><label>Ветошь, ₸</label><input id="ci_ragsCost" type="number" step="1"></div>
-          <div><label>Себестоимость итого, ₸</label><input id="ci_costPrice" type="number" step="1"></div>
-          <div><label>Розница, ₸</label><input id="ci_retailPrice" type="number" step="1"></div>
-          <div class="full"><label>Заметка</label><textarea id="ci_note" style="width:100%"></textarea></div>
-        </div>
-        <div class="modal-actions">
-          <button class="btn danger" id="catalogItemDeleteBtn">Удалить</button>
-          <div><button class="btn secondary" id="catalogItemCancelBtn">Отмена</button> <button class="btn amber" id="catalogItemSaveBtn">Сохранить</button></div>
-        </div>
-      </div>
-    </div>
-
-    <section id="tab-price" style="display:none">
-      <div class="toolbar">
-        <button class="btn amber" id="btnPrintPrice">🖨️ Печать / Сохранить как PDF</button>
-        <label style="font-size:12.5px; margin-left:8px;"><input type="checkbox" id="priceOnlyReady" checked> Только с заполненным названием и ценой</label>
-      </div>
-      <div id="pricePreviewInfo" style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;"></div>
-      <div id="pricePreview" style="background:#fff; border:1px solid var(--line); border-radius:8px; padding:24px; max-width:900px;"></div>
-    </section>
-    <section id="tab-salary" style="display:none">
-      <div style="text-align:center; padding:60px 20px; color:var(--ink-soft);">
-        <div style="font-size:16px; margin-bottom:8px; color:var(--ink);">Раздел «Зарплата» — в разработке</div>
-        <div style="font-size:13px; max-width:420px; margin:0 auto;">Будет считаться на основе справочника (себестоимость, производство) — подключим, как только настроим сам справочник</div>
-      </div>
-    </section>
-    <section id="tab-production" style="display:none">
-      <div class="toolbar">
-        <label style="font-size:12.5px;"><input type="checkbox" id="prodShowResolved"> Показывать решённые</label>
-        <button class="btn secondary" id="btnManageEmployees" style="margin-left:auto;">Сотрудники</button>
-      </div>
-      <div id="prodStats" style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:14px;"></div>
-      <div id="prodList"></div>
-    </section>
-
-    <!-- Управление сотрудниками -->
-    <div class="overlay" id="employeesOverlay">
-      <div class="modal" style="max-width:420px;">
-        <h3>Сотрудники</h3>
-        <div style="display:flex; gap:8px; margin-bottom:14px;">
-          <input type="text" id="newEmployeeInput" placeholder="Имя сотрудника" style="flex:1;">
-          <button class="btn amber" id="btnAddEmployee">Добавить</button>
-        </div>
-        <div id="employeesManageBody"></div>
-        <div class="modal-actions">
-          <div></div>
-          <button class="btn secondary" id="employeesManageClose">Закрыть</button>
-        </div>
-      </div>
-    </div>
-
-    <section id="tab-kaspi" style="display:none">
-      <p>Введите токены API для каждого магазина (получаются в кабинете продавца Kaspi, раздел API). Без токена синхронизация для этого магазина работать не будет.</p>
-      <div id="kaspiShopForms"></div>
-      <button class="btn amber" id="btnSaveKaspiSettings">Сохранить настройки</button>
-      <div id="kaspiSettingsMsg" style="margin-top:10px; font-size:12.5px;"></div>
-
-      <div style="margin-top:28px; padding-top:20px; border-top:1px solid var(--line);">
-        <h3 style="font-family:var(--serif); font-weight:400; margin-bottom:6px;">Нумерация заказов</h3>
-        <p style="font-size:12.5px; color:var(--ink-soft); margin-top:0;">
-          Внутренний короткий номер заказа (тот, что видят сотрудники и печатается на этикетках) — не код Kaspi.
-          У каждого магазина свой отдельный счётчик, чтобы номера SA и PFS не путались между собой.
-          Можно продолжить счёт с того места, где остановились в PRODIX или на бумаге, вместо того чтобы начинать с 1.
-        </p>
-        <div id="orderNumberingShops"></div>
-        <div id="orderNumberingMsg" style="margin-top:8px; font-size:12.5px;"></div>
-      </div>
-    </section>
-    <section id="tab-audit" style="display:none">
-      <div class="tbl-wrap">
-      <table>
-        <thead><tr><th>Дата</th><th>Пользователь</th><th>Действие</th><th>Заказ</th><th>Было</th><th>Стало</th><th>Комментарий</th></tr></thead>
-        <tbody id="auditBody"></tbody>
-      </table>
-      </div>
-    </section>
-    <section id="tab-users" style="display:none">
-      <div class="toolbar">
-        <button class="btn amber" id="btnAddUser">+ Новый пользователь</button>
-      </div>
-      <table>
-        <thead><tr><th>Логин</th><th>Роль</th><th>Создан</th><th></th></tr></thead>
-        <tbody id="usersBody"></tbody>
-      </table>
-    </section>
-  </main>
-  <footer>учёт заказов · онлайн · <span id="versionTag">v?</span></footer>
-</div>
-
-<!-- ORDER MODAL -->
-<div class="overlay" id="orderOverlay">
-  <div class="modal">
-    <h3 id="orderModalTitle">Новый заказ</h3>
-    <div id="orderArrivedDateInfo" style="display:none; font-size:12.5px; color:var(--green); margin-bottom:10px;"></div>
-    <div class="grid2">
-      <div class="full">
-        <label>Фото</label>
-        <div style="display:flex; gap:12px; align-items:center;">
-          <img id="o_photo_preview" style="width:70px;height:70px;object-fit:cover;border-radius:4px;border:1px solid var(--line); display:none;">
-          <div id="o_photo_empty" style="width:70px;height:70px;border-radius:4px;border:1px dashed var(--line);display:flex;align-items:center;justify-content:center;color:var(--ink-soft);">📷</div>
-          <div>
-            <input type="file" id="o_photo_input" accept="image/*" style="display:none">
-            <button class="btn secondary" type="button" id="o_photo_btn" style="padding:6px 12px;font-size:12px;">Выбрать фото</button>
-            <button class="btn danger" type="button" id="o_photo_clear" style="padding:6px 12px;font-size:12px;display:none;">Удалить</button>
-          </div>
-        </div>
-      </div>
-      <div><label>Артикул</label><input id="o_article" type="text"></div>
-      <div><label>Название</label><input id="o_name" type="text"></div>
-      <div><label>Кол-во (заказано)</label><input id="o_qty" type="number" value="1"></div>
-      <div><label>Факт. кол-во (сколько реально пришло)</label><input id="o_actualqty" type="number" placeholder="оставьте пустым, если ещё не пришло"></div>
-      <div><label>Дата заказа</label><input id="o_orderdate" type="date"></div>
-      <div><label>Закупка, юань</label><input id="o_cny" type="number" step="0.01"></div>
-      <div><label>Закупка, ₸ (за шт.)</label><input id="o_kzt" type="number" step="0.01"></div>
-      <div><label>Доставка, ₸ (за шт.)</label><input id="o_delivery" type="number" step="0.01"></div>
-      <div><label>Продажная цена, ₸</label><input id="o_sale" type="number" step="0.01"></div>
-      <div><label>Категория</label><select id="o_category"></select></div>
-      <div><label>Статус</label>
-        <select id="o_status"><option value="new">Новый</option><option value="transit">В пути</option><option value="arrived">Пришло</option><option value="problem">Проблема</option></select>
-      </div>
-      <div class="full"><label>Заметка</label><textarea id="o_note" style="width:100%"></textarea></div>
-    </div>
-    <div class="modal-actions">
-      <button class="btn danger" id="orderDeleteBtn" style="display:none">Удалить</button>
-      <div><button class="btn secondary" id="orderCancelBtn">Отмена</button> <button class="btn amber" id="orderSaveBtn">Сохранить</button></div>
-    </div>
-  </div>
-</div>
-
-<div class="overlay" id="claimOverlay">
-  <div class="modal">
-    <h3>Рекламация по заказу</h3>
-    <div class="grid2">
-      <div class="full"><label>Заметка (что происходит, что решили)</label><textarea id="claim_note" style="width:100%; min-height:80px;"></textarea></div>
-      <div class="full"><label><input type="checkbox" id="claim_resolved"> Закрыто (решено)</label></div>
-    </div>
-    <div class="modal-actions">
-      <div></div>
-      <div><button class="btn secondary" id="claimCancelBtn">Отмена</button> <button class="btn amber" id="claimSaveBtn">Сохранить</button></div>
-    </div>
-  </div>
-</div>
-
-<div class="overlay" id="workflowOverlay">
-  <div class="modal" style="max-width:640px;">
-    <h3 id="wfTitle">Обработка заказа</h3>
-    <div id="wfStatusRow" style="margin-bottom:14px;"></div>
-
-    <div id="wfActionsRow" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;"></div>
-
-    <!-- Безопасная отмена: два явных отдельных шага, никаких браузерных confirm/prompt.
-         Шаг 1 — указать причину. Шаг 2 — отдельный экран с финальным подтверждением. -->
-    <div id="wfCancelStep1" style="display:none; background:#FDF3F1; border:1px solid var(--red); border-radius:6px; padding:14px; margin-bottom:14px;">
-      <div style="font-size:13px; font-weight:600; margin-bottom:8px;">Отмена заказа — шаг 1 из 2</div>
-      <label style="display:block; font-size:12px; color:var(--ink-soft); margin-bottom:4px;">Причина отмены (обязательно)</label>
-      <textarea id="wfCancelReason" style="width:100%; min-height:60px; margin-bottom:10px;"></textarea>
-      <div style="display:flex; gap:8px;">
-        <button class="btn secondary" id="wfCancelStep1Back" style="padding:6px 14px;font-size:13px;">Назад, не отменять</button>
-        <button class="btn danger" id="wfCancelStep1Next" style="padding:6px 14px;font-size:13px;">Далее →</button>
-      </div>
-    </div>
-
-    <div id="wfCancelStep2" style="display:none; background:#FDF3F1; border:2px solid var(--red); border-radius:6px; padding:14px; margin-bottom:14px;">
-      <div style="font-size:13px; font-weight:700; color:var(--red); margin-bottom:8px;">⚠ Последнее подтверждение — это действие необратимо</div>
-      <div id="wfCancelStep2Text" style="font-size:13px; margin-bottom:12px;"></div>
-      <div style="display:flex; gap:8px;">
-        <button class="btn secondary" id="wfCancelStep2Back" style="padding:6px 14px;font-size:13px;">Нет, оставить заказ</button>
-        <button class="btn danger" id="wfCancelStep2Confirm" style="padding:6px 14px;font-size:13px;font-weight:700;">Да, отменить заказ окончательно</button>
-      </div>
-    </div>
-
-    <div style="border-top:1px solid var(--line); padding-top:12px; margin-bottom:14px;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-        <b style="font-size:13px;">Грузовые места</b>
-        <button class="btn secondary" style="padding:5px 10px;font-size:12px;" id="wfAddCargoPlace">+ Добавить место</button>
-      </div>
-      <div id="wfCargoPlaces"></div>
-    </div>
-
-    <div style="border-top:1px solid var(--line); padding-top:12px; margin-bottom:14px;">
-      <div id="wfHistoryToggle" style="display:flex; justify-content:space-between; align-items:center; cursor:pointer;">
-        <b style="font-size:13px;" id="wfHistoryLabel">История статусов</b>
-        <span id="wfHistoryArrow" style="color:var(--ink-soft); font-size:12px;">▾ показать</span>
-      </div>
-      <div id="wfHistory" style="display:none; font-size:12px; color:var(--ink-soft); margin-top:8px;"></div>
-    </div>
-
-    <div class="modal-actions">
-      <div></div>
-      <button class="btn secondary" id="wfCloseBtn">Закрыть</button>
-    </div>
-  </div>
-</div>
-
-<!-- Диалог подтверждения печати -->
-<div class="overlay" id="printConfirmOverlay">
-  <div class="modal" style="max-width:420px;">
-    <h3>Подтверждение печати</h3>
-    <div id="printWarningBox" style="display:none; background:var(--amber-light); border:1px solid var(--amber); border-radius:6px; padding:10px; font-size:12.5px; margin-bottom:12px;"></div>
-    <div id="printReasonRow" style="display:none; margin-bottom:12px;">
-      <label style="display:block; font-size:11px; color:var(--ink-soft); margin-bottom:4px;">Причина повторной печати</label>
-      <textarea id="printReasonInput" style="width:100%; min-height:60px;"></textarea>
-    </div>
-    <label style="display:block; font-size:13px; margin-bottom:12px;">
-      <input type="checkbox" id="printConfirmCheck"> Подтверждаю, что документ фактически распечатан
-    </label>
-    <div class="modal-actions">
-      <button class="btn secondary" id="printCancelBtn">Отмена</button>
-      <button class="btn amber" id="printConfirmBtn" disabled style="opacity:.5;cursor:not-allowed;">Подтвердить</button>
-    </div>
-  </div>
-</div>
-
-<div class="overlay" id="kaspiDetailOverlay">
-  <div class="modal" style="max-width:700px;">
-    <h3>Данные заказа (как их прислал Kaspi)</h3>
-    <div style="font-size:12px; color:var(--ink-soft); margin-bottom:10px;">
-      Это все поля, которые реально вернул Kaspi для этого заказа — пригодится, чтобы понять,
-      как называется поле с наименованием товара и датой передачи курьеру.
-    </div>
-    <div class="tbl-wrap">
-    <table style="font-size:12.5px;">
-      <tbody id="kaspiDetailBody"></tbody>
-    </table>
-    </div>
-    <div class="modal-actions">
-      <div></div>
-      <button class="btn secondary" id="kaspiDetailClose">Закрыть</button>
-    </div>
-  </div>
-</div>
-
-<div class="overlay" id="categoriesManageOverlay">
-  <div class="modal" style="max-width:420px;">
-    <h3>Управление категориями</h3>
-    <div style="display:flex; gap:8px; margin-bottom:14px;">
-      <input type="text" id="newCategoryInput" placeholder="Новая категория" style="flex:1;">
-      <button class="btn amber" id="btnAddCategoryManage">Добавить</button>
-    </div>
-    <div id="categoriesManageBody"></div>
-    <div class="modal-actions">
-      <div></div>
-      <button class="btn secondary" id="categoriesManageClose">Закрыть</button>
-    </div>
-  </div>
-</div>
-
-<div id="toast"></div>
-
-<script>
-(function(){
-  "use strict";
-  let orders = [], kaspiOrders = [], categories = [];
-  let myRole = "warehouse";
-  let editingOrderId = null;
-
-  function toast(msg){
-    const t = document.getElementById("toast");
-    t.textContent = msg; t.classList.add("show");
-    clearTimeout(t._timer); t._timer = setTimeout(()=>t.classList.remove("show"), 3000);
-  }
-  function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
-
-  async function api(path, opts={}){
-    const resp = await fetch("/api"+path, {
-      headers: {"Content-Type":"application/json"},
-      credentials: "same-origin",
-      ...opts
-    });
-    if(resp.status === 401){ showLogin(); throw new Error("not_authenticated"); }
-    if(!resp.ok){ const t = await resp.json().catch(()=>({})); throw new Error(t.error||("HTTP "+resp.status)); }
-    return resp.json();
-  }
-
-  function showLogin(){
-    document.getElementById("loginScreen").style.display = "flex";
-    document.getElementById("app").style.display = "none";
-  }
-  function showApp(){
-    document.getElementById("loginScreen").style.display = "none";
-    document.getElementById("app").style.display = "";
-  }
-
-  document.getElementById("btnLogin").addEventListener("click", async ()=>{
-    const username = document.getElementById("loginUser").value.trim();
-    const password = document.getElementById("loginPass").value;
-    try{
-      const data = await api("/auth/login", {method:"POST", body: JSON.stringify({username, password})});
-      myRole = data.role;
-      document.getElementById("whoami").textContent = data.username + (data.role==='admin'?' (админ)':' (склад)');
-      applyRoleUI();
-      showApp();
-      await loadAll();
-      startAutoSync();
-    }catch(e){
-      document.getElementById("loginError").textContent = "Неверный логин или пароль";
-    }
-  });
-  document.getElementById("loginPass").addEventListener("keydown", e=>{ if(e.key==="Enter") document.getElementById("btnLogin").click(); });
-
-  // ---------- Фото для заказов (Приход) ----------
-  let currentOrderPhoto = null; // {path}
-  document.getElementById("o_photo_btn").addEventListener("click", ()=>document.getElementById("o_photo_input").click());
-  document.getElementById("o_photo_clear").addEventListener("click", ()=>{
-    currentOrderPhoto = null;
-    updateOrderPhotoPreview();
-  });
-  document.getElementById("o_photo_input").addEventListener("change", async (e)=>{
-    const file = e.target.files[0];
-    if(!file) return;
-    const fd = new FormData();
-    fd.append("photo", file);
-    try{
-      const resp = await fetch("/api/upload", {method:"POST", body:fd, credentials:"same-origin"});
-      if(!resp.ok) throw new Error("upload_failed");
-      const data = await resp.json();
-      currentOrderPhoto = data.path;
-      updateOrderPhotoPreview();
-    }catch(err){ toast("Не удалось загрузить фото"); }
-  });
-  function updateOrderPhotoPreview(){
-    const img = document.getElementById("o_photo_preview");
-    const empty = document.getElementById("o_photo_empty");
-    const clearBtn = document.getElementById("o_photo_clear");
-    if(currentOrderPhoto){
-      img.src = currentOrderPhoto; img.style.display=""; empty.style.display="none"; clearBtn.style.display="";
-    } else {
-      img.style.display="none"; empty.style.display=""; clearBtn.style.display="none";
-    }
-  }
-
-  // ---------- Экспорт в Excel ----------
-  window.__copyOrder = function(id){
-    const o = orders.find(x=>x.id===id);
-    if(!o) return;
-    // Открываем форму "нового" заказа (editingOrderId=null), но заполняем всем,
-    // кроме даты (сегодня по умолчанию) и факт.количества (пусто) — их скорректируют вручную
-    editingOrderId = null;
-    document.getElementById("orderModalTitle").textContent = "Новый заказ (копия)";
-    document.getElementById("orderArrivedDateInfo").style.display = "none";
-    document.getElementById("orderDeleteBtn").style.display = "none";
-    document.getElementById("o_article").value = o.article||"";
-    document.getElementById("o_name").value = o.name||"";
-    document.getElementById("o_qty").value = o.qty??1;
-    document.getElementById("o_actualqty").value = "";
-    document.getElementById("o_status").value = "new";
-    document.getElementById("o_orderdate").value = new Date().toISOString().slice(0,10);
-    document.getElementById("o_cny").value = o.buyPriceCny ?? "";
-    document.getElementById("o_kzt").value = o.buyPriceKzt ?? "";
-    document.getElementById("o_delivery").value = o.deliveryPrice ?? "";
-    document.getElementById("o_sale").value = o.salePrice ?? "";
-    populateCategorySelect(o.category||"", "o_category");
-    document.getElementById("o_note").value = o.note||"";
-    currentOrderPhoto = o.photo || null;
-    updateOrderPhotoPreview();
-    orderOverlay.classList.add("show");
-    toast("Данные скопированы — проверьте дату и количество перед сохранением");
+// Приводим строку БД (snake_case) к формату, который ожидает фронтенд (camelCase)
+function rowToOrder(row) {
+  if (!row) return null;
+  const order = {
+    id: row.id,
+    source: row.source,
+    kaspiOrderId: row.kaspi_order_id,
+    kaspiCode: row.kaspi_code,
+    shop: row.shop,
+    receiptNumber: row.receipt_number,
+    displayNumber: row.display_number,
+    article: row.article,
+    name: row.name,
+    qty: row.qty,
+    note: row.note,
+    photo: row.photo,
+    receiveStatus: row.receive_status,
+    orderDate: row.order_date,
+    arrivedDate: row.arrived_date,
+    buyPriceCny: row.buy_price_cny,
+    buyPriceKzt: row.buy_price_kzt,
+    deliveryPrice: row.delivery_price,
+    salePrice: row.sale_price,
+    category: row.category,
+    actualQty: row.actual_qty,
+    status: row.status,
+    statusLabel: STATUS_LABELS[row.status] || row.status,
+    kaspiStatus: row.kaspi_status,
+    deliveryState: row.delivery_state,
+    preOrder: !!row.pre_order,
+    assembled: !!row.assembled,
+    courierTransmissionDate: row.courier_transmission_date,
+    courierTransmissionPlanningDate: row.courier_transmission_planning_date,
+    courierHandoverDate: row.courier_handover_date,
+    totalPrice: row.total_price,
+    productName: row.product_name,
+    productPhoto: row.product_photo,
+    waybillUrl: row.waybill_url,
+    printed: !!row.printed,
+    printCount: row.print_count,
+    lastPrintedAt: row.last_printed_at,
+    lastPrintedBy: row.last_printed_by,
+    claimNote: row.claim_note,
+    claimResolved: !!row.claim_resolved,
+    raw: row.raw ? JSON.parse(row.raw) : null,
+    entriesRaw: row.entries_raw ? JSON.parse(row.entries_raw) : null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
   };
 
-  // ---------- Печать этикетки (термопринтер 58x30мм) ----------
-  window.__printOrderLabel = function(id){
-    const o = orders.find(x=>x.id===id);
-    if(!o) return;
-    const w = window.open("", "_blank", "width=420,height=520");
-    if(!w){ toast("Браузер заблокировал открытие окна"); return; }
-    const defaultCode = o.article || String(o.receiptNumber||"");
-    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Этикетка</title>
-      <style>
-        @page{ size: 58mm 30mm; margin: 0; }
-        html,body{ margin:0; padding:0; }
-        body{ font-family: Arial, sans-serif; }
-        .toolbar{ padding:10px; background:#f4f0e4; }
-        .toolbar input{ width:100%; padding:6px; margin-bottom:8px; box-sizing:border-box; }
-        .toolbar label{ font-size:11px; color:#666; }
-        .label{ width:58mm; height:30mm; box-sizing:border-box; padding:1.5mm; text-align:center;
-                display:flex; flex-direction:column; justify-content:center; align-items:center;
-                overflow:hidden; page-break-inside:avoid; }
-        .label .name{ font-size:8px; line-height:1.15; max-height:18px; overflow:hidden;
-                       display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
-        .label .article{ font-size:8px; font-family:monospace; color:#333; margin:1px 0; }
-        .label svg{ width:100%; height:9mm; max-height:9mm; }
-        @media print{ .toolbar{ display:none; } .label{ page-break-after:avoid; } }
-      </style></head><body>
-      <div class="toolbar">
-        <label>Что закодировать в штрихкоде (можно изменить):</label>
-        <input type="text" id="code" value="${defaultCode.replace(/"/g,'&quot;')}">
-        <button onclick="renderBarcode()" style="padding:6px 12px;">Обновить</button>
-        <button onclick="window.print()" style="padding:6px 12px; background:#C8862B; color:#fff; border:none; border-radius:4px;">🖨️ Печать (58×30мм)</button>
-      </div>
-      <div class="label">
-        <div class="name">${esc(o.name||"")}</div>
-        ${o.article ? `<div class="article">${esc(o.article)}</div>` : ""}
-        <svg id="barcodeSvg"></svg>
-      </div>
-      <script src="https://cdnjs.cloudflare.com/ajax/libs/JsBarcode/3.11.5/JsBarcode.all.min.js"><\/script>
-      <script>
-        function renderBarcode(){
-          const val = document.getElementById("code").value || "0";
-          try{
-            JsBarcode("#barcodeSvg", val, { format: "CODE128", height: 28, fontSize: 10, margin: 0, displayValue: true });
-          }catch(e){ document.getElementById("barcodeSvg").outerHTML = "<div style=color:red;font-size:9px;>Некорректное значение для штрихкода</div>"; }
-        }
-        renderBarcode();
-      <\/script>
-      </body></html>`);
-    w.document.close();
+  // Статус/стадия заказа из Kaspi считается во фронтенде через classifyStage()
+  // (там же учитывается срок упаковки, отмены, возвраты и т.д.) — здесь
+  // достаточно отдать сырые kaspiStatus/deliveryState, что и происходит выше.
+
+  return order;
+}
+
+router.get("/", (req, res) => {
+  const { source } = req.query;
+  let rows;
+  if (source) rows = db.prepare("SELECT * FROM orders WHERE source = ?").all(source);
+  else rows = db.prepare("SELECT * FROM orders").all();
+  res.json(rows.map(rowToOrder));
+});
+
+router.get("/:id", (req, res) => {
+  const row = db.prepare("SELECT * FROM orders WHERE id = ?").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  res.json(rowToOrder(row));
+});
+
+router.post("/", (req, res) => {
+  const b = req.body || {};
+  const id = uid();
+  const now = new Date().toISOString();
+  const receiptNumber = nextReceiptNumber();
+  db.prepare(`INSERT INTO orders
+    (id, source, receipt_number, article, name, qty, note, photo, receive_status, order_date,
+     buy_price_cny, buy_price_kzt, delivery_price, sale_price, category, status, created_at, updated_at)
+    VALUES (?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'preorder', ?, ?)`)
+    .run(id, receiptNumber, b.article || "", b.name || "", b.qty || 0, b.note || "", b.photo || null,
+         b.receiveStatus || b.status || "new", b.orderDate || now.slice(0,10),
+         b.buyPriceCny || 0, b.buyPriceKzt || 0, b.deliveryPrice || 0, b.salePrice || 0, b.category || "", now, now);
+  logAudit({ user: req.session.username, action: "create_order", orderId: id, newValue: b.name || b.article });
+  const row = db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
+  res.json(rowToOrder(row));
+});
+
+router.put("/:id", (req, res) => {
+  const row = db.prepare("SELECT * FROM orders WHERE id = ?").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  const b = req.body || {};
+  const now = new Date().toISOString();
+
+  // Разрешаем точечно обновлять известные поля (без прямого изменения status —
+  // для статуса есть отдельный маршрут /transition с проверкой правил перехода)
+  const updates = [];
+  const params = [];
+  const map = {
+    article: "article", name: "name", qty: "qty", note: "note", photo: "photo",
+    receiveStatus: "receive_status", orderDate: "order_date",
+    buyPriceCny: "buy_price_cny", buyPriceKzt: "buy_price_kzt", deliveryPrice: "delivery_price",
+    salePrice: "sale_price", category: "category", actualQty: "actual_qty",
+    claimNote: "claim_note", claimResolved: "claim_resolved", printed: "printed"
   };
-
-  document.getElementById("btnBulkDeleteOrders").addEventListener("click", async ()=>{
-    if(!selectedOrderIds.size) return;
-    if(!confirm(`Удалить ${selectedOrderIds.size} записей безвозвратно?`)) return;
-    for(const id of selectedOrderIds){
-      try{ await api("/orders/"+id, {method:"DELETE"}); }catch(e){}
+  for (const [jsKey, col] of Object.entries(map)) {
+    if (Object.prototype.hasOwnProperty.call(b, jsKey)) {
+      updates.push(`${col} = ?`);
+      let v = b[jsKey];
+      if (typeof v === "boolean") v = v ? 1 : 0;
+      params.push(v);
     }
-    selectedOrderIds.clear();
-    await loadAll();
-    toast("Удалено");
-  });
-  document.getElementById("btnExportOrders").addEventListener("click", ()=>{
-    if(!orders.length){ toast("Нет данных для экспорта"); return; }
-    const rows = orders.map(o=>({
-      "№": o.receiptNumber, "Артикул": o.article, "Название": o.name, "Кол-во": o.qty,
-      "Дата заказа": o.orderDate||"", "Дней в пути": daysInTransit(o) ?? "",
-      "Закупка, юань": o.buyPriceCny||0, "Закупка, ₸": o.buyPriceKzt||0, "Доставка, ₸": o.deliveryPrice||0,
-      "Статус": receiveStatusLabel(o.receiveStatus),
-      "Заметка": o.note||"", "Фото (файл)": o.photo||""
-    }));
-    const ws = XLSX.utils.json_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Приход");
-    XLSX.writeFile(wb, `приход_${new Date().toISOString().slice(0,10)}.xlsx`);
-  });
+  }
+  // Дата прихода фиксируется автоматически один раз, в момент когда статус
+  // впервые становится "пришло"/"проблема" — дальше не пересчитывается,
+  // даже если статус потом поменяют обратно
+  if (b.receiveStatus && (b.receiveStatus === "arrived" || b.receiveStatus === "problem") && !row.arrived_date) {
+    updates.push("arrived_date = ?");
+    params.push(now.slice(0, 10));
+  }
+  if (updates.length) {
+    updates.push("updated_at = ?");
+    params.push(now);
+    params.push(req.params.id);
+    db.prepare(`UPDATE orders SET ${updates.join(", ")} WHERE id = ?`).run(...params);
+  }
+  const updated = db.prepare("SELECT * FROM orders WHERE id = ?").get(req.params.id);
+  res.json(rowToOrder(updated));
+});
 
-  // ---------- Импорт "Прихода" из Excel (гибкое распознавание заголовков) ----------
-  document.getElementById("btnImportOrders").addEventListener("click", ()=>document.getElementById("importOrdersInput").click());
-  document.getElementById("importOrdersInput").addEventListener("change",(e)=>{
-    const file = e.target.files[0];
-    if(!file) return;
-    const reader = new FileReader();
-    reader.onload = async function(ev){
-      try{
-        const wb = XLSX.read(ev.target.result, {type:"array"});
-        const sheet = wb.Sheets[wb.SheetNames[0]];
-        // Читаем как массив строк (по позициям колонок), а не по названиям заголовков —
-        // в реальных файлах у части колонок (артикул, название) шапка может быть пустой
-        const rows = XLSX.utils.sheet_to_json(sheet, {header:1, defval:"", raw:true});
-        if(!rows.length){ toast("Файл пуст"); return; }
-        const header = rows[0].map(h=>String(h||"").toLowerCase());
+router.delete("/:id", (req, res) => {
+  const row = db.prepare("SELECT * FROM orders WHERE id = ?").get(req.params.id);
+  db.prepare("DELETE FROM orders WHERE id = ?").run(req.params.id);
+  db.prepare("DELETE FROM cargo_places WHERE order_id = ?").run(req.params.id);
+  logAudit({ user: req.session.username, action: "delete_order", orderId: req.params.id, oldValue: row?.name });
+  res.json({ ok: true });
+});
 
-        function findCol(keywords){
-          for(let i=0;i<header.length;i++){
-            if(keywords.some(w=>header[i].includes(w))) return i;
-          }
-          return -1;
-        }
-        let colArticle = findCol(["артикул","штрих код","код товара"]);
-        let colName = findCol(["назван","товар","модель"]);
-        const colQty = findCol(["заказ","кол-во","количество","qty"]);
-        const colCny = findCol(["юан","cny"]);
-        const colKzt = findCol(["закупки кзт","закупка кзт","закупочная","закупки кзх"]);
-        const colDelivery = findCol(["доставк"]);
-        const colDate = findCol(["дата"]);
-        const colNote = findCol(["примечан","заметк","коммент"]);
+// ---------- Переход статуса ----------
+router.post("/:id/transition", (req, res) => {
+  const row = db.prepare("SELECT * FROM orders WHERE id = ?").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  const { to, reason } = req.body || {};
+  if (!to) return res.status(400).json({ error: "missing_target_status" });
 
-        // Если колонки артикул/название не нашлись по названию — это, скорее всего,
-        // файл с "пустой" шапкой у этих колонок (как в вашем образце): там артикул
-        // обычно в 3-й колонке, название — в 4-й (индексы 2 и 3)
-        if(colArticle === -1) colArticle = 2;
-        if(colName === -1) colName = 3;
+  const from = row.status;
+  const isAdmin = req.session.role === "admin";
+  const normalOk = isValidNormalTransition(from, to);
 
-        let imported = 0, skipped = 0;
-        for(let r=1;r<rows.length;r++){
-          const row = rows[r];
-          if(!row || !row.length) { continue; }
-          const article = String(row[colArticle]??"").trim();
-          const name = String(row[colName]??"").trim();
-          if(!article && !name){ skipped++; continue; }
-          const qty = colQty>=0 ? (parseFloat(row[colQty])||0) : 0;
-          const cny = colCny>=0 ? (parseFloat(row[colCny])||0) : 0;
-          const kzt = colKzt>=0 ? (parseFloat(row[colKzt])||0) : 0;
-          const delivery = colDelivery>=0 ? (parseFloat(row[colDelivery])||0) : 0;
-          let orderDate = colDate>=0 ? row[colDate] : "";
-          if(orderDate instanceof Date) orderDate = orderDate.toISOString().slice(0,10);
-          else if(typeof orderDate === "number" && orderDate > 0){
-            // Excel-дата в виде числа (дней с 1900 года)
-            const d = new Date(Math.round((orderDate - 25569) * 86400 * 1000));
-            orderDate = isNaN(d) ? "" : d.toISOString().slice(0,10);
-          } else if(typeof orderDate === "string" && /^\d{1,2}\.\d{1,2}\.\d{4}/.test(orderDate)){
-            const m = orderDate.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})/);
-            orderDate = `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
-          } else orderDate = "";
-          const note = colNote>=0 ? String(row[colNote]||"").trim() : "";
-          try{
-            await api("/orders", {method:"POST", body:JSON.stringify({
-              article, name, qty, note, orderDate: orderDate||undefined,
-              buyPriceCny: cny, buyPriceKzt: kzt, deliveryPrice: delivery, receiveStatus: "transit"
-            })});
-            imported++;
-          }catch(err){ skipped++; }
-        }
-        await loadAll();
-        toast(`Импортировано: ${imported}${skipped?`, пропущено: ${skipped}`:''}`);
-      }catch(err){
-        console.error(err);
-        toast("Не удалось прочитать файл. Проверьте, что это .xlsx");
-      }
-      e.target.value = "";
-    };
-    reader.readAsArrayBuffer(file);
-  });
-
-  // ---------- Справочник товаров (импорт из выгрузки Kaspi "Активные товары") ----------
-  // Формат подтверждён на реальном файле: SKU, model, brand, price, PP1..PP5 (наличие
-  // по пунктам выдачи, yes/no), preorder (дни допоставки). Лист2 в файле — просто
-  // легенда полей, его не читаем.
-  // ВАЖНО: сырое название (model) неоднородное — где-то есть вес, где-то нет, бренд
-  // пишется по-разному. Поэтому "Название для печати" и "Себестоимость" — только
-  // ручной ввод, один раз на SKU; автоматически подтягиваются только те поля, что
-  // реально есть в выгрузке Kaspi (название, цена, наличие, допоставка).
-  // Хранится в той же таблице, что и "Прайс" (price_items) — справочник и прайс
-  // это один и тот же набор товаров, просто с разными колонками.
-  let catalogItems = [];
-
-  async function loadCatalog(){
-    try{
-      catalogItems = await api("/catalog");
-      renderCatalog();
-    }catch(e){
-      document.getElementById("catalogBody").innerHTML = `<tr><td colspan="7" style="color:var(--red);padding:20px;">Ошибка загрузки справочника: ${esc(e.message)}</td></tr>`;
+  if (!normalOk) {
+    // Прыжок через шаги — разрешён только админу и только с указанием причины
+    if (!isAdmin) {
+      return res.status(403).json({ error: "forbidden_transition", message: "Такой переход запрещён для вашей роли. Обратитесь к администратору." });
+    }
+    if (!reason || !reason.trim()) {
+      return res.status(400).json({ error: "reason_required", message: "Для исправления статуса нужно указать причину" });
     }
   }
 
-  // Экспорт справочника целиком — чтобы удобно заполнить материалы/расценки/
-  // группы сразу для многих товаров в Excel, а не по одному через карточку.
-  // Колонки со справочными Kaspi-данными помечены "(справка)" — их менять не
-  // обязательно, при обратной загрузке они игнорируются (не перезаписываются).
-  document.getElementById("btnExportCatalog").addEventListener("click", ()=>{
-    if(!catalogItems.length){ toast("Справочник пуст — нечего экспортировать"); return; }
-    const rows = catalogItems.map(it=>({
-      "SKU": it.article,
-      "Название с Kaspi (справка)": it.kaspiName||"",
-      "Название для печати": it.printName||"",
-      "Группа": it.category||"",
-      "Подраздел": it.subgroup||"",
-      "Материал": it.material||"",
-      "Цвет": it.color||"",
-      "Высота см": it.height??"",
-      "Диаметр см": it.diameter??"",
-      "Вес кг": it.weight??"",
-      "Крепление": it.mount||"",
-      "Расценка труда": it.laborRate??"",
-      "Затраты на материал": it.materialCost??"",
-      "Прочие затраты": it.miscCost??"",
-      "Ветошь": it.ragsCost??"",
-      "Себестоимость": it.costPrice??"",
-      "Розница": it.retailPrice??"",
-      "Заметка": it.note||"",
-      "Цена Kaspi (справка)": it.kaspiPrice||"",
-      "Наличие ПВЗ (справка)": it.totalPoints ? it.inStockPoints+"/"+it.totalPoints : "",
-      "Допоставка дн (справка)": it.preorderDays||""
-    }));
-    const ws = XLSX.utils.json_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Справочник");
-    XLSX.writeFile(wb, `справочник_${new Date().toISOString().slice(0,10)}.xlsx`);
-  });
-
-  // Обратная загрузка заполненного файла — сопоставление по колонке SKU.
-  // Обновляет только ручные поля (название для печати, группа, материалы,
-  // расценка труда и т.д.), kaspi_* поля не трогает. Строки с SKU, которого
-  // нет в справочнике, пропускаются (не создаёт новые товары через этот путь).
-  document.getElementById("btnImportCatalogFilled").addEventListener("click", ()=>document.getElementById("importCatalogFilledInput").click());
-  document.getElementById("importCatalogFilledInput").addEventListener("change",(e)=>{
-    const file = e.target.files[0];
-    if(!file) return;
-    const reader = new FileReader();
-    reader.onload = async function(ev){
-      try{
-        const wb = XLSX.read(ev.target.result, {type:"array"});
-        const sheet = wb.Sheets[wb.SheetNames[0]];
-        const rows = XLSX.utils.sheet_to_json(sheet, {defval:""});
-        if(!rows.length){ toast("Файл пуст"); return; }
-        const numOrNull = (v)=> (v==="" || v==null) ? null : (parseFloat(v)||0);
-        const items = rows.map(r=>({
-          article: String(r["SKU"]||"").trim(),
-          printName: String(r["Название для печати"]||"").trim(),
-          category: String(r["Группа"]||"").trim(),
-          subgroup: String(r["Подраздел"]||"").trim(),
-          material: String(r["Материал"]||"").trim(),
-          color: String(r["Цвет"]||"").trim(),
-          height: numOrNull(r["Высота см"]),
-          diameter: numOrNull(r["Диаметр см"]),
-          weight: numOrNull(r["Вес кг"]),
-          mount: String(r["Крепление"]||"").trim(),
-          laborRate: numOrNull(r["Расценка труда"]),
-          materialCost: numOrNull(r["Затраты на материал"]),
-          miscCost: numOrNull(r["Прочие затраты"]),
-          ragsCost: numOrNull(r["Ветошь"]),
-          costPrice: numOrNull(r["Себестоимость"]),
-          retailPrice: numOrNull(r["Розница"]),
-          note: String(r["Заметка"]||"").trim()
-        })).filter(it=>it.article);
-        if(!items.length){ toast("Не нашлось строк с заполненным SKU"); return; }
-        const result = await api("/catalog/bulk-update", {method:"POST", body:JSON.stringify({items})});
-        await loadCatalog();
-        toast(`Обновлено: ${result.updated}${result.notFound?`, не найдено в справочнике: ${result.notFound}`:''}`);
-      }catch(err){
-        console.error(err);
-        toast("Ошибка: "+(err.message||"не удалось прочитать файл"));
-      }
-      e.target.value = "";
-    };
-    reader.readAsArrayBuffer(file);
-  });
-
-  document.getElementById("btnImportCatalog").addEventListener("click", ()=>document.getElementById("importCatalogInput").click());
-  document.getElementById("importCatalogInput").addEventListener("change",(e)=>{
-    const file = e.target.files[0];
-    if(!file) return;
-    const reader = new FileReader();
-    reader.onload = async function(ev){
-      try{
-        const wb = XLSX.read(ev.target.result, {type:"array"});
-        const sheet = wb.Sheets[wb.SheetNames[0]];
-        const rows = XLSX.utils.sheet_to_json(sheet, {header:1, defval:"", raw:true});
-        if(!rows.length){ toast("Файл пуст"); return; }
-        const header = rows[0].map(h=>String(h||"").trim().toLowerCase());
-        const idx = {
-          sku: header.indexOf("sku"),
-          model: header.indexOf("model"),
-          price: header.indexOf("price"),
-          preorder: header.indexOf("preorder")
-        };
-        const ppCols = [];
-        header.forEach((h,i)=>{ if(/^pp\s*\d+$/.test(h)) ppCols.push(i); });
-        if(idx.sku===-1 || idx.model===-1){
-          toast("Не нашёл колонки SKU/model — это точно выгрузка «Активные товары» из Kaspi?");
-          return;
-        }
-        const parsed = [];
-        for(let r=1;r<rows.length;r++){
-          const row = rows[r];
-          if(!row || !row.length) continue;
-          const sku = String(row[idx.sku]??"").trim();
-          const model = String(row[idx.model]??"").trim();
-          if(!sku && !model) continue;
-          const inStockCount = ppCols.filter(ci=> String(row[ci]||"").trim().toLowerCase()==="yes").length;
-          parsed.push({
-            sku, kaspiName: model,
-            kaspiPrice: idx.price>=0 ? (parseFloat(row[idx.price])||0) : 0,
-            inStockPoints: inStockCount, totalPoints: ppCols.length,
-            preorderDays: idx.preorder>=0 ? (parseInt(row[idx.preorder])||0) : 0
-          });
-        }
-        if(!parsed.length){ toast("Не нашлось ни одной строки с товаром"); return; }
-
-        document.getElementById("catalogImportInfo").textContent = "Сохраняю на сервере...";
-        const result = await api("/catalog/import", {method:"POST", body:JSON.stringify({items: parsed})});
-        document.getElementById("catalogImportInfo").textContent =
-          `Готово: новых ${result.added}, обновлено ${result.updated}${result.skipped?', пропущено '+result.skipped:''}`;
-        await loadCatalog();
-        toast(`Справочник обновлён: +${result.added} новых, ~${result.updated} обновлено`);
-      }catch(err){
-        console.error(err);
-        toast("Ошибка: "+(err.message||"не удалось прочитать файл"));
-      }
-      e.target.value = "";
-    };
-    reader.readAsArrayBuffer(file);
-  });
-
-  function renderCatalog(){
-    const totalCount = catalogItems.length;
-    const withPrintName = catalogItems.filter(it=>it.printName).length;
-    const withLaborRate = catalogItems.filter(it=>it.laborRate!=null).length;
-    document.getElementById("catalogStats").innerHTML = totalCount ? `
-      <div class="stat-card" style="background:#fff;border:1px solid var(--line);border-left:4px solid var(--navy);padding:12px 16px;">
-        <div style="font-size:11px;text-transform:uppercase;color:var(--ink-soft);">Всего в справочнике</div>
-        <div style="font-family:var(--serif,serif);font-size:22px;">${totalCount}</div>
-      </div>
-      <div class="stat-card" style="background:#fff;border:1px solid var(--line);border-left:4px solid var(--amber);padding:12px 16px;">
-        <div style="font-size:11px;text-transform:uppercase;color:var(--ink-soft);">Без имени для печати</div>
-        <div style="font-family:var(--serif,serif);font-size:22px;">${totalCount-withPrintName}</div>
-      </div>
-      <div class="stat-card" style="background:#fff;border:1px solid var(--line);border-left:4px solid var(--amber);padding:12px 16px;">
-        <div style="font-size:11px;text-transform:uppercase;color:var(--ink-soft);">Без расценки труда</div>
-        <div style="font-family:var(--serif,serif);font-size:22px;">${totalCount-withLaborRate}</div>
-      </div>` : "";
-
-    const body = document.getElementById("catalogBody");
-    if(!catalogItems.length){
-      body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--ink-soft);padding:20px;">Справочник пуст — нажмите «Импорт из Kaspi», чтобы загрузить файл выгрузки активных товаров</td></tr>`;
-      return;
-    }
-    body.innerHTML = catalogItems.map((it)=>`
-      <tr>
-        <td>${it.photo?`<img class="thumb" src="${esc(it.photo)}">`:`<div class="thumb-empty">—</div>`}</td>
-        <td class="mono" style="font-size:11.5px;">${esc(it.article)}</td>
-        <td>${esc(it.kaspiName||"—")}</td>
-        <td>${esc(it.printName||"—")}</td>
-        <td>${esc(it.category||"—")}</td>
-        <td>${esc(it.subgroup||"—")}</td>
-        <td class="num">${it.retailPrice ? money(it.retailPrice)+" ₸" : "—"}</td>
-        <td>${it.totalPoints ? it.inStockPoints+"/"+it.totalPoints : "—"}</td>
-        <td style="white-space:nowrap;">
-          <button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__openCatalogItem('${it.id}')">Изменить</button>
-        </td>
-      </tr>`).join("");
-  }
-
-  let editingCatalogId = null;
-  const catalogItemOverlay = document.getElementById("catalogItemOverlay");
-
-  window.__openCatalogItem = function(id){
-    const it = catalogItems.find(x=>x.id===id);
-    if(!it) return;
-    editingCatalogId = id;
-
-    const kaspiBits = [];
-    kaspiBits.push(`SKU: <span class="mono">${esc(it.article)}</span>`);
-    if(it.kaspiName) kaspiBits.push(`С Kaspi: «${esc(it.kaspiName)}» за ${money(it.kaspiPrice)} ₸`);
-    if(it.totalPoints) kaspiBits.push(`Наличие: ${it.inStockPoints}/${it.totalPoints} ПВЗ`);
-    if(it.preorderDays) kaspiBits.push(`Допоставка: ${it.preorderDays} дн.`);
-    if(it.syncedAt) kaspiBits.push(`Обновлено: ${fmtDate((it.syncedAt||"").slice(0,10))}`);
-    document.getElementById("catalogItemKaspiInfo").innerHTML = kaspiBits.join(" · ") || "Данных от Kaspi нет — товар добавлен вручную";
-
-    document.getElementById("ci_printName").value = it.printName || "";
-    document.getElementById("ci_category").value = it.category || "";
-    document.getElementById("ci_subgroup").value = it.subgroup || "";
-    document.getElementById("ci_material").value = it.material || "";
-    document.getElementById("ci_color").value = it.color || "";
-    document.getElementById("ci_height").value = it.height ?? "";
-    document.getElementById("ci_diameter").value = it.diameter ?? "";
-    document.getElementById("ci_weight").value = it.weight ?? "";
-    document.getElementById("ci_mount").value = it.mount || "";
-    document.getElementById("ci_laborRate").value = it.laborRate ?? "";
-    document.getElementById("ci_materialCost").value = it.materialCost ?? "";
-    document.getElementById("ci_miscCost").value = it.miscCost ?? "";
-    document.getElementById("ci_ragsCost").value = it.ragsCost ?? "";
-    document.getElementById("ci_costPrice").value = it.costPrice ?? "";
-    document.getElementById("ci_retailPrice").value = it.retailPrice ?? "";
-    document.getElementById("ci_note").value = it.note || "";
-    currentCatalogPhoto = it.photo || null;
-    updateCatalogPhotoPreview();
-
-    catalogItemOverlay.classList.add("show");
-  };
-
-  // ---------- Фото для карточки справочника (тот же /api/upload, что и у Прихода/Прайса) ----------
-  let currentCatalogPhoto = null;
-  document.getElementById("ci_photo_btn").addEventListener("click", ()=>document.getElementById("ci_photo_input").click());
-  document.getElementById("ci_photo_clear").addEventListener("click", ()=>{
-    currentCatalogPhoto = null;
-    updateCatalogPhotoPreview();
-  });
-  document.getElementById("ci_photo_input").addEventListener("change", async (e)=>{
-    const file = e.target.files[0];
-    if(!file) return;
-    const fd = new FormData();
-    fd.append("photo", file);
-    try{
-      const resp = await fetch("/api/upload", {method:"POST", body:fd, credentials:"same-origin"});
-      if(!resp.ok) throw new Error("upload_failed");
-      const data = await resp.json();
-      currentCatalogPhoto = data.path;
-      updateCatalogPhotoPreview();
-    }catch(err){ toast("Не удалось загрузить фото"); }
-  });
-  function updateCatalogPhotoPreview(){
-    const img = document.getElementById("ci_photo_preview");
-    const empty = document.getElementById("ci_photo_empty");
-    const clearBtn = document.getElementById("ci_photo_clear");
-    if(currentCatalogPhoto){
-      img.src = currentCatalogPhoto; img.style.display=""; empty.style.display="none"; clearBtn.style.display="";
-    } else {
-      img.style.display="none"; empty.style.display=""; clearBtn.style.display="none";
+  // Блокировка: нельзя перейти в "ready" (готов к отгрузке), пока не сформировано
+  // хотя бы одно грузовое место
+  if (to === "ready") {
+    const places = db.prepare("SELECT * FROM cargo_places WHERE order_id = ?").all(req.params.id);
+    const formedCount = places.filter(p => p.formed).length;
+    if (formedCount === 0) {
+      return res.status(400).json({ error: "cargo_places_required", message: "Нельзя перевести в «Готов к отгрузке» — не сформировано ни одно грузовое место" });
     }
   }
 
-  document.getElementById("catalogItemCancelBtn").addEventListener("click", ()=>{
-    catalogItemOverlay.classList.remove("show");
+  const now = new Date().toISOString();
+  db.prepare("UPDATE orders SET status = ?, updated_at = ? WHERE id = ?").run(to, now, req.params.id);
+  db.prepare(`INSERT INTO status_history (order_id, from_status, to_status, user, reason, is_correction, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .run(req.params.id, from, to, req.session.username, reason || null, normalOk ? 0 : 1, now);
+  logAudit({
+    user: req.session.username, action: normalOk ? "status_transition" : "status_correction",
+    orderId: req.params.id, oldValue: from, newValue: to, comment: reason || null
   });
 
-  document.getElementById("catalogItemSaveBtn").addEventListener("click", async ()=>{
-    const numOrNull = (elId)=>{ const v = document.getElementById(elId).value; return v===""? null : (parseFloat(v)||0); };
-    const body = {
-      photo: currentCatalogPhoto,
-      printName: document.getElementById("ci_printName").value.trim(),
-      category: document.getElementById("ci_category").value.trim(),
-      subgroup: document.getElementById("ci_subgroup").value.trim(),
-      material: document.getElementById("ci_material").value.trim(),
-      color: document.getElementById("ci_color").value.trim(),
-      mount: document.getElementById("ci_mount").value.trim(),
-      note: document.getElementById("ci_note").value.trim(),
-      height: numOrNull("ci_height"),
-      diameter: numOrNull("ci_diameter"),
-      weight: numOrNull("ci_weight"),
-      laborRate: numOrNull("ci_laborRate"),
-      materialCost: numOrNull("ci_materialCost"),
-      miscCost: numOrNull("ci_miscCost"),
-      ragsCost: numOrNull("ci_ragsCost"),
-      costPrice: numOrNull("ci_costPrice"),
-      retailPrice: numOrNull("ci_retailPrice"),
-    };
-    try{
-      await api("/catalog/"+editingCatalogId, {method:"PUT", body:JSON.stringify(body)});
-      catalogItemOverlay.classList.remove("show");
-      await loadCatalog();
-      toast("Сохранено");
-    }catch(e){ toast("Ошибка сохранения: "+e.message); }
-  });
+  const updated = db.prepare("SELECT * FROM orders WHERE id = ?").get(req.params.id);
+  res.json(rowToOrder(updated));
+});
 
-  document.getElementById("catalogItemDeleteBtn").addEventListener("click", async ()=>{
-    const it = catalogItems.find(x=>x.id===editingCatalogId);
-    const label = it ? (it.printName || it.kaspiName || it.article) : editingCatalogId;
-    if(!confirm(`Удалить «${label}» из справочника? Это действие необратимо.`)) return;
-    try{
-      await api("/catalog/"+editingCatalogId, {method:"DELETE"});
-      catalogItemOverlay.classList.remove("show");
-      await loadCatalog();
-      toast("Удалено из справочника");
-    }catch(e){ toast("Ошибка удаления: "+e.message); }
-  });
+router.get("/:id/history", (req, res) => {
+  const rows = db.prepare("SELECT * FROM status_history WHERE order_id = ? ORDER BY id ASC").all(req.params.id);
+  res.json(rows.map(r => ({
+    id: r.id, from: r.from_status, to: r.to_status, user: r.user,
+    reason: r.reason, isCorrection: !!r.is_correction, createdAt: r.created_at
+  })));
+});
 
-  // ---------- Прайс для печати ----------
-  // Односторонний поток: Справочник -> Прайс. Прайс ничего не пишет обратно —
-  // это просто витрина поверх тех же данных, отфильтрованная и сгруппированная
-  // для показа клиенту. Редактирование — только через "Справочник".
-  async function loadPricePreview(){
-    document.getElementById("pricePreview").innerHTML = `<div style="padding:40px;text-align:center;color:var(--ink-soft);">Загрузка...</div>`;
-    try{
-      catalogItems = await api("/catalog");
-      renderPricePreview();
-    }catch(e){
-      document.getElementById("pricePreview").innerHTML = `<div style="padding:20px;color:var(--red);">Ошибка загрузки: ${esc(e.message)}</div>`;
-    }
+// ---------- Печать (с контролем повторной печати) ----------
+router.post("/:id/print", (req, res) => {
+  const row = db.prepare("SELECT * FROM orders WHERE id = ?").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  const { confirmed, reason } = req.body || {};
+
+  if (!confirmed) {
+    return res.status(400).json({ error: "confirmation_required", message: "Нужно подтвердить, что документ фактически распечатан" });
   }
-  document.getElementById("priceOnlyReady").addEventListener("change", renderPricePreview);
-
-  function renderPricePreview(){
-    const onlyReady = document.getElementById("priceOnlyReady").checked;
-    let items = catalogItems.slice();
-    if(onlyReady) items = items.filter(it=>it.printName && it.retailPrice);
-    else items = items.filter(it=>it.printName); // без названия для печати показывать нечего в любом случае
-
-    document.getElementById("pricePreviewInfo").textContent =
-      `Показано товаров: ${items.length} из ${catalogItems.length} в справочнике` +
-      (onlyReady ? " (скрыты те, где нет названия для печати или цены — заполните их в «Справочнике»)" : "");
-
-    if(!items.length){
-      document.getElementById("pricePreview").innerHTML = `<div style="padding:40px;text-align:center;color:var(--ink-soft);">Нечего показать — заполните «Название для печати» и «Розницу» хотя бы для нескольких товаров в Справочнике</div>`;
-      return;
-    }
-
-    // Группировка: Группа -> Подраздел -> товары
-    const groups = new Map();
-    for(const it of items){
-      const g = it.category || "Без категории";
-      const sg = it.subgroup || "";
-      if(!groups.has(g)) groups.set(g, new Map());
-      const subMap = groups.get(g);
-      if(!subMap.has(sg)) subMap.set(sg, []);
-      subMap.get(sg).push(it);
-    }
-
-    let html = "";
-    for(const [groupName, subMap] of groups){
-      html += `<div style="background:#F3E0BC; padding:12px 16px; margin:20px 0 4px; border-radius:4px; font-family:var(--serif,serif); font-size:18px;">${esc(groupName)}</div>`;
-      for(const [subName, list] of subMap){
-        if(subName) html += `<div style="color:var(--green); font-weight:600; font-size:13px; margin:10px 0 4px;">Подраздел: ${esc(subName)}</div>`;
-        html += `<table style="width:100%; border-collapse:collapse; margin-bottom:6px;">`;
-        for(const it of list){
-          html += `
-            <tr style="border-bottom:1px solid var(--line);">
-              <td style="padding:10px 8px; width:90px;">
-                ${it.photo?`<img src="${esc(it.photo)}" style="width:80px;height:80px;object-fit:cover;border-radius:6px;border:1px solid var(--line);">`
-                          :`<div style="width:80px;height:80px;border-radius:6px;border:1px dashed var(--line);display:flex;align-items:center;justify-content:center;color:var(--ink-soft);font-size:11px;">нет фото</div>`}
-              </td>
-              <td style="padding:10px 8px;">
-                <div style="font-weight:600;">${esc(it.printName)}</div>
-                ${it.material||it.height||it.weight ? `<div style="color:var(--ink-soft); font-size:12.5px; margin-top:2px;">${[it.material, it.height?it.height+' см':'', it.weight?it.weight+' кг':''].filter(Boolean).join(', ')}</div>` : ""}
-              </td>
-              <td style="padding:10px 8px; text-align:right; white-space:nowrap; font-weight:700; font-size:15px;">${money(it.retailPrice)} ₸</td>
-            </tr>`;
-        }
-        html += `</table>`;
-      }
-    }
-    document.getElementById("pricePreview").innerHTML = html;
-  }
-
-  document.getElementById("btnPrintPrice").addEventListener("click", ()=>{
-    const w = window.open("", "_blank");
-    if(!w){ toast("Браузер заблокировал открытие окна"); return; }
-    w.document.write(`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>Прайс-лист</title>
-    <style>
-      body{font-family:Arial,sans-serif; margin:0; padding:24px; color:#20242B;}
-      .toolbar{margin-bottom:16px;}
-      button{padding:8px 16px; background:#C8862B; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:14px;}
-      table{border-collapse:collapse;}
-      @media print{ .toolbar{display:none;} }
-    </style></head><body>
-      <div class="toolbar"><button onclick="window.print()">Печать / Сохранить как PDF</button></div>
-      <h1 style="font-family:Georgia,serif; font-weight:400; text-align:center;">Прайс-лист</h1>
-      <div style="text-align:center; color:#565B66; font-size:13px; margin-bottom:20px;">Актуально на ${new Date().toLocaleDateString('ru-RU')}</div>
-      ${document.getElementById("pricePreview").innerHTML}
-    </body></html>`);
-    w.document.close();
-  });
-
-  // ---------- Производство ----------
-  // Каждый новый заказ уже создаёт запись автоматически (на сервере, при
-  // синхронизации). Здесь — только интерфейс принятия решения по ней.
-  let productionItems = [];
-  let employeesList = [];
-
-  async function loadProduction(){
-    try{
-      const showResolved = document.getElementById("prodShowResolved").checked;
-      productionItems = await api("/production" + (showResolved ? "" : "?resolved=false"));
-      employeesList = await api("/employees");
-      renderProduction();
-    }catch(e){
-      document.getElementById("prodList").innerHTML = `<div style="color:var(--red);padding:20px;">Ошибка загрузки: ${esc(e.message)}</div>`;
-    }
-  }
-  document.getElementById("prodShowResolved").addEventListener("change", loadProduction);
-
-  function decisionLabel(d){
-    if(d==="stock") return "📦 Списано с остатков";
-    if(d==="assigned") return "👤 Назначен исполнитель";
-    if(d==="return_offset") return "↩️ Перекрыто возвратом";
-    return "Ждёт решения";
-  }
-
-  function renderProduction(){
-    const pending = productionItems.filter(p=>!p.decision).length;
-    document.getElementById("prodStats").innerHTML = `
-      <div class="stat-card" style="background:#fff;border:1px solid var(--line);border-left:4px solid var(--amber);padding:12px 16px;">
-        <div style="font-size:11px;text-transform:uppercase;color:var(--ink-soft);">Ждут решения</div>
-        <div style="font-family:var(--serif,serif);font-size:22px;">${pending}</div>
-      </div>`;
-
-    const list = document.getElementById("prodList");
-    if(!productionItems.length){
-      list.innerHTML = `<div style="padding:30px;text-align:center;color:var(--ink-soft);">Пусто — новые заказы появятся тут автоматически</div>`;
-      return;
-    }
-
-    list.innerHTML = productionItems.map(p=>{
-      const order = p.order || {};
-      const isPending = !p.decision;
-      return `
-      <div style="background:#fff; border:1px solid var(--line); border-radius:8px; padding:14px 16px; margin-bottom:10px;" data-prod-id="${p.id}">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:${isPending?'10px':'0'};">
-          <div>
-            <div style="font-size:11px; color:var(--ink-soft);">Заказ №${esc(order.displayNumber||"")} · ${esc(order.shop||"")}</div>
-            <div style="font-weight:600;">${esc(p.productName||"—")}</div>
-          </div>
-          ${!isPending ? `<span class="stamp" style="white-space:nowrap;">${decisionLabel(p.decision)}</span>` : ""}
-        </div>
-        ${isPending ? `
-        <div class="prod-warehouse-hint" data-article="${esc(p.article||"")}" data-prod-id="${p.id}" style="display:none; align-items:flex-start; gap:8px; background:#E6F1FB; border-radius:6px; padding:8px 10px; margin-bottom:10px; font-size:12.5px;">
-          <span></span>
-        </div>
-        <div style="display:flex; flex-direction:column; gap:6px;">
-          <button class="btn secondary prod-action-stock" data-prod-id="${p.id}" style="text-align:left; padding:8px 12px;">📦 Списать с остатков</button>
-          <div class="prod-assign-row" style="display:flex; gap:6px;">
-            <select class="prod-employee-select" data-prod-id="${p.id}" style="flex:1;">
-              <option value="">Выбрать сотрудника...</option>
-              ${employeesList.map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join("")}
-            </select>
-            <button class="btn amber prod-action-assign" data-prod-id="${p.id}" style="padding:8px 14px;">Назначить</button>
-          </div>
-          <button class="btn secondary prod-action-return" data-prod-id="${p.id}" style="text-align:left; padding:8px 12px;">↩️ Перекрыть возвратом</button>
-        </div>
-        ` : (p.decision==="assigned" ? `
-        <div style="margin-top:8px; font-size:12.5px; display:flex; align-items:center; gap:8px;">
-          <span>Исполнитель: ${esc((employeesList.find(e=>e.id===p.employeeId)||{}).name || "—")}</span>
-          <label style="margin-left:auto;"><input type="checkbox" class="prod-paid-check" data-prod-id="${p.id}" ${p.paid?'checked':''}> Оплачено</label>
-        </div>` : "")}
-      </div>`;
-    }).join("");
-
-    // Проверяем совпадение со складом для каждой ожидающей записи (по артикулу)
-    list.querySelectorAll(".prod-warehouse-hint").forEach(async (hint)=>{
-      const prodId = hint.dataset.prodId;
-      if(!hint.dataset.article){ return; }
-      try{
-        const res = await api("/production/"+prodId+"/warehouse-match");
-        if(res.match){
-          hint.style.display = "flex";
-          hint.querySelector("span").textContent = `На складе есть подходящий товар (${res.match.source==='cancelled'?'из отменённого':'из возврата'} заказа)`;
-          const stockBtn = list.querySelector(`.prod-action-stock[data-prod-id="${prodId}"]`);
-          if(stockBtn) stockBtn.textContent = "📦 Списать с остатков (есть в наличии)";
-        }
-      }catch(e){}
-    });
-
-    list.querySelectorAll(".prod-action-stock").forEach(btn=>{
-      btn.addEventListener("click", ()=>resolveProduction(btn.dataset.prodId, "stock"));
-    });
-    list.querySelectorAll(".prod-action-return").forEach(btn=>{
-      btn.addEventListener("click", ()=>resolveProduction(btn.dataset.prodId, "return_offset"));
-    });
-    list.querySelectorAll(".prod-action-assign").forEach(btn=>{
-      btn.addEventListener("click", ()=>{
-        const select = list.querySelector(`.prod-employee-select[data-prod-id="${btn.dataset.prodId}"]`);
-        if(!select.value){ toast("Сначала выберите сотрудника"); return; }
-        resolveProduction(btn.dataset.prodId, "assigned", { employeeId: select.value });
-      });
-    });
-    list.querySelectorAll(".prod-paid-check").forEach(cb=>{
-      cb.addEventListener("change", async ()=>{
-        try{
-          await api("/production/"+cb.dataset.prodId+"/paid", {method:"PUT", body:JSON.stringify({paid: cb.checked})});
-          toast(cb.checked ? "Отмечено как оплачено" : "Отмечено как неоплачено");
-        }catch(e){ toast("Ошибка: "+e.message); }
-      });
+  if (row.printed && !reason) {
+    return res.status(400).json({
+      error: "reprint_reason_required",
+      message: "Документ уже был распечатан. Укажите причину повторной печати.",
+      lastPrintedAt: row.last_printed_at, lastPrintedBy: row.last_printed_by
     });
   }
 
-  async function resolveProduction(prodId, decision, extra){
-    try{
-      await api("/production/"+prodId+"/resolve", {method:"POST", body:JSON.stringify({decision, ...(extra||{})})});
-      toast("Решение сохранено");
-      await loadProduction();
-    }catch(e){
-      toast("Ошибка: "+(e.message==="no_stock" ? "на складе не нашлось подходящего товара" : e.message));
+  const now = new Date().toISOString();
+  const isReprint = !!row.printed;
+  db.prepare(`UPDATE orders SET printed = 1, print_count = print_count + 1,
+              last_printed_at = ?, last_printed_by = ?, updated_at = ? WHERE id = ?`)
+    .run(now, req.session.username, now, req.params.id);
+  db.prepare(`INSERT INTO print_log (order_id, user, printed_at, is_reprint, reason) VALUES (?, ?, ?, ?, ?)`)
+    .run(req.params.id, req.session.username, now, isReprint ? 1 : 0, reason || null);
+  logAudit({ user: req.session.username, action: isReprint ? "reprint" : "print", orderId: req.params.id, comment: reason || null });
+
+  // Автопереход packing -> label_printed при первой успешной печати
+  if (!isReprint && row.status === "packing") {
+    db.prepare("UPDATE orders SET status = 'label_printed', updated_at = ? WHERE id = ?").run(now, req.params.id);
+    db.prepare(`INSERT INTO status_history (order_id, from_status, to_status, user, reason, created_at)
+                VALUES (?, 'packing', 'label_printed', ?, 'Автоматически после печати', ?)`)
+      .run(req.params.id, req.session.username, now);
+  }
+
+  const updated = db.prepare("SELECT * FROM orders WHERE id = ?").get(req.params.id);
+  res.json(rowToOrder(updated));
+});
+
+router.get("/:id/print-log", (req, res) => {
+  const rows = db.prepare("SELECT * FROM print_log WHERE order_id = ? ORDER BY id ASC").all(req.params.id);
+  res.json(rows.map(r => ({
+    id: r.id, user: r.user, printedAt: r.printed_at, isReprint: !!r.is_reprint, reason: r.reason
+  })));
+});
+
+// ---------- Двусторонняя синхронизация: толкаем статус обратно в Kaspi ----------
+// По документации Kaspi ("сформировать накладную для передачи заказа на Kaspi
+// Доставку") — единственный найденный способ реально продвинуть заказ дальше
+// стадии "Упаковка" со своей стороны. numberOfSpace = сколько грузовых мест
+// сформировано у нас — ровно то же число, что и в "Грузовые места" ниже.
+// НЕ ПРОВЕРЕНО на реальном токене (в песочнице разработки нет сети до
+// kaspi.kz) — первый реальный вызов стоит сделать на некритичном заказе.
+router.post("/:id/kaspi-assemble", async (req, res) => {
+  const row = db.prepare("SELECT * FROM orders WHERE id = ?").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  if (row.source !== "kaspi" || !row.kaspi_order_id) {
+    return res.status(400).json({ error: "not_kaspi_order", message: "Это не заказ из Kaspi — передавать некуда" });
+  }
+
+  const shops = getKaspiShops();
+  const shopConfig = shops.find(s => s.name === row.shop);
+  if (!shopConfig || !shopConfig.token) {
+    return res.status(400).json({ error: "no_token", message: `Не найден токен Kaspi для магазина «${row.shop}»` });
+  }
+
+  const formedPlaces = db.prepare("SELECT COUNT(*) as c FROM cargo_places WHERE order_id = ? AND formed = 1").get(req.params.id).c;
+  const numberOfSpace = formedPlaces > 0 ? formedPlaces : 1;
+  const requestBody = {
+    data: {
+      type: "orders",
+      id: row.kaspi_order_id,
+      attributes: { status: "ASSEMBLE", numberOfSpace: String(numberOfSpace) }
     }
-  }
-
-  // ---------- Управление сотрудниками ----------
-  document.getElementById("btnManageEmployees").addEventListener("click", async ()=>{
-    await renderEmployeesManagePanel();
-    document.getElementById("employeesOverlay").classList.add("show");
-  });
-  async function renderEmployeesManagePanel(){
-    employeesList = await api("/employees");
-    const body = document.getElementById("employeesManageBody");
-    body.innerHTML = employeesList.length ? employeesList.map(e=>`
-      <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--line);">
-        <span>${esc(e.name)}</span>
-        <button class="btn danger" style="padding:4px 10px;font-size:12px" onclick="window.__deleteEmployee('${e.id}')">Удалить</button>
-      </div>`).join("") : `<div style="color:var(--ink-soft);">Пока нет сотрудников</div>`;
-  }
-  document.getElementById("btnAddEmployee").addEventListener("click", async ()=>{
-    const input = document.getElementById("newEmployeeInput");
-    const name = input.value.trim();
-    if(!name) return;
-    try{
-      await api("/employees", {method:"POST", body:JSON.stringify({name})});
-      input.value = "";
-      await renderEmployeesManagePanel();
-    }catch(e){ toast("Ошибка: "+e.message); }
-  });
-  window.__deleteEmployee = async function(id){
-    if(!confirm("Убрать сотрудника из списка выбора?")) return;
-    await api("/employees/"+id, {method:"DELETE"});
-    await renderEmployeesManagePanel();
   };
-  document.getElementById("employeesManageClose").addEventListener("click", ()=>{
-    document.getElementById("employeesOverlay").classList.remove("show");
-    loadProduction(); // обновить список исполнителей в выпадающих списках
-  });
+  console.log(`[kaspi-assemble] Заказ ${row.id} (kaspi_order_id=${row.kaspi_order_id}, магазин=${row.shop}) — отправляю запрос:`, JSON.stringify(requestBody));
 
-  document.getElementById("btnLogout").addEventListener("click", async ()=>{
-    stopAutoSync();
-    await api("/auth/logout", {method:"POST"});
-    showLogin();
-  });
-
-  document.querySelectorAll(".tab-btn").forEach(b=>{
-    b.addEventListener("click", ()=>{
-      document.querySelectorAll(".tab-btn").forEach(x=>x.classList.remove("active"));
-      b.classList.add("active");
-      ["orders","kaspiOrders","claims","price","catalog","salary","production","kaspi","audit","users"].forEach(t=> document.getElementById("tab-"+t).style.display = (t===b.dataset.tab)?"":"none");
-      if(b.dataset.tab === "catalog") loadCatalog();
-      if(b.dataset.tab === "price") loadPricePreview();
-      if(b.dataset.tab === "production") loadProduction();
-      if(b.dataset.tab === "kaspiOrders") renderKaspiOrders();
-      if(b.dataset.tab === "claims") { if(!kaspiOrders.length) renderKaspiOrders().then(renderClaims); else renderClaims(); }
-      if(b.dataset.tab === "kaspi") { loadKaspiSettings(); loadOrderNumbering(); }
-      if(b.dataset.tab === "audit") loadAudit();
-      if(b.dataset.tab === "users") loadUsers();
+  try {
+    const resp = await fetch("https://kaspi.kz/shop/api/v2/orders", {
+      method: "POST",
+      headers: { "Content-Type": "application/vnd.api+json", "X-Auth-Token": shopConfig.token },
+      body: JSON.stringify(requestBody),
+      signal: AbortSignal.timeout(15000) // не ждём Kaspi дольше 15 сек — иначе получим невнятный 502 от самого Render раньше, чем свой ответ
     });
-  });
+    const text = await resp.text();
+    console.log(`[kaspi-assemble] Ответ Kaspi: статус ${resp.status}, тело:`, text.slice(0, 1000));
+    if (!resp.ok) {
+      return res.status(502).json({ error: "kaspi_error", message: `Kaspi ответил ${resp.status}: ${text.slice(0, 300)}` });
+    }
+    let kaspiJson = null;
+    try { kaspiJson = JSON.parse(text); } catch (e) { /* не критично, вернём как есть */ }
 
-  async function loadAll(){
-    // Версию грузим отдельно и всегда — чтобы она показывалась, даже если
-    // что-то другое ниже упадёт с ошибкой
-    api("/meta/version").then(v=>{
-      document.getElementById("versionTag").textContent = "v"+v.version;
-    }).catch(()=>{});
-
-    // "Приход" грузим полностью независимо от "Прайса" — так, чтобы ошибка
-    // в одном разделе никогда не блокировала отображение другого
-    try{
-      orders = await api("/orders?source=manual");
-      selectedOrderIds.clear();
-      renderOrders();
-    }catch(e){
-      console.error(e);
-      document.getElementById("ordersBody").innerHTML = `<tr><td colspan="12" style="color:var(--red);padding:20px;">Ошибка загрузки «Прихода»: ${esc(e.message)}</td></tr>`;
+    const now = new Date().toISOString();
+    // Реальный мир (Kaspi подтвердил "собран") важнее нашего внутреннего
+    // чек-листа — если внутренний статус ещё не дошёл до "ready", подтягиваем
+    // его вперёд. Назад никогда не двигаем (мало ли что уже отмечено).
+    const STATUS_ORDER = ["preorder", "packing", "label_printed", "ready", "shipped"];
+    const currentIdx = STATUS_ORDER.indexOf(row.status);
+    const readyIdx = STATUS_ORDER.indexOf("ready");
+    let newInternalStatus = row.status;
+    if (currentIdx >= 0 && currentIdx < readyIdx) {
+      newInternalStatus = "ready";
+      db.prepare("UPDATE orders SET status = ? WHERE id = ?").run(newInternalStatus, req.params.id);
+      db.prepare(`INSERT INTO status_history (order_id, from_status, to_status, user, reason, created_at)
+                  VALUES (?, ?, 'ready', ?, 'Автоматически после передачи в Kaspi', ?)`)
+        .run(req.params.id, row.status, req.session.username, now);
     }
 
-    try{
-      categories = await api("/price/categories/list");
-    }catch(e){
-      console.error(e);
-    }
+    db.prepare("UPDATE orders SET assembled = 1, updated_at = ? WHERE id = ?").run(now, req.params.id);
+    logAudit({ user: req.session.username, action: "kaspi_assemble", orderId: req.params.id, comment: `numberOfSpace=${numberOfSpace}` });
 
-    try{
-      const shops = await api("/kaspi/shops");
-      document.getElementById("shopList2").textContent = shops.length ? ("Активные магазины: "+shops.join(", ")) : "Нет настроенных магазинов — заполните вкладку «Kaspi: настройки»";
-    }catch(e){}
+    res.json({ ok: true, numberOfSpace, kaspiResponse: kaspiJson, internalStatus: newInternalStatus });
+  } catch (e) {
+    console.error(`[kaspi-assemble] Исключение для заказа ${row.id}:`, e.message, e.stack);
+    res.status(500).json({ error: "request_failed", message: e.message });
   }
+});
 
-  // Соответствие кодов статуса Kaspi понятным подписям (лучшее предположение;
-  // то, чего нет в списке — показываем как есть)
-  const KASPI_STATUS_LABELS = {
-    NEW: "Новый",
-    SIGN_REQUIRED: "Требуется подпись",
-    APPROVED_BY_BANK: "Подтверждён банком",
-    ACCEPTED_BY_MERCHANT: "Принят продавцом",
-    COMPLETED: "Завершён",
-    CANCELLED: "Отменён",
-    CANCELLING: "Отменяется",
-    RETURN_REQUESTED: "Запрошен возврат",
-    RETURNED: "Возвращён"
-  };
-  function statusLabelKaspi(s){ return KASPI_STATUS_LABELS[s] || s || "—"; }
+// ---------- Грузовые места ----------
+router.get("/:id/cargo-places", (req, res) => {
+  const rows = db.prepare("SELECT * FROM cargo_places WHERE order_id = ? ORDER BY place_number ASC").all(req.params.id);
+  res.json(rows.map(r => ({
+    id: r.id, placeNumber: r.place_number, name: r.name, formed: !!r.formed,
+    labelPrinted: !!r.label_printed, formedAt: r.formed_at, formedBy: r.formed_by, comment: r.comment
+  })));
+});
 
-  const KASPI_STATE_LABELS = {
-    ARCHIVE: "Архив",
-    KASPI_DELIVERY: "Доставка Kaspi",
-    DELIVERY: "Доставка",
-    PICKUP: "Самовывоз"
-  };
-  function stateLabelKaspi(s){ return KASPI_STATE_LABELS[s] || s || "—"; }
+router.post("/:id/cargo-places", (req, res) => {
+  const order = db.prepare("SELECT * FROM orders WHERE id = ?").get(req.params.id);
+  if (!order) return res.status(404).json({ error: "not_found" });
+  const count = db.prepare("SELECT COUNT(*) as c FROM cargo_places WHERE order_id = ?").get(req.params.id).c;
+  const id = "cp_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const { name, comment } = req.body || {};
+  db.prepare(`INSERT INTO cargo_places (id, order_id, place_number, name, comment) VALUES (?, ?, ?, ?, ?)`)
+    .run(id, req.params.id, count + 1, name || `Место ${count + 1}`, comment || null);
+  logAudit({ user: req.session.username, action: "create_cargo_place", orderId: req.params.id, newValue: name || `Место ${count + 1}` });
+  res.json({ ok: true, id });
+});
 
-  document.getElementById("btnColSettings").addEventListener("click", (e)=>{
-    e.stopPropagation();
-    const pop = document.getElementById("colSettingsPopover");
-    pop.style.display = pop.style.display === "none" ? "block" : "none";
-  });
-  document.addEventListener("click", (e)=>{
-    const pop = document.getElementById("colSettingsPopover");
-    if(pop && !pop.contains(e.target) && e.target.id !== "btnColSettings"){ pop.style.display = "none"; }
-  });
-
-  // Классификация стадии "как в кабинете Kaspi" — это лучшее приближение по доступным
-  // полям (assembled, courierTransmissionDate, preOrder, state, status), не точная копия.
-  // Если после проверки что-то не совпадёт по конкретному заказу — поправим на реальном примере.
-  const STAGE_DEFS = [
-    {key:"cancelledDelivery", label:"Отменены при доставке", color:"#B23A2E", bg:"#F5DEDA"},
-    {key:"cancelled", label:"Отменён", color:"#B23A2E", bg:"#F5DEDA"},
-    {key:"returns",   label:"Возврат", color:"#8B5E1F", bg:"#F3E0BC"},
-    {key:"preorder",  label:"Предзаказ", color:"#6B4FA0", bg:"#EAE0F5"},
-    {key:"packing",   label:"Упаковка", color:"#C8862B", bg:"#F3E0BC"},
-    {key:"handover",  label:"Передача", color:"#2C6E8F", bg:"#DCEEF5"},
-    {key:"toDelivery",label:"Переданы на доставку", color:"#3E7D4C", bg:"#E0EEDF"},
-    {key:"completed", label:"Завершён", color:"#3E7D4C", bg:"#E0EEDF"},
-    {key:"archive",   label:"Архив", color:"#8A8F99", bg:"#EEEEEE"},
-    {key:"other",     label:"Другое", color:"#565B66", bg:"#EFEFEF"}
-  ];
-  function stageDef(key){ return STAGE_DEFS.find(s=>s.key===key) || STAGE_DEFS[STAGE_DEFS.length-1]; }
-
-  function classifyStage(o){
-    // "Отменены при доставке" (по скриншоту кабинета Kaspi) — предположительно
-    // это отмена уже ПОСЛЕ того, как заказ попал в доставку Kaspi (deliveryState
-    // уже был KASPI_DELIVERY). Это предположение, не подтверждено примером —
-    // если не совпадёт с реальностью, поправим на конкретном заказе.
-    if((o.kaspiStatus==="CANCELLED" || o.kaspiStatus==="CANCELLING") && o.deliveryState==="KASPI_DELIVERY") return "cancelledDelivery";
-    if(o.kaspiStatus==="CANCELLED" || o.kaspiStatus==="CANCELLING") return "cancelled";
-    if(o.kaspiStatus==="RETURN_REQUESTED" || o.kaspiStatus==="RETURNED") return "returns";
-    if(o.deliveryState==="ARCHIVE") return "archive";
-    if(o.kaspiStatus==="COMPLETED") return "completed";
-    // Кабинет Kaspi переводит заказ в "Упаковка" не по флагу assembled, а когда
-    // приближается срок упаковки (courierTransmissionPlanningDate) — даже если
-    // preOrder ещё true и assembled ещё false. Проверено на реальном заказе:
-    // preOrder=true, assembled=false, но в кабинете уже "Упаковка", потому что
-    // до courierTransmissionPlanningDate оставалось меньше 2 дней.
-    // Порог "≤ 2 дня" — приближение по единственному проверенному примеру;
-    // если на других заказах не совпадёт, поправим порог по факту.
-    if(!o.assembled && o.courierTransmissionPlanningDate){
-      const daysUntilPacking = (new Date(o.courierTransmissionPlanningDate).getTime() - Date.now()) / 86400000;
-      if(daysUntilPacking <= 2) return "packing";
-    }
-    if(o.preOrder && !o.assembled) return "preorder";
-    if(!o.assembled) return "packing";
-    if(o.assembled && !o.courierTransmissionDate) return "handover";
-    if(o.courierTransmissionDate) return "toDelivery";
-    return "other";
+router.put("/cargo-places/:placeId", (req, res) => {
+  const place = db.prepare("SELECT * FROM cargo_places WHERE id = ?").get(req.params.placeId);
+  if (!place) return res.status(404).json({ error: "not_found" });
+  const { formed, labelPrinted, name, comment } = req.body || {};
+  const now = new Date().toISOString();
+  const updates = [];
+  const params = [];
+  if (name !== undefined) { updates.push("name = ?"); params.push(name); }
+  if (comment !== undefined) { updates.push("comment = ?"); params.push(comment); }
+  if (formed !== undefined) {
+    updates.push("formed = ?"); params.push(formed ? 1 : 0);
+    if (formed) { updates.push("formed_at = ?"); params.push(now); updates.push("formed_by = ?"); params.push(req.session.username); }
   }
-
-  let kaspiStageFilter = "active"; // "active" = всё кроме архив/завершён/отменён/возврат
-  let kaspiOrdersSearchQuery = "";
-  document.getElementById("kaspiOrdersSearch").addEventListener("input", (e)=>{
-    kaspiOrdersSearchQuery = e.target.value.trim().toLowerCase();
-    renderKaspiOrders(false);
-  });
-  let kaspiShopFilter = null; // null = все магазины; иначе Set с выбранными именами
-  let kaspiVisibleCols = JSON.parse(localStorage.getItem("kaspiCols")||"null") || {photo:true,num:true,code:true,shop:true,name:true,courier:true,price:true,status:true,delivery:true,waybill:true};
-
-  document.querySelectorAll(".kcol").forEach(cb=>{
-    cb.checked = kaspiVisibleCols[cb.dataset.col];
-    cb.addEventListener("change", ()=>{
-      kaspiVisibleCols[cb.dataset.col] = cb.checked;
-      localStorage.setItem("kaspiCols", JSON.stringify(kaspiVisibleCols));
-      renderKaspiOrders(false);
-    });
-  });
-
-  const KCOL_DEFS = [
-    {key:"photo", label:"Фото"},
-    {key:"num", label:"№"},
-    {key:"code", label:"Kaspi код"},
-    {key:"shop", label:"Магазин"},
-    {key:"name", label:"Наименование"},
-    {key:"courier", label:"Дата передачи курьеру"},
-    {key:"price", label:"Сумма"},
-    {key:"status", label:"Статус"},
-    {key:"delivery", label:"Доставка"},
-    {key:"waybill", label:"Накладная"}
-  ];
-
-  // Карточки-показатели вверху "Заказов" — по образцу референса: активные,
-  // нужно собрать (предзаказ+упаковка), передано, доставлено/завершено
-  function renderKaspiStatCards(){
-    const list = kaspiOrders;
-    const nonTerminal = ["preorder","packing","handover","toDelivery","other"];
-    const active = list.filter(o=>nonTerminal.includes(o.stage)).length;
-    const needsPacking = list.filter(o=>o.stage==="preorder" || o.stage==="packing").length;
-    const inTransit = list.filter(o=>o.stage==="handover" || o.stage==="toDelivery").length;
-    const done = list.filter(o=>o.stage==="completed").length;
-
-    const cards = [
-      { icon:"📋", bg:"#EAE0F5", color:"#6B4FA0", num:active, lbl:"Активные" },
-      { icon:"📦", bg:"#F3E0BC", color:"#C8862B", num:needsPacking, lbl:"Нужно собрать" },
-      { icon:"🚚", bg:"#DCEEF5", color:"#2C6E8F", num:inTransit, lbl:"В пути" },
-      { icon:"✅", bg:"#E0EEDF", color:"#3E7D4C", num:done, lbl:"Завершено" }
-    ];
-    document.getElementById("kaspiStatCards").innerHTML = cards.map(c=>`
-      <div class="stat-card-v2" style="background:#fff; border:1px solid var(--line);">
-        <div class="icon" style="background:${c.bg}; color:${c.color};">${c.icon}</div>
-        <div><div class="num" style="color:${c.color};">${c.num}</div><div class="lbl">${c.lbl}</div></div>
-      </div>`).join("");
+  if (labelPrinted !== undefined) { updates.push("label_printed = ?"); params.push(labelPrinted ? 1 : 0); }
+  if (updates.length) {
+    params.push(req.params.placeId);
+    db.prepare(`UPDATE cargo_places SET ${updates.join(", ")} WHERE id = ?`).run(...params);
   }
+  logAudit({ user: req.session.username, action: "update_cargo_place", orderId: place.order_id, comment: JSON.stringify(req.body) });
+  res.json({ ok: true });
+});
 
-  async function renderKaspiOrders(refetch){
-    if(refetch !== false) kaspiOrders = await api("/orders?source=kaspi");
-    if(!catalogItems.length){ try{ catalogItems = await api("/catalog"); }catch(e){} }
+router.delete("/cargo-places/:placeId", (req, res) => {
+  const place = db.prepare("SELECT * FROM cargo_places WHERE id = ?").get(req.params.placeId);
+  db.prepare("DELETE FROM cargo_places WHERE id = ?").run(req.params.placeId);
+  if (place) logAudit({ user: req.session.username, action: "delete_cargo_place", orderId: place.order_id });
+  res.json({ ok: true });
+});
 
-    kaspiOrders.forEach(o=>{ o.stage = classifyStage(o); });
-    renderKaspiStatCards();
-
-    // Фильтр по магазинам — чекбоксы, можно выбрать 1, 2 или все 3
-    const shopNames = Array.from(new Set(kaspiOrders.map(o=>o.shop).filter(Boolean))).sort();
-    if(kaspiShopFilter===null) kaspiShopFilter = new Set(shopNames); // по умолчанию — все выбраны
-    const shopWrap = document.getElementById("kaspiShopFilters");
-    if(shopNames.length > 1){
-      shopWrap.innerHTML = shopNames.map(s=>{
-        const count = kaspiOrders.filter(o=>o.shop===s).length;
-        const active = kaspiShopFilter.has(s);
-        return `<button class="pill ${active?'active':''}" data-shop="${esc(s)}">${esc(s)} <span class="count">${count}</span></button>`;
-      }).join("");
-      shopWrap.querySelectorAll("button").forEach(b=>{
-        b.addEventListener("click", ()=>{
-          const s = b.dataset.shop;
-          if(kaspiShopFilter.has(s)) kaspiShopFilter.delete(s); else kaspiShopFilter.add(s);
-          if(kaspiShopFilter.size===0) kaspiShopFilter = new Set(shopNames); // не даём снять все разом
-          renderKaspiOrders(false);
-        });
-      });
-    } else {
-      shopWrap.innerHTML = "";
-    }
-
-    const nonTerminal = ["preorder","packing","handover","toDelivery","other"];
-    const terminalKeys = ["cancelled","cancelledDelivery","returns","completed","archive"];
-    const activeCount = kaspiOrders.filter(o=>nonTerminal.includes(o.stage) && kaspiShopFilter.has(o.shop)).length;
-    const filterWrap = document.getElementById("kaspiStatusFilters");
-
-    function stagePill(sd, count){
-      const isActive = kaspiStageFilter===sd.key;
-      // Цвет пилюли берётся из той же палитры, что и бейдж статуса в таблице —
-      // тут просто группировка по смыслу, слова и цвета статуса не меняются.
-      const style = isActive ? `border-color:${sd.color};background:${sd.bg};color:${sd.color};` : "";
-      return `<button class="pill" style="${style}" data-stage="${sd.key}">${sd.label} <span class="count">${count}</span></button>`;
-    }
-
-    let html = `<div style="font-size:11px;color:var(--ink-soft);margin-bottom:6px;">Обзор</div><div class="pill-row" style="margin-bottom:14px;">`
-      + `<button class="pill ${kaspiStageFilter==='active'?'active':''}" data-stage="active">Активные <span class="count">${activeCount}</span></button>`
-      + `<button class="pill ${kaspiStageFilter==='all'?'active':''}" data-stage="all">Все <span class="count">${kaspiOrders.filter(o=>kaspiShopFilter.has(o.shop)).length}</span></button>`
-      + `</div>`;
-
-    const working = STAGE_DEFS.filter(sd=>nonTerminal.includes(sd.key));
-    const workingHtml = working.map(sd=>{
-      const count = kaspiOrders.filter(o=>o.stage===sd.key && kaspiShopFilter.has(o.shop)).length;
-      if(count===0 && sd.key==="other") return "";
-      return stagePill(sd, count);
-    }).join("");
-    if(workingHtml) html += `<div style="font-size:11px;color:var(--ink-soft);margin-bottom:6px;">В работе</div><div class="pill-row" style="margin-bottom:14px;">${workingHtml}</div>`;
-
-    const terminal = STAGE_DEFS.filter(sd=>terminalKeys.includes(sd.key));
-    const terminalHtml = terminal.map(sd=>{
-      const count = kaspiOrders.filter(o=>o.stage===sd.key && kaspiShopFilter.has(o.shop)).length;
-      return stagePill(sd, count);
-    }).join("");
-    html += `<div style="font-size:11px;color:var(--ink-soft);margin-bottom:6px;">Завершено</div><div class="pill-row">${terminalHtml}</div>`;
-
-    filterWrap.innerHTML = html;
-    filterWrap.querySelectorAll("button").forEach(b=>{
-      b.addEventListener("click", ()=>{ kaspiStageFilter = b.dataset.stage; renderKaspiOrders(false); });
-    });
-
-    // заголовок таблицы по видимым колонкам
-    const cols = KCOL_DEFS.filter(c=>kaspiVisibleCols[c.key]);
-    document.getElementById("kaspiOrdersHead").innerHTML = `<tr><th style="width:32px;"><input type="checkbox" id="kaspiSelectAllCheckbox"></th>`+cols.map(c=>`<th>${c.label}</th>`).join("")+"<th></th></tr>";
-
-    let list = kaspiOrders.slice().filter(o=>kaspiShopFilter.has(o.shop));
-    if(kaspiStageFilter==="active") list = list.filter(o=>nonTerminal.includes(o.stage));
-    else if(kaspiStageFilter!=="all") list = list.filter(o=>o.stage===kaspiStageFilter);
-    if(kaspiOrdersSearchQuery){
-      const q = kaspiOrdersSearchQuery;
-      list = list.filter(o=>
-        String(o.displayNumber||"").includes(q) ||
-        String(o.kaspiCode||"").toLowerCase().includes(q) ||
-        String(o.productName||"").toLowerCase().includes(q) ||
-        String(o.shop||"").toLowerCase().includes(q)
-      );
-    }
-    list.sort((a,b)=>(a.displayNumber||0)-(b.displayNumber||0));
-
-    const body = document.getElementById("kaspiOrdersBody");
-    const catalogPhotoByArticle = {};
-    catalogItems.forEach(c=>{ if(c.article && c.photo) catalogPhotoByArticle[c.article] = c.photo; });
-    const cellFor = (o,key)=>{
-      if(key==="photo"){
-        let photo = o.productPhoto;
-        if(!photo){
-          // У Kaspi в API заказов фото товара нет в принципе (подтверждено
-          // документацией) — берём из Справочника по совпадению артикула
-          const article = o.entriesRaw?.data?.[0]?.attributes?.offer?.code;
-          if(article && catalogPhotoByArticle[article]) photo = catalogPhotoByArticle[article];
-        }
-        return photo ? `<img class="thumb" src="${esc(photo)}" style="cursor:zoom-in;" onclick="window.open('${esc(photo)}','_blank')">` : `<div class="thumb-empty">—</div>`;
-      }
-      if(key==="num") return esc(o.displayNumber||"");
-      if(key==="code") return `<span class="mono">${esc(o.kaspiCode||"")}</span>`;
-      if(key==="shop") return esc(o.shop||"");
-      if(key==="name") return esc(o.productName||"—");
-      if(key==="courier") return fmtDate(o.courierHandoverDate);
-      if(key==="price") return o.totalPrice ? esc(o.totalPrice)+" ₸" : "—";
-      if(key==="status"){
-        const sd = stageDef(o.stage);
-        return `<span class="stamp" style="color:${sd.color};background:${sd.bg};border-color:${sd.color};">${esc(sd.label)}</span>`;
-      }
-      if(key==="delivery") return esc(stateLabelKaspi(o.deliveryState));
-      if(key==="waybill"){
-        if(!o.waybillUrl) return `<span style="color:var(--ink-soft);font-size:12px;">ещё не сформирована</span>`;
-        const printedBadge = o.printed ? ` <span style="color:var(--green);font-size:11px;">✓ распечатано</span>` : "";
-        return `<button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__printWaybill('${o.id}')">🖨️ Печать</button>${printedBadge}`;
-      }
-      return "";
-    };
-    body.innerHTML = list.map(o=>`
-      <tr>
-        <td><input type="checkbox" class="kaspi-order-select" data-id="${o.id}" ${selectedKaspiOrderIds.has(o.id)?'checked':''}></td>
-        ${cols.map(c=>`<td>${cellFor(o,c.key)}</td>`).join("")}
-        <td>
-          <button class="btn amber" style="padding:4px 10px;font-size:12px" onclick="window.__openWorkflow('${o.id}')">Обработка</button>
-          <button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__openKaspiDetail('${o.id}')">Детали</button>
-        </td>
-      </tr>`).join("") || `<tr><td colspan="${cols.length+2}" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет заказов на этой стадии</td></tr>`;
-
-    body.querySelectorAll(".kaspi-order-select").forEach(cb=>{
-      cb.addEventListener("change", ()=>{
-        if(cb.checked) selectedKaspiOrderIds.add(cb.dataset.id); else selectedKaspiOrderIds.delete(cb.dataset.id);
-        updateKaspiBulkBar();
-      });
-    });
-    const selectAllCb = document.getElementById("kaspiSelectAllCheckbox");
-    if(selectAllCb){
-      selectAllCb.checked = list.length>0 && list.every(o=>selectedKaspiOrderIds.has(o.id));
-      selectAllCb.addEventListener("change", ()=>{
-        if(selectAllCb.checked) list.forEach(o=>selectedKaspiOrderIds.add(o.id));
-        else list.forEach(o=>selectedKaspiOrderIds.delete(o.id));
-        renderKaspiOrders(false);
-      });
-    }
-    updateKaspiBulkBar();
-  }
-
-  // ---------- Групповые действия по выбранным заказам Kaspi ----------
-  function updateKaspiBulkBar(){
-    let bar = document.getElementById("kaspiBulkBar");
-    const count = selectedKaspiOrderIds.size;
-    if(!bar){
-      bar = document.createElement("div");
-      bar.id = "kaspiBulkBar";
-      bar.className = "panel";
-      bar.style.cssText = "display:flex; align-items:center; gap:10px; padding:10px 18px; background:var(--navy); color:#fff;";
-      document.getElementById("kaspiOrdersHead").closest("div.tbl-wrap").insertAdjacentElement("beforebegin", bar);
-    }
-    if(count===0){ bar.style.display="none"; return; }
-    bar.style.display = "flex";
-    bar.innerHTML = `
-      <span>Выбрано: ${count}</span>
-      <button class="btn secondary" id="kaspiBulkPrint" style="margin-left:12px;">🖨️ Печать накладных</button>
-      <button class="btn secondary" id="kaspiBulkPushKaspi">📤 Передать в Kaspi</button>
-      <button class="btn secondary" id="kaspiBulkClear" style="margin-left:auto;">Снять выбор</button>
-    `;
-    document.getElementById("kaspiBulkClear").onclick = ()=>{ selectedKaspiOrderIds.clear(); renderKaspiOrders(false); };
-    document.getElementById("kaspiBulkPrint").onclick = ()=>{
-      const ids = Array.from(selectedKaspiOrderIds);
-      const withWaybill = kaspiOrders.filter(o=>ids.includes(o.id) && o.waybillUrl);
-      if(!withWaybill.length){ toast("У выбранных заказов ещё нет накладной"); return; }
-      withWaybill.forEach(o=>window.open(o.waybillUrl, "_blank"));
-    };
-    document.getElementById("kaspiBulkPushKaspi").onclick = async ()=>{
-      const ids = Array.from(selectedKaspiOrderIds);
-      if(!confirm(`Передать в Kaspi статус "собран" сразу для ${ids.length} заказов? Это реальные запросы к Kaspi.`)) return;
-      let ok=0; const errors = [];
-      for(const id of ids){
-        const o = kaspiOrders.find(x=>x.id===id);
-        try{ await api("/orders/"+id+"/kaspi-assemble", {method:"POST"}); ok++; }
-        catch(e){ errors.push(`№${o?.displayNumber||id}: ${e.message}`); }
-      }
-      if(errors.length){
-        alert(`Передано успешно: ${ok}\n\nОшибки (${errors.length}):\n`+errors.join("\n"));
-      } else {
-        toast(`Передано: ${ok}`);
-      }
-      selectedKaspiOrderIds.clear();
-      await renderKaspiOrders();
-    };
-  }
-
-  document.getElementById("btnPrintKaspiList").addEventListener("click", ()=>{
-    let list = kaspiOrders.slice().filter(o=>kaspiShopFilter.has(o.shop));
-    const nonTerminal = ["preorder","packing","handover","toDelivery","other"];
-    if(kaspiStageFilter==="active") list = list.filter(o=>nonTerminal.includes(o.stage));
-    else if(kaspiStageFilter!=="all") list = list.filter(o=>o.stage===kaspiStageFilter);
-    if(!list.length){ toast("Нечего печатать — список пуст"); return; }
-    const w = window.open("", "_blank");
-    if(!w){ toast("Браузер заблокировал открытие окна"); return; }
-    const rows = list.map(o=>`
-      <tr>
-        <td>${esc(o.displayNumber)}</td>
-        <td>${esc(o.kaspiCode)}</td>
-        <td>${esc(o.productName||"—")}</td>
-        <td>${esc(o.shop)}</td>
-        <td>${esc(stageDef(o.stage).label)}</td>
-      </tr>`).join("");
-    w.document.write(`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>Список заказов</title>
-    <style>
-      body{font-family:Arial,sans-serif; margin:0; padding:20px;}
-      h1{font-family:Georgia,serif; font-size:20px;}
-      table{width:100%; border-collapse:collapse; font-size:13px;}
-      th,td{border:1px solid #ccc; padding:6px 8px; text-align:left;}
-      th{background:#F0EAD9;}
-      .toolbar{margin-bottom:16px;}
-      button{padding:8px 16px; background:#C8862B; color:#fff; border:none; border-radius:4px; cursor:pointer;}
-      @media print{ .toolbar{display:none;} }
-    </style></head><body>
-      <div class="toolbar"><button onclick="window.print()">Печать / Сохранить как PDF</button></div>
-      <h1>Список заказов (${list.length})</h1>
-<div class="tbl-wrap">
-            <table><thead><tr><th>№</th><th>Kaspi код</th><th>Наименование</th><th>Магазин</th><th>Стадия</th></tr></thead>
-      <tbody>${rows}</tbody></table>
-      </div>
-    </body></html>`);
-    w.document.close();
-  });
-
-  const CLAIM_STATUSES = ["CANCELLED","CANCELLING","RETURN_REQUESTED","RETURNED"];
-  let editingClaimId = null;
-
-  document.getElementById("showClosedClaims").addEventListener("change", renderClaims);
-
-  function renderClaims(){
-    const showClosed = document.getElementById("showClosedClaims").checked;
-    let list = kaspiOrders.filter(o=>CLAIM_STATUSES.includes(o.kaspiStatus));
-    if(!showClosed) list = list.filter(o=>!o.claimResolved);
-    list.sort((a,b)=>(a.displayNumber||0)-(b.displayNumber||0));
-    const body = document.getElementById("claimsBody");
-    body.innerHTML = list.map(o=>`
-      <tr style="${o.claimResolved?'opacity:.5;':''}">
-        <td>${esc(o.displayNumber||"")}</td>
-        <td class="mono">${esc(o.kaspiCode||"")}</td>
-        <td>${esc(o.shop||"")}</td>
-        <td>${esc(o.productName||"—")}</td>
-        <td>${esc(statusLabelKaspi(o.kaspiStatus))}</td>
-        <td class="mono" style="white-space:nowrap;" title="Kaspi не передаёт точную дату отмены (подтверждено документацией API) — это дата, когда статус/состояние заказа у нас в базе последний раз реально менялись">${fmtDate((o.updatedAt||"").slice(0,10))}</td>
-        <td class="mono">${(()=>{ const d = daysSinceStatusChange(o); return d==null ? "—" : `<span style="${d>7?'color:var(--red);font-weight:700;':''}">${d}</span>`; })()}</td>
-        <td style="max-width:220px;font-size:12.5px;color:var(--ink-soft);">${esc(o.claimNote||"")}</td>
-        <td style="white-space:nowrap;">
-          <button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__openClaim('${o.id}')">${o.claimResolved?'Открыть':'Обработать'}</button>
-          <button class="btn secondary" style="padding:4px 8px;font-size:12px" onclick="window.__openKaspiDetail('${o.id}')">Детали</button>
-        </td>
-      </tr>`).join("") || `<tr><td colspan="9" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет отмен/возвратов${showClosed?'':' (не закрытых)'}</td></tr>`;
-  }
-
-  window.__openClaim = function(id){
-    editingClaimId = id;
-    const o = kaspiOrders.find(x=>x.id===id);
-    document.getElementById("claim_note").value = o?.claimNote || "";
-    document.getElementById("claim_resolved").checked = !!o?.claimResolved;
-    document.getElementById("claimOverlay").classList.add("show");
-  };
-  document.getElementById("claimCancelBtn").addEventListener("click", ()=>{
-    document.getElementById("claimOverlay").classList.remove("show");
-  });
-  document.getElementById("claimSaveBtn").addEventListener("click", async ()=>{
-    const note = document.getElementById("claim_note").value.trim();
-    const resolved = document.getElementById("claim_resolved").checked;
-    try{
-      await api("/orders/"+editingClaimId, {method:"PUT", body:JSON.stringify({claimNote:note, claimResolved:resolved})});
-      const o = kaspiOrders.find(x=>x.id===editingClaimId);
-      if(o){ o.claimNote = note; o.claimResolved = resolved; }
-      document.getElementById("claimOverlay").classList.remove("show");
-      renderClaims();
-      toast("Сохранено");
-    }catch(e){ toast("Ошибка: "+e.message); }
-  });
-
-  window.__printWaybill = async function(id){
-    const o = kaspiOrders.find(x=>x.id===id);
-    if(!o || !o.waybillUrl) return;
-    window.open(o.waybillUrl, "_blank");
-    if(!o.printed){
-      try{
-        await api("/orders/"+id, {method:"PUT", body:JSON.stringify({printed:true})});
-        o.printed = true;
-        renderKaspiOrders(false);
-      }catch(e){}
-    }
-  };
-
-  // ================= Обработка заказа (статусная машина, грузовые места, печать) =================
-  const STATUS_LABELS_WF = {
-    preorder: "Новый", packing: "Собираем", label_printed: "Этикетка готова",
-    ready: "Готов к отгрузке", shipped: "Отгружен", cancelled: "Отменён"
-  };
-  const NEXT_ACTION_LABEL = {
-    preorder: "Начать сборку",
-    packing: "Распечатать этикетку",
-    label_printed: "Готово к отгрузке",
-    ready: "Отгружено"
-  };
-  const NEXT_STATUS = {
-    preorder: "packing", packing: "label_printed", label_printed: "ready", ready: "shipped"
-  };
-
-  let wfCurrentOrder = null;
-  let wfPrintOrderId = null;
-
-  window.__openWorkflow = async function(id){
-    const order = await api("/orders/"+id);
-    wfCurrentOrder = order;
-    document.getElementById("wfTitle").textContent = "Заказ №"+(order.displayNumber||order.receiptNumber||"")+" — "+(order.productName||order.name||order.article||"");
-    await renderWorkflow();
-    document.getElementById("workflowOverlay").classList.add("show");
-  };
-  document.getElementById("wfCloseBtn").addEventListener("click", ()=>{
-    document.getElementById("workflowOverlay").classList.remove("show");
-    renderKaspiOrders(); // подтянуть изменения статуса в общий список
-  });
-
-  async function renderWorkflow(){
-    const order = wfCurrentOrder;
-    const label = STATUS_LABELS_WF[order.status] || order.status;
-    document.getElementById("wfStatusRow").innerHTML =
-      `<span class="stamp" style="font-size:13px; padding:5px 14px;">${esc(label)}</span>`
-      + (order.printed ? ` <span style="font-size:12px;color:var(--green);">🖨️ распечатано (${esc(order.printCount)}×), последний раз: ${esc(order.lastPrintedAt||"").slice(0,16).replace('T',' ')} — ${esc(order.lastPrintedBy||"")}</span>` : "");
-
-    const actions = document.getElementById("wfActionsRow");
-    actions.style.display = "flex";
-    actions.style.flexDirection = "column";
-    actions.style.gap = "0";
-    actions.innerHTML = "";
-
-    const primaryRow = document.createElement("div");
-    primaryRow.style.cssText = "display:flex; gap:8px; flex-wrap:wrap;";
-    actions.appendChild(primaryRow);
-
-    if(order.status === "packing"){
-      const btn = document.createElement("button");
-      btn.className = "btn amber";
-      btn.textContent = "🖨️ Распечатать";
-      btn.onclick = ()=>openPrintConfirm(order.id);
-      primaryRow.appendChild(btn);
-    } else if(NEXT_STATUS[order.status]){
-      const btn = document.createElement("button");
-      btn.className = "btn amber";
-      btn.textContent = NEXT_ACTION_LABEL[order.status] || "Далее";
-      btn.onclick = ()=>doTransition(order.id, NEXT_STATUS[order.status]);
-      primaryRow.appendChild(btn);
-    }
-    // Двусторонняя синхронизация: пока Kaspi не знает, что мы собрали заказ
-    // (assembled=false у нас — это то же самое поле, что читаем при синхронизации),
-    // показываем кнопку "толкнуть" статус туда. Не проверено на реальном
-    // токене — первый раз пробуйте на некритичном заказе.
-    if(!order.assembled && order.status !== "cancelled" && order.status !== "shipped"){
-      const kaspiBtn = document.createElement("button");
-      kaspiBtn.className = "btn secondary";
-      kaspiBtn.textContent = "📤 Передать в Kaspi Доставку";
-      kaspiBtn.onclick = ()=>pushToKaspi(order.id);
-      primaryRow.appendChild(kaspiBtn);
-    }
-    if(myRole === "admin"){
-      const fixBtn = document.createElement("button");
-      fixBtn.className = "btn secondary";
-      fixBtn.textContent = "⚙ Исправить статус вручную";
-      fixBtn.onclick = ()=>adminFixStatus(order.id);
-      primaryRow.appendChild(fixBtn);
-    }
-
-    // "Отменить заказ" — намеренно на отдельной строке, подальше от обычных
-    // кнопок, с разделителем сверху. Это редкое и рискованное действие, ему
-    // не место в одном ряду с повседневными "Начать сборку"/"Передать в Kaspi".
-    if(order.status !== "shipped" && order.status !== "cancelled"){
-      const cancelRow = document.createElement("div");
-      cancelRow.style.cssText = "margin-top:14px; padding-top:12px; border-top:1px dashed var(--line);";
-      const cancelBtn = document.createElement("button");
-      cancelBtn.className = "btn danger";
-      cancelBtn.style.opacity = "0.85";
-      cancelBtn.textContent = "Отменить заказ";
-      cancelBtn.onclick = ()=>openCancelStep1();
-      cancelRow.appendChild(cancelBtn);
-      actions.appendChild(cancelRow);
-    }
-
-    // грузовые места
-    const places = await api("/orders/"+order.id+"/cargo-places");
-    const cpWrap = document.getElementById("wfCargoPlaces");
-    cpWrap.innerHTML = places.length ? places.map(p=>`
-      <div style="display:flex; align-items:center; gap:10px; padding:6px 0; border-bottom:1px solid var(--line); font-size:13px;">
-        <div style="flex:1;">${esc(p.name)} ${p.comment?`<span style="color:var(--ink-soft);font-size:11px;">(${esc(p.comment)})</span>`:""}</div>
-        <label style="font-size:12px;"><input type="checkbox" ${p.formed?'checked':''} onchange="window.__toggleCargoPlace('${p.id}','formed',this.checked)"> Сформировано</label>
-        <label style="font-size:12px;"><input type="checkbox" ${p.labelPrinted?'checked':''} onchange="window.__toggleCargoPlace('${p.id}','labelPrinted',this.checked)"> Этикетка распечатана</label>
-        <button class="btn danger" style="padding:3px 8px;font-size:11px;" onclick="window.__deleteCargoPlace('${p.id}')">✕</button>
-      </div>`).join("") : `<div style="color:var(--ink-soft);font-size:12.5px;">Пока не сформировано ни одного места</div>`;
-
-    // история — сворачиваема по умолчанию, чтобы не забивать карточку простынёй текста
-    const history = await api("/orders/"+order.id+"/history");
-    document.getElementById("wfHistoryLabel").textContent = `История статусов (${history.length})`;
-    document.getElementById("wfHistory").innerHTML = history.length ? history.map(h=>
-      `<div style="padding:3px 0;">${esc((h.createdAt||"").slice(0,16).replace('T',' '))} — ${esc(STATUS_LABELS_WF[h.from]||h.from||"—")} → <b>${esc(STATUS_LABELS_WF[h.to]||h.to)}</b> (${esc(h.user||"")})${h.isCorrection?' <span style="color:var(--red);">[исправление]</span>':''}${h.reason?': '+esc(h.reason):''}</div>`
-    ).join("") : "Пока нет изменений статуса";
-
-    // Закрываем шаги отмены при каждой перерисовке (например, после отмены другого действия)
-    document.getElementById("wfCancelStep1").style.display = "none";
-    document.getElementById("wfCancelStep2").style.display = "none";
-  }
-
-  // ---------- Сворачиваемая история статусов ----------
-  document.getElementById("wfHistoryToggle").addEventListener("click", ()=>{
-    const body = document.getElementById("wfHistory");
-    const arrow = document.getElementById("wfHistoryArrow");
-    const isHidden = body.style.display === "none";
-    body.style.display = isHidden ? "" : "none";
-    arrow.textContent = isHidden ? "▴ скрыть" : "▾ показать";
-  });
-
-  // ---------- Безопасная отмена заказа — два отдельных шага, без браузерных confirm/prompt ----------
-  function openCancelStep1(){
-    document.getElementById("wfActionsRow").style.display = "none";
-    document.getElementById("wfCancelReason").value = "";
-    document.getElementById("wfCancelStep1").style.display = "";
-    document.getElementById("wfCancelStep2").style.display = "none";
-  }
-  function closeCancelFlow(){
-    document.getElementById("wfActionsRow").style.display = "flex";
-    document.getElementById("wfCancelStep1").style.display = "none";
-    document.getElementById("wfCancelStep2").style.display = "none";
-  }
-  document.getElementById("wfCancelStep1Back").addEventListener("click", closeCancelFlow);
-  document.getElementById("wfCancelStep1Next").addEventListener("click", ()=>{
-    const reason = document.getElementById("wfCancelReason").value.trim();
-    if(!reason){ toast("Укажите причину — без неё дальше нельзя"); return; }
-    const order = wfCurrentOrder;
-    document.getElementById("wfCancelStep2Text").innerHTML =
-      `Заказ №${esc(order.displayNumber||order.receiptNumber||"")} — <b>${esc(order.productName||order.name||order.article||"")}</b><br>`
-      + `Причина: «${esc(reason)}»<br><br>После отмены заказ уйдёт в архив отменённых. Отменить это действие будет нельзя.`;
-    document.getElementById("wfCancelStep1").style.display = "none";
-    document.getElementById("wfCancelStep2").style.display = "";
-  });
-  document.getElementById("wfCancelStep2Back").addEventListener("click", closeCancelFlow);
-  document.getElementById("wfCancelStep2Confirm").addEventListener("click", async ()=>{
-    const reason = document.getElementById("wfCancelReason").value.trim();
-    const btn = document.getElementById("wfCancelStep2Confirm");
-    btn.disabled = true; btn.textContent = "Отменяем...";
-    await doTransition(wfCurrentOrder.id, "cancelled", reason);
-    btn.disabled = false; btn.textContent = "Да, отменить заказ окончательно";
-    closeCancelFlow();
-  });
-
-  async function pushToKaspi(orderId){
-    if(!confirm("Передать статус \"собран\" в сам Kaspi? Это реальный запрос к Kaspi, не только внутри нашей системы.")) return;
-    let result;
-    try{
-      result = await api("/orders/"+orderId+"/kaspi-assemble", {method:"POST"});
-    }catch(e){
-      toast("Kaspi не принял: "+e.message);
-      return;
-    }
-    toast(`Передано в Kaspi (мест: ${result.numberOfSpace})`);
-    // Обновление карточки — отдельно от основного результата: если тут что-то
-    // споткнётся, это не должно перекрывать уже показанный тост об успехе.
-    try{
-      wfCurrentOrder = await api("/orders/"+orderId);
-      await renderWorkflow();
-    }catch(e){
-      console.error("Не удалось обновить карточку после передачи в Kaspi:", e);
-    }
-  }
-
-  async function doTransition(orderId, to, reason){
-    try{
-      const updated = await api("/orders/"+orderId+"/transition", {method:"POST", body:JSON.stringify({to, reason})});
-      wfCurrentOrder = updated;
-      await renderWorkflow();
-      toast("Статус обновлён");
-    }catch(e){
-      if(e.message === "reason_required"){
-        const r = prompt("Это исправление статуса (не обычный переход). Укажите причину:");
-        if(r && r.trim()) await doTransition(orderId, to, r.trim());
-      } else if(e.message === "cargo_places_required"){
-        toast("Нельзя — не сформировано ни одно грузовое место");
-      } else if(e.message === "forbidden_transition"){
-        toast("Такой переход запрещён для вашей роли");
-      } else {
-        toast("Ошибка: "+e.message);
-      }
-    }
-  }
-  function adminFixStatus(orderId){
-    const to = prompt("Новый статус (preorder/packing/label_printed/ready/shipped/cancelled):");
-    if(!to) return;
-    const reason = prompt("Причина исправления (обязательно):");
-    if(!reason || !reason.trim()){ toast("Без причины отменено"); return; }
-    doTransition(orderId, to.trim(), reason.trim());
-  }
-
-  window.__toggleCargoPlace = async function(placeId, field, value){
-    await api("/orders/cargo-places/"+placeId, {method:"PUT", body:JSON.stringify({[field]: value})});
-    await renderWorkflow();
-  };
-  window.__deleteCargoPlace = async function(placeId){
-    if(!confirm("Удалить это грузовое место?")) return;
-    await api("/orders/cargo-places/"+placeId, {method:"DELETE"});
-    await renderWorkflow();
-  };
-  document.getElementById("wfAddCargoPlace").addEventListener("click", async ()=>{
-    const name = prompt("Название/номер места (необязательно):");
-    await api("/orders/"+wfCurrentOrder.id+"/cargo-places", {method:"POST", body:JSON.stringify({name})});
-    await renderWorkflow();
-  });
-
-  // ---------- Печать с подтверждением ----------
-  function openPrintConfirm(orderId){
-    wfPrintOrderId = orderId;
-    const order = wfCurrentOrder;
-    document.getElementById("printConfirmCheck").checked = false;
-    updatePrintConfirmBtnState();
-    document.getElementById("printReasonInput").value = "";
-    if(order.printed){
-      document.getElementById("printWarningBox").style.display = "";
-      document.getElementById("printWarningBox").textContent =
-        `⚠️ Уже печаталось ${order.printCount} раз(а). Последний раз: ${(order.lastPrintedAt||"").slice(0,16).replace('T',' ')} — ${order.lastPrintedBy||""}`;
-      document.getElementById("printReasonRow").style.display = "";
-    } else {
-      document.getElementById("printWarningBox").style.display = "none";
-      document.getElementById("printReasonRow").style.display = "none";
-    }
-    if(order.waybillUrl) window.open(order.waybillUrl, "_blank");
-    document.getElementById("printConfirmOverlay").classList.add("show");
-  }
-  document.getElementById("printCancelBtn").addEventListener("click", ()=>{
-    document.getElementById("printConfirmOverlay").classList.remove("show");
-  });
-  function updatePrintConfirmBtnState(){
-    const btn = document.getElementById("printConfirmBtn");
-    const checked = document.getElementById("printConfirmCheck").checked;
-    btn.disabled = !checked;
-    btn.style.opacity = checked ? "1" : ".5";
-    btn.style.cursor = checked ? "pointer" : "not-allowed";
-  }
-  document.getElementById("printConfirmCheck").addEventListener("change", updatePrintConfirmBtnState);
-  document.getElementById("printConfirmBtn").addEventListener("click", async ()=>{
-    if(!document.getElementById("printConfirmCheck").checked){
-      toast("Нужно подтвердить галочкой, что документ распечатан");
-      return;
-    }
-    const reason = document.getElementById("printReasonInput").value.trim();
-    try{
-      const updated = await api("/orders/"+wfPrintOrderId+"/print", {method:"POST", body:JSON.stringify({confirmed:true, reason: reason||undefined})});
-      wfCurrentOrder = updated;
-      document.getElementById("printConfirmOverlay").classList.remove("show");
-      await renderWorkflow();
-      toast("Печать зафиксирована");
-    }catch(e){ toast("Ошибка: "+e.message); }
-  });
-
-  window.__openKaspiDetail = function(id){
-    const o = kaspiOrders.find(x=>x.id===id);
-    if(!o) return;
-    const raw = o.raw || {};
-    const sd = stageDef(o.stage);
-    const paymentLabels = { PAY_WITH_CREDIT: "В кредит", CASH: "Наличными", PREPAID: "Предоплата" };
-    const paymentText = paymentLabels[raw.paymentMode] || (raw.paymentMode ? esc(raw.paymentMode) : "не указано в данных Kaspi");
-    const customer = raw.customer || {};
-    const customerText = (customer.name || customer.cellPhone)
-      ? `${esc(customer.name||"")} ${customer.cellPhone?('· '+esc(customer.cellPhone)):''}`
-      : "нет данных о клиенте в этом заказе";
-    const summaryRows = [
-      ["Стадия", `<span class="stamp" style="color:${sd.color};background:${sd.bg};border-color:${sd.color};">${esc(sd.label)}</span>`],
-      ["Наименование", esc(o.productName||"—")],
-      ["Клиент", customerText],
-      ["Способ оплаты", paymentText],
-      ["Плановая дата отправки/передачи курьеру", fmtDate(o.courierHandoverDate)||"пока не назначена"],
-      ["Дата передачи в логистику Kaspi", fmtDate(o.courierTransmissionDate)||"ещё не передан"],
-      ["Дата последнего обновления в нашей системе", fmtDate((o.updatedAt||"").slice(0,10))+" — приблизительно, точное поле даты отмены от Kaspi см. ниже в технических полях"],
-      ["Накладная (грузовое место)", o.waybillUrl
-        ? `<button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__printWaybill('${o.id}')">🖨️ Печать</button>${o.printed?' <span style="color:var(--green);font-size:11px;">✓ распечатано</span>':''}`
-        : `<span style="color:var(--ink-soft);">ещё не сформирована (появится после упаковки)</span>`]
-    ];
-    const summaryHtml = summaryRows.map(([k,v])=>`<tr><td style="width:260px;font-weight:600;">${k}</td><td>${v}</td></tr>`).join("");
-    const rows = Object.keys(raw).length
-      ? Object.entries(raw).map(([k,v])=>`<tr><td class="mono" style="width:220px;color:var(--ink-soft);">${esc(k)}</td><td>${esc(typeof v==='object'? JSON.stringify(v): v)}</td></tr>`).join("")
-      : `<tr><td colspan="2">Нет дополнительных данных</td></tr>`;
-    const entriesRaw = o.entriesRaw || {};
-    let entriesRows;
-    try{
-      entriesRows = JSON.stringify(entriesRaw, null, 2)
-        ? `<tr><td colspan="2"><pre style="white-space:pre-wrap; font-size:11px; max-height:300px; overflow:auto;">${esc(JSON.stringify(entriesRaw, null, 2))}</pre></td></tr>`
-        : `<tr><td colspan="2">Нет данных</td></tr>`;
-    }catch(e){ entriesRows = `<tr><td colspan="2">Нет данных</td></tr>`; }
-    document.getElementById("kaspiDetailBody").innerHTML =
-      `<tr><td colspan="2" style="font-weight:700; padding-top:10px; border-bottom:2px solid var(--amber);">Основное</td></tr>`
-      + summaryHtml
-      + `<tr><td colspan="2" style="padding-top:16px;"><button class="btn secondary" style="padding:6px 12px;font-size:12.5px;" onclick="this.closest('tr').nextElementSibling.style.display=this.closest('tr').nextElementSibling.style.display==='none'?'':'none'; this.textContent=this.textContent.includes('Показать')?'Скрыть технические поля':'Показать технические поля (для разработчика)'">Показать технические поля (для разработчика)</button></td></tr>`
-      + `<tr style="display:none;"><td colspan="2"><table style="width:100%;">`
-      + `<tr><td colspan="2" style="font-weight:700; padding-top:10px; border-bottom:2px solid var(--line);">Всё, что прислал Kaspi (заказ)</td></tr>`
-      + rows
-      + `<tr><td colspan="2" style="font-weight:700; padding-top:16px; border-bottom:2px solid var(--line);">Данные о товарах в заказе</td></tr>`
-      + entriesRows
-      + `</table></td></tr>`;
-    document.getElementById("kaspiDetailOverlay").classList.add("show");
-  };
-  document.getElementById("kaspiDetailClose").addEventListener("click", ()=>{
-    document.getElementById("kaspiDetailOverlay").classList.remove("show");
-  });
-
-  async function loadKaspiSettings(){
-    let data;
-    try{
-      data = await api("/settings/kaspi");
-    }catch(e){
-      document.getElementById("kaspiShopForms").innerHTML = `<div style="color:var(--red);">Не удалось загрузить настройки: ${esc(e.message)}</div>`;
-      return;
-    }
-    const wrap = document.getElementById("kaspiShopForms");
-    const todayMinus14 = new Date(Date.now()-14*86400000).toISOString().slice(0,10);
-    wrap.innerHTML = (data.shops||[]).map((s,i)=>{
-      const connected = s.hasToken;
-      const statusBadge = connected
-        ? `<span style="color:var(--green);font-weight:600;">✅ Подключено</span> — токен ${esc(s.tokenMasked)}`
-        : `<span style="color:var(--red);font-weight:600;">⚠️ Не подключено</span> — токен не задан`;
-      return `
-      <div class="grid2" style="margin-bottom:14px; border:1px solid var(--line); padding:12px; border-radius:4px;">
-        <div class="full" style="margin-bottom:4px;">${statusBadge}${s.name?` · <b>${esc(s.name)}</b>`:''}</div>
-        <div><label>Название магазина</label><input type="text" id="kshop_name_${i}" value="${esc(s.name||'')}"></div>
-        <div><label>Токен API ${connected? '(вставьте новый, чтобы заменить)':'(не задан)'}</label><input type="text" id="kshop_token_${i}" placeholder="вставьте токен"></div>
-        <div><label>Считать заказы с даты (максимум 14 дней назад — ограничение самого Kaspi)</label>
-          <input type="date" id="kshop_date_${i}" value="${esc(s.syncFromDate || todayMinus14)}" min="${todayMinus14}" max="${new Date().toISOString().slice(0,10)}">
-        </div>
-      </div>`;
-    }).join("");
-  }
-  document.getElementById("btnSaveKaspiSettings").addEventListener("click", async ()=>{
-    try{
-      for(let i=0;i<3;i++){
-        const nameEl = document.getElementById("kshop_name_"+i);
-        const tokenEl = document.getElementById("kshop_token_"+i);
-        const dateEl = document.getElementById("kshop_date_"+i);
-        if(!nameEl || !tokenEl || !dateEl) continue; // форма ещё не отрисовалась — пропускаем безопасно
-        const name = nameEl.value;
-        const token = tokenEl.value;
-        const syncFromDate = dateEl.value;
-        await api("/settings/kaspi/"+i, {method:"POST", body:JSON.stringify({name, token, syncFromDate})});
-      }
-      document.getElementById("kaspiSettingsMsg").textContent = "Сохранено";
-      await loadKaspiSettings();
-      await loadAll();
-    }catch(e){ document.getElementById("kaspiSettingsMsg").textContent = "Ошибка: "+e.message; }
-  });
-
-  // ---------- Нумерация заказов (внутренний короткий номер, не код Kaspi) ----------
-  async function loadOrderNumbering(){
-    const wrap = document.getElementById("orderNumberingShops");
-    try{
-      const data = await api("/counters/order-numbering");
-      wrap.innerHTML = data.shops.length ? data.shops.map(s=>`
-        <div style="display:flex; gap:10px; align-items:center; margin-bottom:8px;">
-          <span style="font-size:13px; min-width:140px;">${esc(s.shop)} — следующий номер:</span>
-          <input type="number" min="1" class="order-numbering-input" data-shop="${esc(s.shop)}" value="${s.nextNumber}" style="width:120px;">
-          <button class="btn secondary" style="padding:6px 12px;font-size:13px;" data-save-shop="${esc(s.shop)}">Сохранить</button>
-        </div>`).join("") : `<div style="color:var(--ink-soft);font-size:13px;">Сначала заполните и сохраните токены магазинов выше</div>`;
-      wrap.querySelectorAll("[data-save-shop]").forEach(btn=>{
-        btn.addEventListener("click", ()=>saveOrderNumbering(btn.dataset.saveShop));
-      });
-    }catch(e){
-      wrap.innerHTML = `<div style="color:var(--red);font-size:13px;">Ошибка загрузки: ${esc(e.message)}</div>`;
-    }
-  }
-  async function saveOrderNumbering(shopName){
-    const input = document.querySelector(`.order-numbering-input[data-shop="${CSS.escape(shopName)}"]`);
-    const val = parseInt(input.value, 10);
-    if(!Number.isFinite(val) || val < 1){
-      document.getElementById("orderNumberingMsg").textContent = "Укажите целое число, 1 или больше";
-      return;
-    }
-    try{
-      await api("/counters/order-numbering", {method:"POST", body:JSON.stringify({shop: shopName, nextNumber: val})});
-      document.getElementById("orderNumberingMsg").textContent = `Сохранено для «${shopName}» — следующий заказ получит номер ${val}`;
-      toast("Нумерация обновлена");
-    }catch(e){ document.getElementById("orderNumberingMsg").textContent = "Ошибка: "+e.message; }
-  }
-
-  // Общая функция синхронизации — использует и кнопка, и автосинхронизация.
-  // silent=true — не перезаписываем текстовый блок результата (чтобы не мешать,
-  // если человек сейчас читает что-то другое), но уведомление о новых заказах
-  // показываем в любом случае.
-  async function performKaspiSync(opts){
-    opts = opts || {};
-    const box = document.getElementById("kaspiResult2");
-    if(!opts.silent) box.innerHTML = "Синхронизация...";
-    const includeArchive = document.getElementById("includeArchiveCheck").checked;
-    try{
-      const data = await api("/kaspi/sync", {method:"POST", body: JSON.stringify({includeArchive})});
-      if(!opts.silent){
-        box.innerHTML = data.results.map(r=>
-          r.ok ? `<div class="kaspi-result">✅ ${esc(r.shop)}: добавлено ${r.added}, обновлено ${r.updated}${r.skippedArchive?', пропущено архивных: '+r.skippedArchive:''} (всего в ответе ${r.total})
-            ${r.staleChecked!=null ? `<br><span style="color:var(--ink-soft);font-size:11.5px;">Зависшие старые: проверено ${r.staleChecked}, изменилось ${r.staleChanged}${r.staleErrors?', ошибок: '+r.staleErrors:''}</span>` : ""}</div>`
-               : `<div class="kaspi-result" style="color:var(--red)">⚠️ ${esc(r.shop)}: ${esc(r.error)}</div>`
-        ).join("");
-      }
-      const newOnes = (data.results||[]).filter(r=>r.ok && r.added>0);
-      if(newOnes.length){
-        toast("🔔 Новый заказ: " + newOnes.map(r=>`${r.shop} +${r.added}`).join(", "));
-      }
-      lastSyncTime = new Date();
-      updateLastSyncIndicator();
-      await renderKaspiOrders();
-      return data;
-    }catch(e){
-      if(!opts.silent){
-        box.innerHTML = `<div class="kaspi-result" style="color:var(--red)">Ошибка: ${esc(e.message)}</div>`;
-      } else {
-        console.error("[auto-sync]", e.message); // автосинхронизация не должна спамить ошибками в интерфейс
-      }
-    }
-  }
-  document.getElementById("btnSyncKaspi2").addEventListener("click", ()=>performKaspiSync({silent:false}));
-
-  // ---------- Индикатор "обновлено N назад" — живьём показывает, реально ли
-  // работает автосинхронизация, а не просто верим, что она где-то там тикает ----------
-  let lastSyncTime = null;
-  function updateLastSyncIndicator(){
-    const el = document.getElementById("lastSyncIndicator");
-    if(!el) return;
-    if(!lastSyncTime){ el.textContent = ""; return; }
-    const seconds = Math.floor((Date.now() - lastSyncTime.getTime())/1000);
-    let text;
-    if(seconds < 60) text = `обновлено ${seconds} сек назад`;
-    else if(seconds < 3600) text = `обновлено ${Math.floor(seconds/60)} мин назад`;
-    else text = `обновлено ${Math.floor(seconds/3600)} ч назад`;
-    // Если давность подозрительно большая (авто-синхронизация должна была
-    // сработать за это время) — подсвечиваем красным, чтобы было заметно.
-    const isStale = seconds > (AUTO_SYNC_INTERVAL_MS/1000) * 2;
-    el.innerHTML = `<span style="color:${isStale?'var(--red)':'var(--ink-soft)'};">🕐 ${text}</span>`;
-  }
-  setInterval(updateLastSyncIndicator, 5000);
-
-  // ---------- Автосинхронизация с Kaspi ----------
-  // Работает, пока страница открыта в браузере. Это НЕ серверный cron: на
-  // бесплатном тарифе Render сервер "засыпает" без входящих запросов, поэтому
-  // фоновая проверка из открытой вкладки надёжнее, чем таймер на сервере.
-  // При обнаружении новых заказов показывает всплывающее уведомление (toast).
-  const AUTO_SYNC_INTERVAL_MS = 3 * 60 * 1000; // каждые 3 минуты
-  let autoSyncTimer = null;
-  function startAutoSync(){
-    if(autoSyncTimer) return;
-    autoSyncTimer = setInterval(()=>performKaspiSync({silent:true}), AUTO_SYNC_INTERVAL_MS);
-  }
-  function stopAutoSync(){
-    if(autoSyncTimer){ clearInterval(autoSyncTimer); autoSyncTimer = null; }
-  }
-
-  function receiveStatusLabel(s){
-    if(s==="arrived") return "Пришло";
-    if(s==="problem") return "Проблема";
-    if(s==="transit") return "В пути";
-    return "Новый"; // s==="new" или не задано вовсе
-  }
-  function fmtDate(d){
-    if(!d) return "—";
-    const m = String(d).match(/^(\d{4})-(\d{2})-(\d{2})/);
-    return m ? `${m[3]}.${m[2]}.${m[1]}` : d;
-  }
-  // Kaspi не присылает дату отмены — считаем от updatedAt (после правки на
-  // сервере это теперь дата, когда статус реально последний раз поменялся,
-  // а не любая синхронизация подряд)
-  function daysSinceStatusChange(o){
-    const d = (o.updatedAt||"").slice(0,10);
-    if(!d) return null;
-    const dt = new Date(d+"T00:00:00");
-    if(isNaN(dt)) return null;
-    return Math.max(0, Math.round((Date.now()-dt)/86400000));
-  }
-  function daysInTransit(o){
-    if(!o.orderDate) return null;
-    const start = new Date(o.orderDate+"T00:00:00");
-    if(isNaN(start)) return null;
-    const end = o.arrivedDate ? new Date(o.arrivedDate+"T00:00:00") : new Date();
-    if(isNaN(end)) return null;
-    return Math.max(0, Math.round((end-start)/86400000));
-  }
-  // Товар, который пришёл больше ARCHIVE_AFTER_DAYS дней назад, считается
-  // "архивным" — уходит из основного списка и из активных итогов, чтобы
-  // дашборд не разрастался бесконечно. Ничего не удаляется, только прячется
-  // (можно посмотреть через чекбокс "Показывать архив").
-  const ARCHIVE_AFTER_DAYS = 30;
-  function isArchivedOrder(o){
-    if((o.receiveStatus||'new') !== 'arrived' || !o.arrivedDate) return false;
-    const arrived = new Date(o.arrivedDate+"T00:00:00");
-    if(isNaN(arrived)) return false;
-    const daysSinceArrival = Math.round((Date.now()-arrived)/86400000);
-    return daysSinceArrival > ARCHIVE_AFTER_DAYS;
-  }
-  function money(n){
-    // Округление до целых чисел — без копеек/десятых, только чистое ₸
-    return Math.round(Number(n)||0).toLocaleString('ru-RU');
-  }
-  let selectedOrderIds = new Set();
-  let selectedKaspiOrderIds = new Set();
-  const OCOL_DEFS = [
-    {key:"num", label:"№", sort:"receiptNumber", always:true},
-    {key:"photo", label:"", always:true},
-    {key:"name", label:"Артикул/Название", sort:"name", always:true},
-    {key:"qty", label:"Кол-во", sort:"qty", always:true},
-    {key:"date", label:"Дата заказа", sort:"orderDate", always:true},
-    {key:"arrived", label:"Дата прихода", sort:"arrivedDate"},
-    {key:"days", label:"Дней в пути", sort:"days", num:true},
-    {key:"cny", label:"Юань", num:true},
-    {key:"kzt", label:"₸/шт", num:true},
-    {key:"delivery", label:"Доставка", num:true},
-    {key:"total", label:"Итого", sort:"total", num:true},
-    {key:"sale", label:"Продажа", num:true},
-    {key:"margin", label:"Маржа", num:true},
-    {key:"category", label:"Категория", sort:"category"},
-    {key:"status", label:"Статус", sort:"receiveStatus", always:true}
-  ];
-  let ordersVisibleCols = JSON.parse(localStorage.getItem("ordersCols")||"null") || {arrived:true,days:true,cny:true,kzt:true,delivery:true,total:true,sale:true,margin:true,category:true};
-  let ordersFilterStatus = "all";
-  let ordersFilterCategory = "all";
-  let ordersSearchQuery = "";
-  let showArchivedOrders = false;
-  document.getElementById("ordersSearch").addEventListener("input",(e)=>{
-    ordersSearchQuery = e.target.value.trim().toLowerCase();
-    document.getElementById("ordersSearchClear").style.display = e.target.value ? "" : "none";
-    renderOrders(false);
-  });
-  document.getElementById("ordersSearchClear").addEventListener("click", ()=>{
-    const input = document.getElementById("ordersSearch");
-    input.value = "";
-    ordersSearchQuery = "";
-    document.getElementById("ordersSearchClear").style.display = "none";
-    renderOrders(false);
-  });
-
-  document.getElementById("btnOrdersColSettings").addEventListener("click",(e)=>{
-    e.stopPropagation();
-    const pop = document.getElementById("ordersColPopover");
-    pop.style.display = pop.style.display==="none" ? "block":"none";
-  });
-  document.addEventListener("click",(e)=>{
-    const pop = document.getElementById("ordersColPopover");
-    if(pop && !pop.contains(e.target) && e.target.id!=="btnOrdersColSettings") pop.style.display="none";
-  });
-  document.querySelectorAll(".ocol").forEach(cb=>{
-    cb.checked = ordersVisibleCols[cb.dataset.col];
-    cb.addEventListener("change",()=>{
-      ordersVisibleCols[cb.dataset.col] = cb.checked;
-      localStorage.setItem("ordersCols", JSON.stringify(ordersVisibleCols));
-      renderOrders(false);
-    });
-  });
-  document.getElementById("ordersFilterStatus").addEventListener("change",(e)=>{ ordersFilterStatus = e.target.value; renderOrders(false); });
-  document.getElementById("ordersFilterCategory").addEventListener("change",(e)=>{ ordersFilterCategory = e.target.value; renderOrders(false); });
-  document.getElementById("showArchivedOrders").addEventListener("change",(e)=>{ showArchivedOrders = e.target.checked; renderOrders(false); });
-
-  let ordersSortKey = "receiptNumber";
-  let ordersSortDir = 1; // 1 asc, -1 desc
-  function sortOrders(list){
-    return list.slice().sort((a,b)=>{
-      let av, bv;
-      if(ordersSortKey==="days"){ av = daysInTransit(a)??-1; bv = daysInTransit(b)??-1; }
-      else if(ordersSortKey==="total"){
-        av = ((Number(a.buyPriceKzt)||0)+(Number(a.deliveryPrice)||0))*(Number(a.qty)||0);
-        bv = ((Number(b.buyPriceKzt)||0)+(Number(b.deliveryPrice)||0))*(Number(b.qty)||0);
-      }
-      else if(ordersSortKey==="name"){ av = (a.name||a.article||"").toLowerCase(); bv = (b.name||b.article||"").toLowerCase(); }
-      else { av = a[ordersSortKey]; bv = b[ordersSortKey]; }
-      if(av==null) av = "";
-      if(bv==null) bv = "";
-      if(av<bv) return -1*ordersSortDir;
-      if(av>bv) return 1*ordersSortDir;
-      return 0;
-    });
-  }
-  function renderOrders(refetchNotUsed){
-    // Сводка: сколько сейчас в пути и сколько уже пришло, плюс прогноз —
-    // сколько можно выручить, если продать по указанной цене "Продажа",
-    // прогноз прибыли (выручка минус закупка+доставка) и % маржи. Отдельно
-    // по "В пути", по "Пришло" и общий "Итого" по обеим группам сразу.
-    const transitOrders = orders.filter(o=>{ const s = o.receiveStatus||'new'; return s==='new' || s==='transit'; });
-    const arrivedOrders = orders.filter(o=>o.receiveStatus==='arrived' && !isArchivedOrder(o));
-    const archivedOrders = orders.filter(o=>isArchivedOrder(o));
-    const sumCost = (list)=> list.reduce((s,o)=> s + ((Number(o.buyPriceKzt)||0)+(Number(o.deliveryPrice)||0))*(Number(o.qty)||0), 0);
-    const sumQty = (list)=> list.reduce((s,o)=> s+(Number(o.qty)||0), 0);
-    // Прогноз продаж — если продать все позиции по цене "Продажа"
-    const sumRevenue = (list)=> list.reduce((s,o)=> s + (Number(o.salePrice)||0)*(Number(o.qty)||0), 0);
-    // Прогноз прибыли — прогноз продаж минус закупка+доставка
-    const sumProfit = (list)=> sumRevenue(list) - sumCost(list);
-    // Маржа, % — прибыль от суммы прогноза продаж
-    const marginPct = (list)=>{ const rev = sumRevenue(list); return rev ? (sumProfit(list)/rev*100) : 0; };
-
-    function statCard(label, list, borderColor){
-      const profit = sumProfit(list);
-      const profitColor = profit < 0 ? "var(--red)" : "var(--green)";
-      return `
-      <div class="stat-card" style="background:#fff;border:1px solid var(--line);border-left:4px solid ${borderColor};padding:12px 16px;min-width:240px;">
-        <div style="font-size:11px;text-transform:uppercase;color:var(--ink-soft);">${label}</div>
-        <div style="font-family:var(--serif,serif);font-size:20px;">${list.length} поз. · ${sumQty(list)} шт</div>
-        <div style="font-size:12.5px;color:var(--ink-soft);margin-top:6px;line-height:1.7;">
-          Закупка: <b style="color:var(--ink);">${money(sumCost(list))} ₸</b><br>
-          Прогноз продаж: <b style="color:var(--ink);">${money(sumRevenue(list))} ₸</b><br>
-          Прогноз прибыли: <b style="color:${profitColor};">${money(profit)} ₸</b> · маржа ${Math.round(marginPct(list))}%
-        </div>
-      </div>`;
-    }
-
-    document.getElementById("ordersStats").innerHTML =
-      statCard("В пути сейчас", transitOrders, "var(--amber)") +
-      statCard("Пришло", arrivedOrders, "var(--green)") +
-      statCard("Итого (активные)", [...transitOrders, ...arrivedOrders], "var(--navy)") +
-      (archivedOrders.length ? statCard(`Архив (>${ARCHIVE_AFTER_DAYS} дн.)`, archivedOrders, "#8A8F99") : "");
-
-    // список категорий в фильтре
-    const catSelect = document.getElementById("ordersFilterCategory");
-    const usedCats = Array.from(new Set(orders.map(o=>o.category).filter(Boolean))).sort();
-    const prevCatVal = catSelect.value;
-    catSelect.innerHTML = `<option value="all">Все категории</option>` + usedCats.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join("");
-    catSelect.value = usedCats.includes(prevCatVal) ? prevCatVal : "all";
-    ordersFilterCategory = catSelect.value;
-
-    // заголовок с учётом видимых колонок
-    const cols = OCOL_DEFS.filter(c=>c.always || ordersVisibleCols[c.key]);
-    document.getElementById("ordersHead").innerHTML = "<tr><th></th>" + cols.map(c=>{
-      if(!c.sort) return `<th class="${c.num?'num':''}">${c.label}</th>`;
-      const active = ordersSortKey===c.sort;
-      const arrow = active ? (ordersSortDir===1?" ▲":" ▼") : "";
-      return `<th class="sortable ${c.num?'num':''}" data-sort="${c.sort}">${c.label}${arrow}</th>`;
-    }).join("") + "<th></th></tr>";
-    document.querySelectorAll('#ordersHead th.sortable').forEach(th=>{
-      th.addEventListener("click", ()=>{
-        const key = th.dataset.sort;
-        if(ordersSortKey === key) ordersSortDir *= -1; else { ordersSortKey = key; ordersSortDir = 1; }
-        renderOrders(false);
-      });
-    });
-
-    let list = orders.slice();
-    if(!showArchivedOrders) list = list.filter(o=>!isArchivedOrder(o));
-    if(ordersFilterStatus!=="all") list = list.filter(o=>(o.receiveStatus||'transit')===ordersFilterStatus);
-    if(ordersFilterCategory!=="all") list = list.filter(o=>o.category===ordersFilterCategory);
-    if(ordersSearchQuery) list = list.filter(o=>
-      (o.article||"").toLowerCase().includes(ordersSearchQuery) ||
-      (o.name||"").toLowerCase().includes(ordersSearchQuery)
-    );
-    list = sortOrders(list);
-
-    const cellFor = (o,key)=>{
-      const days = daysInTransit(o);
-      const totalCost = ((Number(o.buyPriceKzt)||0) + (Number(o.deliveryPrice)||0)) * (Number(o.qty)||0);
-      const margin = (Number(o.salePrice)||0) - (Number(o.buyPriceKzt)||0) - (Number(o.deliveryPrice)||0);
-      if(key==="num") return esc(o.receiptNumber||"");
-      if(key==="photo") return o.photo?`<img class="thumb" src="${esc(o.photo)}" style="cursor:zoom-in;" onclick="window.open('${esc(o.photo)}','_blank')">`:"";
-      if(key==="name") return `${esc(o.name||o.article||"—")}<div style="font-size:11px;color:var(--ink-soft)">${esc(o.article||"")}</div>`;
-      if(key==="qty"){
-        if(o.actualQty!=null && Number(o.actualQty)!==Number(o.qty)){
-          const diff = Number(o.actualQty) - Number(o.qty);
-          return `${esc(o.qty)} → <b>${esc(o.actualQty)}</b> <span style="color:var(--red);font-size:11px;" title="Отклонение от заказанного">(${diff>0?'+':''}${diff})</span>`;
-        }
-        return esc(o.qty||"");
-      }
-      if(key==="date") return `<span class="mono" style="white-space:nowrap;">${fmtDate(o.orderDate)}</span>`;
-      if(key==="arrived") return `<span class="mono" style="white-space:nowrap;">${fmtDate(o.arrivedDate)}</span>`;
-      if(key==="days") return days==null?"—":`<span style="${days>14?'color:var(--red);font-weight:700;':''}">${days}</span>`;
-      if(key==="cny") return money(o.buyPriceCny)+" ¥";
-      if(key==="kzt") return money(o.buyPriceKzt)+" ₸";
-      if(key==="delivery") return money(o.deliveryPrice)+" ₸";
-      if(key==="total") return `<b>${money(totalCost)} ₸</b>`;
-      if(key==="sale") return o.salePrice?money(o.salePrice)+" ₸":"—";
-      if(key==="margin") return o.salePrice?`<span style="${margin<0?'color:var(--red);':margin>0?'color:var(--green);':''}">${money(margin)} ₸</span>`:"—";
-      if(key==="category") return esc(o.category||"—");
-      if(key==="status"){
-        const archivedTag = isArchivedOrder(o) ? ` <span style="color:var(--ink-soft);font-size:10.5px;">· архив</span>` : "";
-        return `<span class="stamp ${o.receiveStatus||'new'}">${receiveStatusLabel(o.receiveStatus)}</span>${archivedTag}`;
-      }
-      return "";
-    };
-
-    const body = document.getElementById("ordersBody");
-    body.innerHTML = list.map(o=>`
-      <tr>
-        <td><input type="checkbox" class="order-select" data-id="${o.id}" ${selectedOrderIds.has(o.id)?'checked':''}></td>
-        ${cols.map(c=>`<td class="${c.num?'num':''}">${cellFor(o,c.key)}</td>`).join("")}
-        <td style="white-space:nowrap;"><button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__openOrder('${o.id}')">Открыть</button> <button class="btn secondary" style="padding:4px 8px;font-size:12px" title="Печать этикетки" onclick="window.__printOrderLabel('${o.id}')">🏷️</button> <button class="btn secondary" style="padding:4px 8px;font-size:12px" title="Создать копию (для повторного заказа)" onclick="window.__copyOrder('${o.id}')">📋</button></td>
-      </tr>`).join("") || `<tr><td colspan="${cols.length+2}" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет записей, подходящих под фильтр</td></tr>`;
-    document.querySelectorAll(".order-select").forEach(cb=>{
-      cb.addEventListener("change", ()=>{
-        if(cb.checked) selectedOrderIds.add(cb.dataset.id); else selectedOrderIds.delete(cb.dataset.id);
-        updateBulkDeleteBtn();
-      });
-    });
-    updateBulkDeleteBtn();
-  }
-
-  // ---------- Управление категориями (отдельное окно, без prompt) ----------
-  document.getElementById("btnManageCategories").addEventListener("click", async ()=>{
-    renderCategoriesManagePanel();
-    document.getElementById("categoriesManageOverlay").classList.add("show");
-  });
-  function renderCategoriesManagePanel(){
-    const body = document.getElementById("categoriesManageBody");
-    body.innerHTML = categories.length ? categories.map(c=>`
-      <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--line);">
-        <span>${esc(c)}</span>
-        <button class="btn danger" style="padding:4px 10px;font-size:12px" onclick="window.__deleteCategory('${esc(c)}')">Удалить</button>
-      </div>`).join("") : `<div style="color:var(--ink-soft);">Пока нет категорий</div>`;
-  }
-  window.__deleteCategory = async function(name){
-    if(!confirm(`Удалить категорию «${name}»? Записи, где она указана, не удалятся — просто останутся без категории при следующем изменении.`)) return;
-    try{
-      await api("/price/categories/"+encodeURIComponent(name), {method:"DELETE"});
-    }catch(e){}
-    categories = await api("/price/categories/list");
-    renderCategoriesManagePanel();
-    renderOrders(false);
-  };
-  document.getElementById("btnAddCategoryManage").addEventListener("click", async ()=>{
-    const input = document.getElementById("newCategoryInput");
-    const name = input.value.trim();
-    if(!name) return;
-    categories = await api("/price/categories/list", {method:"POST", body:JSON.stringify({name})});
-    input.value = "";
-    renderCategoriesManagePanel();
-  });
-  document.getElementById("categoriesManageClose").addEventListener("click", ()=>{
-    document.getElementById("categoriesManageOverlay").classList.remove("show");
-  });
-  function updateBulkDeleteBtn(){
-    const btn = document.getElementById("btnBulkDeleteOrders");
-    if(!btn) return;
-    btn.style.display = selectedOrderIds.size ? "" : "none";
-    btn.textContent = `🗑️ Удалить выбранное (${selectedOrderIds.size})`;
-  }
-  // ORDER MODAL
-  const orderOverlay = document.getElementById("orderOverlay");
-  window.__openOrder = function(id){
-    editingOrderId = id || null;
-    const o = id ? orders.find(x=>x.id===id) : null;
-    document.getElementById("orderModalTitle").textContent = o ? "Заказ" : "Новый заказ";
-    const arrInfo = document.getElementById("orderArrivedDateInfo");
-    if(o?.arrivedDate){ arrInfo.style.display=""; arrInfo.textContent = `✓ Пришло: ${fmtDate(o.arrivedDate)}`; }
-    else arrInfo.style.display = "none";
-    document.getElementById("orderDeleteBtn").style.display = o ? "" : "none";
-    document.getElementById("o_article").value = o?.article||"";
-    document.getElementById("o_name").value = o?.name||"";
-    document.getElementById("o_qty").value = o?.qty??1;
-    document.getElementById("o_actualqty").value = o?.actualQty ?? "";
-    document.getElementById("o_status").value = o?.receiveStatus||"new";
-    document.getElementById("o_orderdate").value = o?.orderDate || new Date().toISOString().slice(0,10);
-    document.getElementById("o_cny").value = o?.buyPriceCny ?? "";
-    document.getElementById("o_kzt").value = o?.buyPriceKzt ?? "";
-    document.getElementById("o_delivery").value = o?.deliveryPrice ?? "";
-    document.getElementById("o_sale").value = o?.salePrice ?? "";
-    populateCategorySelect(o?.category||"", "o_category");
-    document.getElementById("o_note").value = o?.note||"";
-    currentOrderPhoto = o?.photo || null;
-    updateOrderPhotoPreview();
-    orderOverlay.classList.add("show");
-  };
-  document.getElementById("btnAddOrder").addEventListener("click", ()=>window.__openOrder(null));
-  document.getElementById("orderCancelBtn").addEventListener("click", ()=>orderOverlay.classList.remove("show"));
-  document.getElementById("orderSaveBtn").addEventListener("click", async ()=>{
-    const data = {
-      article: document.getElementById("o_article").value.trim(),
-      name: document.getElementById("o_name").value.trim(),
-      qty: parseFloat(document.getElementById("o_qty").value)||0,
-      actualQty: document.getElementById("o_actualqty").value===""?null:parseFloat(document.getElementById("o_actualqty").value)||0,
-      receiveStatus: document.getElementById("o_status").value,
-      orderDate: document.getElementById("o_orderdate").value,
-      buyPriceCny: parseFloat(document.getElementById("o_cny").value)||0,
-      buyPriceKzt: parseFloat(document.getElementById("o_kzt").value)||0,
-      deliveryPrice: parseFloat(document.getElementById("o_delivery").value)||0,
-      salePrice: parseFloat(document.getElementById("o_sale").value)||0,
-      category: document.getElementById("o_category").value,
-      note: document.getElementById("o_note").value.trim(),
-      photo: currentOrderPhoto
-    };
-    try{
-      if(editingOrderId) await api("/orders/"+editingOrderId, {method:"PUT", body:JSON.stringify(data)});
-      else await api("/orders", {method:"POST", body:JSON.stringify(data)});
-      orderOverlay.classList.remove("show");
-      await loadAll(); toast("Сохранено");
-    }catch(e){ toast("Ошибка: "+e.message); }
-  });
-  document.getElementById("orderDeleteBtn").addEventListener("click", async ()=>{
-    if(!editingOrderId || !confirm("Удалить заказ?")) return;
-    await api("/orders/"+editingOrderId, {method:"DELETE"});
-    orderOverlay.classList.remove("show");
-    await loadAll(); toast("Удалено");
-  });
-
-  // Категории (общий список) — используется формой "Приход". Управление списком
-  // категорий — отдельная панель (btnManageCategories), редактирование самих
-  // товаров теперь только через "Справочник".
-  function populateCategorySelect(sel, elId){
-    elId = elId || "o_category";
-    const el = document.getElementById(elId);
-    el.innerHTML = categories.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join("") + `<option value="__add__">+ Добавить категорию...</option>`;
-    el.value = categories.includes(sel) ? sel : (categories[0]||"__add__");
-  }
-  async function handleCategoryAdd(e, elId){
-    if(e.target.value === "__add__"){
-      const name = prompt("Название новой категории:");
-      if(name && name.trim()){
-        categories = await api("/price/categories/list", {method:"POST", body:JSON.stringify({name:name.trim()})});
-        populateCategorySelect(name.trim(), elId);
-      } else populateCategorySelect(categories[0], elId);
-    }
-  }
-  document.getElementById("o_category").addEventListener("change", (e)=>handleCategoryAdd(e, "o_category"));
-
-  // (старый обработчик кнопки синхронизации удалён — теперь используется btnSyncKaspi2 во вкладке «Заказы»)
-
-  // ---------- Роли: скрываем админ-разделы для склада ----------
-  function applyRoleUI(){
-    document.querySelectorAll(".admin-only").forEach(el=>{
-      el.style.display = (myRole === "admin") ? "" : "none";
-    });
-  }
-
-  // ---------- Журнал действий (админ) ----------
-  async function loadAudit(){
-    const rows = await api("/audit");
-    document.getElementById("auditBody").innerHTML = rows.map(r=>`
-      <tr>
-        <td class="mono" style="font-size:11px;">${esc((r.createdAt||"").slice(0,16).replace('T',' '))}</td>
-        <td>${esc(r.user||"")}</td>
-        <td>${esc(r.action)}</td>
-        <td class="mono" style="font-size:11px;">${esc(r.orderId||"")}</td>
-        <td>${esc(r.oldValue||"")}</td>
-        <td>${esc(r.newValue||"")}</td>
-        <td>${esc(r.comment||"")}</td>
-      </tr>`).join("") || `<tr><td colspan="7" style="text-align:center;color:var(--ink-soft);padding:20px;">Журнал пуст</td></tr>`;
-  }
-
-  // ---------- Пользователи (админ) ----------
-  async function loadUsers(){
-    const rows = await api("/auth/users");
-    document.getElementById("usersBody").innerHTML = rows.map(u=>`
-      <tr>
-        <td>${esc(u.username)}</td>
-        <td>${u.role==='admin'?'Админ':'Склад'}</td>
-        <td class="mono" style="font-size:11px;">${esc((u.created_at||"").slice(0,10))}</td>
-        <td><button class="btn danger" style="padding:4px 10px;font-size:12px" onclick="window.__deleteUser('${u.id}')">Удалить</button></td>
-      </tr>`).join("") || `<tr><td colspan="4" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет пользователей</td></tr>`;
-  }
-  document.getElementById("btnAddUser").addEventListener("click", async ()=>{
-    const username = prompt("Логин нового пользователя:");
-    if(!username) return;
-    const password = prompt("Пароль (минимум 4 символа):");
-    if(!password || password.length < 4){ toast("Пароль слишком короткий"); return; }
-    const role = confirm("Нажмите OK для роли «Админ», Отмена — для «Склад»") ? "admin" : "warehouse";
-    try{
-      await api("/auth/users", {method:"POST", body:JSON.stringify({username, password, role})});
-      await loadUsers();
-      toast("Пользователь создан");
-    }catch(e){ toast("Ошибка: "+e.message); }
-  });
-  window.__deleteUser = async function(id){
-    if(!confirm("Удалить пользователя?")) return;
-    await api("/auth/users/"+id, {method:"DELETE"});
-    await loadUsers();
-  };
-
-  // init: try /auth/me to see if already logged in
-  (async ()=>{
-    try{
-      const me = await api("/auth/me");
-      myRole = me.role;
-      document.getElementById("whoami").textContent = me.username + (me.role==='admin'?' (админ)':' (склад)');
-      applyRoleUI();
-      showApp();
-      await loadAll();
-      startAutoSync();
-    }catch(e){
-      showLogin();
-    }
-  })();
-})();
-</script>
-</body>
-</html>
+export default router;
