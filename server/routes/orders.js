@@ -266,6 +266,34 @@ router.post("/:id/kaspi-assemble", async (req, res) => {
     return res.status(400).json({ error: "no_token", message: `Не найден токен Kaspi для магазина «${row.shop}»` });
   }
 
+  // Сначала сверяем реальное ТЕКУЩЕЕ состояние у Kaspi — у нас в базе может
+  // быть устаревшая картина (заказ уже мог уйти дальше стадии сборки между
+  // синхронизациями). Если Kaspi уже считает его собранным/переданным дальше —
+  // просто обновляем свои данные, вместо того чтобы слать ASSEMBLE и получать
+  // отказ "текущий статус не позволяет это действие".
+  try {
+    const checkResp = await fetch(
+      `https://kaspi.kz/shop/api/v2/orders?filter[orders][code]=${encodeURIComponent(row.kaspi_code)}`,
+      { headers: { "Content-Type": "application/vnd.api+json", "X-Auth-Token": shopConfig.token }, signal: AbortSignal.timeout(15000) }
+    );
+    if (checkResp.ok) {
+      const checkJson = await checkResp.json();
+      const freshAttrs = checkJson?.data?.[0]?.attributes;
+      if (freshAttrs && freshAttrs.assembled) {
+        const now2 = new Date().toISOString();
+        db.prepare("UPDATE orders SET assembled=1, kaspi_status=?, delivery_state=?, updated_at=? WHERE id=?")
+          .run(freshAttrs.status, freshAttrs.state, now2, row.id);
+        return res.json({
+          ok: true, alreadyAssembled: true,
+          message: "У Kaspi этот заказ уже собран/передан дальше — наши данные были устаревшими, сейчас обновил их, отправлять ASSEMBLE не нужно"
+        });
+      }
+    }
+  } catch (e) {
+    console.error(`[kaspi-assemble] Не удалось сверить текущий статус перед отправкой (${row.kaspi_code}):`, e.message);
+    // не блокируем основной запрос из-за ошибки самой сверки — пробуем всё равно
+  }
+
   const formedPlaces = db.prepare("SELECT COUNT(*) as c FROM cargo_places WHERE order_id = ? AND formed = 1").get(req.params.id).c;
   const numberOfSpace = formedPlaces > 0 ? formedPlaces : 1;
   const requestBody = {
