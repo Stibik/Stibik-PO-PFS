@@ -1719,12 +1719,17 @@
     document.getElementById("kaspiBulkPushKaspi").onclick = async ()=>{
       const ids = Array.from(selectedKaspiOrderIds);
       if(!confirm(`Передать в Kaspi статус "собран" сразу для ${ids.length} заказов? Это реальные запросы к Kaspi.`)) return;
-      let ok=0, fail=0;
+      let ok=0; const errors = [];
       for(const id of ids){
+        const o = kaspiOrders.find(x=>x.id===id);
         try{ await api("/orders/"+id+"/kaspi-assemble", {method:"POST"}); ok++; }
-        catch(e){ fail++; }
+        catch(e){ errors.push(`№${o?.displayNumber||id}: ${e.message}`); }
       }
-      toast(`Передано: ${ok}${fail?', ошибок: '+fail:''}`);
+      if(errors.length){
+        alert(`Передано успешно: ${ok}\n\nОшибки (${errors.length}):\n`+errors.join("\n"));
+      } else {
+        toast(`Передано: ${ok}`);
+      }
       selectedKaspiOrderIds.clear();
       await renderKaspiOrders();
     };
