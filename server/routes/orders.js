@@ -281,7 +281,8 @@ router.post("/:id/kaspi-assemble", async (req, res) => {
     const resp = await fetch("https://kaspi.kz/shop/api/v2/orders", {
       method: "POST",
       headers: { "Content-Type": "application/vnd.api+json", "X-Auth-Token": shopConfig.token },
-      body: JSON.stringify(requestBody)
+      body: JSON.stringify(requestBody),
+      signal: AbortSignal.timeout(15000) // не ждём Kaspi дольше 15 сек — иначе получим невнятный 502 от самого Render раньше, чем свой ответ
     });
     const text = await resp.text();
     console.log(`[kaspi-assemble] Ответ Kaspi: статус ${resp.status}, тело:`, text.slice(0, 1000));
