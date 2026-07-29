@@ -2073,8 +2073,7 @@
     await renderWorkflow();
   };
   document.getElementById("wfAddCargoPlace").addEventListener("click", async ()=>{
-    const name = prompt("Название/номер места (необязательно):");
-    await api("/orders/"+wfCurrentOrder.id+"/cargo-places", {method:"POST", body:JSON.stringify({name})});
+    await api("/orders/"+wfCurrentOrder.id+"/cargo-places", {method:"POST", body:JSON.stringify({name:null})});
     await renderWorkflow();
   });
 
