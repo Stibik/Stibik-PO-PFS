@@ -1674,6 +1674,7 @@
         <td>
           <button class="btn amber" style="padding:4px 10px;font-size:12px" onclick="window.__openWorkflow('${o.id}')">Обработка</button>
           <button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__openKaspiDetail('${o.id}')">Детали</button>
+          ${o.status==="label_printed" ? `<button class="btn secondary" style="padding:4px 10px;font-size:12px;display:block;margin-top:4px;" onclick="window.__quickAdvance('${o.id}')">✅ Готово к отгрузке</button>` : ""}
         </td>
       </tr>`).join("") || `<tr><td colspan="${cols.length+2}" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет заказов на этой стадии</td></tr>`;
 
@@ -1713,6 +1714,7 @@
       <button class="btn secondary" id="kaspiBulkPrint" style="margin-left:12px;">🖨️ Печать накладных</button>
       <button class="btn secondary" id="kaspiBulkPushKaspi">📤 Передать в Kaspi</button>
       <button class="btn secondary" id="kaspiBulkConfirmPreorder">📦 Подтвердить предзаказы</button>
+      <button class="btn secondary" id="kaspiBulkQuickAdvance">✅ Готово к отгрузке (группой)</button>
       <button class="btn secondary" id="kaspiBulkClear" style="margin-left:auto;">Снять выбор</button>
     `;
     document.getElementById("kaspiBulkClear").onclick = ()=>{ selectedKaspiOrderIds.clear(); renderKaspiOrders(false); };
@@ -1764,6 +1766,27 @@
         alert(`Подтверждено: ${ok}\n\nОшибки (${errors.length}):\n`+errors.join("\n"));
       } else {
         toast(`Подтверждено предзаказов: ${ok}`);
+      }
+      selectedKaspiOrderIds.clear();
+      await renderKaspiOrders();
+    };
+
+    document.getElementById("kaspiBulkQuickAdvance").onclick = async ()=>{
+      const ids = Array.from(selectedKaspiOrderIds);
+      const eligibleIds = ids.filter(id=>kaspiOrders.find(o=>o.id===id)?.status==="label_printed");
+      const skipped = ids.length - eligibleIds.length;
+      if(!eligibleIds.length){ toast("Среди выбранных нет заказов на шаге «Этикетка готова»"); return; }
+      if(skipped) toast(`Пропущено (не на нужном шаге): ${skipped}`);
+      let ok=0; const errors = [];
+      for(const id of eligibleIds){
+        const o = kaspiOrders.find(x=>x.id===id);
+        try{ await api("/orders/"+id+"/quick-advance", {method:"POST"}); ok++; }
+        catch(e){ errors.push(`№${o?.displayNumber||id}: ${e.message}`); }
+      }
+      if(errors.length){
+        alert(`Готово: ${ok}\n\nОшибки (${errors.length}):\n`+errors.join("\n"));
+      } else {
+        toast(`Готово к отгрузке: ${ok}`);
       }
       selectedKaspiOrderIds.clear();
       await renderKaspiOrders();
@@ -1888,6 +1911,18 @@
 
   let wfCurrentOrder = null;
   let wfPrintOrderId = null;
+
+  // Быстрое действие прямо из списка — без захода в карточку. Карточка (модалка)
+  // нужна только для отмены/деталей/исправления, не для повседневного шага.
+  window.__quickAdvance = async function(id){
+    try{
+      await api("/orders/"+id+"/quick-advance", {method:"POST"});
+      toast("Готово к отгрузке");
+      await renderKaspiOrders();
+    }catch(e){
+      toast("Не получилось: "+e.message);
+    }
+  };
 
   window.__openWorkflow = async function(id){
     const order = await api("/orders/"+id);
