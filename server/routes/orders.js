@@ -194,6 +194,39 @@ router.post("/:id/transition", (req, res) => {
   res.json(rowToOrder(updated));
 });
 
+// Быстрое действие прямо из списка, без открытия карточки — только для самого
+// частого шага (этикетка готова → готов к отгрузке). Если грузовое место ещё
+// не сформировано — создаёт его автоматически (одно, с дефолтным номером),
+// вместо того чтобы заставлять сначала зайти внутрь и нажать "+Добавить место".
+// Модалка нужна только для отмены/деталей/исправления — это ускоряет обычный,
+// повторяющийся путь.
+router.post("/:id/quick-advance", (req, res) => {
+  const row = db.prepare("SELECT * FROM orders WHERE id = ?").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  if (row.status !== "label_printed") {
+    return res.status(400).json({ error: "wrong_status", message: "Быстрое действие доступно только на шаге «Этикетка готова»" });
+  }
+
+  const now = new Date().toISOString();
+  const places = db.prepare("SELECT * FROM cargo_places WHERE order_id = ?").all(row.id);
+  const hasFormed = places.some(p => p.formed);
+  if (!hasFormed) {
+    const placeNumber = places.length + 1;
+    db.prepare(`INSERT INTO cargo_places (id, order_id, place_number, name, formed, formed_at, formed_by)
+                VALUES (?, ?, ?, ?, 1, ?, ?)`)
+      .run(uid(), row.id, placeNumber, null, now, req.session.username);
+  }
+
+  db.prepare("UPDATE orders SET status='ready', updated_at=? WHERE id=?").run(now, row.id);
+  db.prepare(`INSERT INTO status_history (order_id, from_status, to_status, user, reason, is_correction, created_at)
+              VALUES (?, ?, 'ready', ?, 'Быстрое действие из списка', 0, ?)`)
+    .run(row.id, row.status, req.session.username, now);
+  logAudit({ user: req.session.username, action: "quick_advance", orderId: row.id, oldValue: row.status, newValue: "ready" });
+
+  const updatedRow = db.prepare("SELECT * FROM orders WHERE id = ?").get(row.id);
+  res.json(rowToOrder(updatedRow));
+});
+
 router.get("/:id/history", (req, res) => {
   const rows = db.prepare("SELECT * FROM status_history WHERE order_id = ? ORDER BY id ASC").all(req.params.id);
   res.json(rows.map(r => ({
