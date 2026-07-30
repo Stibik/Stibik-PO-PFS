@@ -1709,12 +1709,20 @@
     }
     if(count===0){ bar.style.display="none"; return; }
     bar.style.display = "flex";
+
+    const selectedOrders = Array.from(selectedKaspiOrderIds).map(id=>kaspiOrders.find(o=>o.id===id)).filter(Boolean);
+    const canPrint = selectedOrders.some(o=>o.waybillUrl);
+    const canPush = selectedOrders.some(o=>!o.assembled && !o.preOrder && o.status!=="cancelled" && o.status!=="shipped");
+    const canConfirmPreorder = selectedOrders.some(o=>o.preOrder);
+    const canQuickAdvance = selectedOrders.some(o=>o.status==="label_printed");
+    const dis = (ok)=> ok ? "" : "disabled style=\"opacity:0.35; cursor:not-allowed;\"";
+
     bar.innerHTML = `
       <span>Выбрано: ${count}</span>
-      <button class="btn secondary" id="kaspiBulkPrint" style="margin-left:12px;">🖨️ Печать накладных</button>
-      <button class="btn secondary" id="kaspiBulkPushKaspi">📤 Передать в Kaspi</button>
-      <button class="btn secondary" id="kaspiBulkConfirmPreorder">📦 Подтвердить предзаказы</button>
-      <button class="btn secondary" id="kaspiBulkQuickAdvance">✅ Готово к отгрузке (группой)</button>
+      <button class="btn secondary" id="kaspiBulkPrint" style="margin-left:12px;" ${dis(canPrint)}>🖨️ Печать накладных</button>
+      <button class="btn secondary" id="kaspiBulkPushKaspi" ${dis(canPush)}>📤 Передать в Kaspi</button>
+      <button class="btn secondary" id="kaspiBulkConfirmPreorder" ${dis(canConfirmPreorder)}>📦 Подтвердить предзаказы</button>
+      <button class="btn secondary" id="kaspiBulkQuickAdvance" ${dis(canQuickAdvance)}>✅ Готово к отгрузке (группой)</button>
       <button class="btn secondary" id="kaspiBulkClear" style="margin-left:auto;">Снять выбор</button>
     `;
     document.getElementById("kaspiBulkClear").onclick = ()=>{ selectedKaspiOrderIds.clear(); renderKaspiOrders(false); };
