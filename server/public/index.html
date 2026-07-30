@@ -1473,6 +1473,11 @@
     if(o.kaspiStatus==="RETURN_REQUESTED" || o.kaspiStatus==="RETURNED") return "returns";
     if(o.deliveryState==="ARCHIVE") return "archive";
     if(o.kaspiStatus==="COMPLETED") return "completed";
+    // Ручной перенос пользователем (кнопка "В упаковку") — приоритет над тем,
+    // что говорят сырые поля Kaspi. Как только пользователь решил заняться
+    // предзаказом, он должен оставаться в "Упаковке", даже если preOrder у
+    // Kaspi всё ещё true и близкого срока courierTransmissionPlanningDate нет.
+    if(o.manualPacking) return "packing";
     // Кабинет Kaspi переводит заказ в "Упаковка" не по флагу assembled, а когда
     // приближается срок упаковки (courierTransmissionPlanningDate) — даже если
     // preOrder ещё true и assembled ещё false. Проверено на реальном заказе:
@@ -1707,6 +1712,7 @@
       <span>Выбрано: ${count}</span>
       <button class="btn secondary" id="kaspiBulkPrint" style="margin-left:12px;">🖨️ Печать накладных</button>
       <button class="btn secondary" id="kaspiBulkPushKaspi">📤 Передать в Kaspi</button>
+      <button class="btn secondary" id="kaspiBulkConfirmPreorder">📦 Подтвердить предзаказы</button>
       <button class="btn secondary" id="kaspiBulkClear" style="margin-left:auto;">Снять выбор</button>
     `;
     document.getElementById("kaspiBulkClear").onclick = ()=>{ selectedKaspiOrderIds.clear(); renderKaspiOrders(false); };
@@ -1721,7 +1727,7 @@
       const preOrderIds = ids.filter(id=>kaspiOrders.find(o=>o.id===id)?.preOrder);
       const eligibleIds = ids.filter(id=>!kaspiOrders.find(o=>o.id===id)?.preOrder);
       if(preOrderIds.length){
-        toast(`Пропущено предзаказов (Kaspi пока не разрешает для них): ${preOrderIds.length}`);
+        toast(`Пропущено предзаказов: ${preOrderIds.length} — для них нужна кнопка «Подтвердить предзаказы»`);
       }
       if(!eligibleIds.length) return;
       if(!confirm(`Передать в Kaspi статус "собран" сразу для ${eligibleIds.length} заказов? Это реальные запросы к Kaspi.`)) return;
@@ -1738,6 +1744,26 @@
         alert(`Передано успешно: ${ok}${alreadyDone?`\nБыли уже собраны у Kaspi (просто обновили у себя): ${alreadyDone}`:''}\n\nОшибки (${errors.length}):\n`+errors.join("\n"));
       } else {
         toast(`Передано: ${ok}${alreadyDone?`, уже было готово: ${alreadyDone}`:''}`);
+      }
+      selectedKaspiOrderIds.clear();
+      await renderKaspiOrders();
+    };
+
+    document.getElementById("kaspiBulkConfirmPreorder").onclick = async ()=>{
+      const ids = Array.from(selectedKaspiOrderIds);
+      const preOrderIds = ids.filter(id=>kaspiOrders.find(o=>o.id===id)?.preOrder);
+      if(!preOrderIds.length){ toast("Среди выбранных нет предзаказов"); return; }
+      if(!confirm(`Подтвердить готовность у Kaspi сразу для ${preOrderIds.length} предзаказов? Это реальные запросы к Kaspi.`)) return;
+      let ok=0; const errors = [];
+      for(const id of preOrderIds){
+        const o = kaspiOrders.find(x=>x.id===id);
+        try{ await api("/orders/"+id+"/kaspi-preorder-arrived", {method:"POST"}); ok++; }
+        catch(e){ errors.push(`№${o?.displayNumber||id}: ${e.message}`); }
+      }
+      if(errors.length){
+        alert(`Подтверждено: ${ok}\n\nОшибки (${errors.length}):\n`+errors.join("\n"));
+      } else {
+        toast(`Подтверждено предзаказов: ${ok}`);
       }
       selectedKaspiOrderIds.clear();
       await renderKaspiOrders();
@@ -1908,18 +1934,16 @@
     // Двусторонняя синхронизация: пока Kaspi не знает, что мы собрали заказ
     // (assembled=false у нас — это то же самое поле, что читаем при синхронизации),
     // показываем кнопку "толкнуть" статус туда.
-    // ВАЖНО: проверено на двух реальных заказах — Kaspi отклоняет ASSEMBLE для
-    // preOrder=true с ошибкой "current order status does not allow this action".
-    // Документация Kaspi подтверждает: в их собственном примере успешной сборки
-    // preOrder=false. Пока похоже, что предзаказ должен сам перестать им быть
-    // на стороне Kaspi, прежде чем сборка вообще возможна — поэтому кнопку для
-    // таких заказов не показываем (не даём нажать то, что заведомо откажет).
+    // Для предзаказов (preOrder=true) — ОТДЕЛЬНАЯ кнопка другим методом (ARRIVED),
+    // ASSEMBLE для предзаказов не работает (подтверждено и практикой, и
+    // независимым источником — это ограничение самого API Kaspi).
     if(!order.assembled && order.status !== "cancelled" && order.status !== "shipped"){
       if(order.preOrder){
-        const note = document.createElement("div");
-        note.style.cssText = "font-size:12px; color:var(--ink-soft); padding:8px 0;";
-        note.textContent = "Это предзаказ у Kaspi — по нашим наблюдениям, передать в доставку пока нельзя, пока Kaspi сам не снимет пометку «предзаказ»";
-        primaryRow.appendChild(note);
+        const preorderBtn = document.createElement("button");
+        preorderBtn.className = "btn secondary";
+        preorderBtn.textContent = "📦 Подтвердить готовность предзаказа";
+        preorderBtn.onclick = ()=>confirmPreorderArrived(order.id);
+        primaryRow.appendChild(preorderBtn);
       } else {
         const kaspiBtn = document.createElement("button");
         kaspiBtn.className = "btn secondary";
@@ -2015,6 +2039,21 @@
     btn.disabled = false; btn.textContent = "Да, отменить заказ окончательно";
     closeCancelFlow();
   });
+
+  async function confirmPreorderArrived(orderId){
+    if(!confirm("Подтвердить у Kaspi, что предзаказ готов (\"Прибыл\")? Это реальный запрос к Kaspi, снимет пометку «предзаказ».")) return;
+    try{
+      await api("/orders/"+orderId+"/kaspi-preorder-arrived", {method:"POST"});
+      toast("Подтверждено — пометка «предзаказ» должна исчезнуть при следующей синхронизации");
+    }catch(e){
+      toast("Kaspi не принял: "+e.message);
+      return;
+    }
+    try{
+      wfCurrentOrder = await api("/orders/"+orderId);
+      await renderWorkflow();
+    }catch(e){ console.error("Не удалось обновить карточку:", e); }
+  }
 
   async function pushToKaspi(orderId){
     if(!confirm("Передать статус \"собран\" в сам Kaspi? Это реальный запрос к Kaspi, не только внутри нашей системы.")) return;
