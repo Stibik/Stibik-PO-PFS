@@ -40,6 +40,7 @@ function rowToOrder(row) {
     kaspiStatus: row.kaspi_status,
     deliveryState: row.delivery_state,
     preOrder: !!row.pre_order,
+    manualPacking: !!row.manual_packing,
     assembled: !!row.assembled,
     courierTransmissionDate: row.courier_transmission_date,
     courierTransmissionPlanningDate: row.courier_transmission_planning_date,
@@ -253,6 +254,74 @@ router.get("/:id/print-log", (req, res) => {
 // сформировано у нас — ровно то же число, что и в "Грузовые места" ниже.
 // НЕ ПРОВЕРЕНО на реальном токене (в песочнице разработки нет сети до
 // kaspi.kz) — первый реальный вызов стоит сделать на некритичном заказе.
+// Ручной перенос предзаказа в нашу внутреннюю "Упаковку" — не трогает Kaspi
+// вообще, только наш собственный флаг классификации. Позволяет начать
+// работу над заказом (места, печать), пока Kaspi ещё официально считает
+// его предзаказом.
+router.post("/:id/move-to-packing", (req, res) => {
+  const row = db.prepare("SELECT * FROM orders WHERE id = ?").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  db.prepare("UPDATE orders SET manual_packing = 1 WHERE id = ?").run(req.params.id);
+  logAudit({ user: req.session.username, action: "manual_move_to_packing", orderId: req.params.id });
+  res.json({ ok: true });
+});
+
+// Подтверждение готовности ПРЕДЗАКАЗА (не путать с kaspi-assemble ниже!).
+// По официальной инструкции Kaspi "Как обработать предзаказ": кнопка "Прибыл"
+// в кабинете продавца → статус ARRIVED. Независимый источник (интеграция
+// МойСклад-Kaspi) прямо подтверждает: ASSEMBLE для предзаказов НЕ работает —
+// это ограничение самого API Kaspi. Значит для снятия пометки "предзаказ"
+// нужен именно этот метод, а не ASSEMBLE.
+router.post("/:id/kaspi-preorder-arrived", async (req, res) => {
+  const row = db.prepare("SELECT * FROM orders WHERE id = ?").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  if (row.source !== "kaspi" || !row.kaspi_order_id) {
+    return res.status(400).json({ error: "not_kaspi_order", message: "Это не заказ из Kaspi" });
+  }
+  if (!row.pre_order) {
+    return res.status(400).json({ error: "not_preorder", message: "Этот заказ и так не помечен как предзаказ" });
+  }
+
+  const shops = getKaspiShops();
+  const shopConfig = shops.find(s => s.name === row.shop);
+  if (!shopConfig || !shopConfig.token) {
+    return res.status(400).json({ error: "no_token", message: `Не найден токен Kaspi для магазина «${row.shop}»` });
+  }
+
+  const requestBody = {
+    data: {
+      type: "orders",
+      id: row.kaspi_order_id,
+      attributes: { code: row.kaspi_code, status: "ARRIVED" }
+    }
+  };
+  console.log(`[kaspi-preorder-arrived] Заказ ${row.id} (${row.kaspi_code}, ${row.shop}) — отправляю:`, JSON.stringify(requestBody));
+
+  try {
+    const resp = await fetch("https://kaspi.kz/shop/api/v2/orders", {
+      method: "POST",
+      headers: { "Content-Type": "application/vnd.api+json", "X-Auth-Token": shopConfig.token },
+      body: JSON.stringify(requestBody),
+      signal: AbortSignal.timeout(15000)
+    });
+    const text = await resp.text();
+    console.log(`[kaspi-preorder-arrived] Ответ Kaspi: статус ${resp.status}, тело:`, text.slice(0, 1000));
+    if (!resp.ok) {
+      return res.status(502).json({ error: "kaspi_error", message: `Kaspi ответил ${resp.status}: ${text.slice(0, 300)}` });
+    }
+    let kaspiJson = null;
+    try { kaspiJson = JSON.parse(text); } catch (e) {}
+
+    db.prepare("UPDATE orders SET pre_order = 0, updated_at = ? WHERE id = ?").run(new Date().toISOString(), row.id);
+    logAudit({ user: req.session.username, action: "kaspi_preorder_arrived", orderId: row.id });
+
+    res.json({ ok: true, kaspiResponse: kaspiJson });
+  } catch (e) {
+    console.error(`[kaspi-preorder-arrived] Исключение для заказа ${row.id}:`, e.message);
+    res.status(500).json({ error: "request_failed", message: e.message });
+  }
+});
+
 router.post("/:id/kaspi-assemble", async (req, res) => {
   const row = db.prepare("SELECT * FROM orders WHERE id = ?").get(req.params.id);
   if (!row) return res.status(404).json({ error: "not_found" });
@@ -315,6 +384,16 @@ router.post("/:id/kaspi-assemble", async (req, res) => {
     const text = await resp.text();
     console.log(`[kaspi-assemble] Ответ Kaspi: статус ${resp.status}, тело:`, text.slice(0, 1000));
     if (!resp.ok) {
+      // "current order status does not allow this action" — это ожидаемый
+      // отказ для предзаказов, которые Kaspi ещё не готов собирать. Заказ
+      // остаётся в нашей "Упаковке" (manual_packing не трогаем), просто
+      // сообщаем понятно, а не пугаем обычной ошибкой.
+      if (/does not allow this action/i.test(text)) {
+        return res.json({
+          ok: true, kaspiPending: true,
+          message: "Заказ упакован, но Kaspi пока не разрешил сформировать накладную. Повторите позже"
+        });
+      }
       return res.status(502).json({ error: "kaspi_error", message: `Kaspi ответил ${resp.status}: ${text.slice(0, 300)}` });
     }
     let kaspiJson = null;
