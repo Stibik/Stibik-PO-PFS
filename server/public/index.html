@@ -1730,7 +1730,25 @@
       const ids = Array.from(selectedKaspiOrderIds);
       const withWaybill = kaspiOrders.filter(o=>ids.includes(o.id) && o.waybillUrl);
       if(!withWaybill.length){ toast("У выбранных заказов ещё нет накладной"); return; }
-      withWaybill.forEach(o=>window.open(o.waybillUrl, "_blank"));
+      // Браузеры блокируют несколько window.open() подряд в одном клике —
+      // оставляют открыться только первому. Поэтому вместо цикла открываем
+      // ОДНО окно со списком ссылок, каждую из которых можно спокойно
+      // открыть уже отдельным кликом (это уже новый клик пользователя,
+      // блокировка на него не срабатывает).
+      const w = window.open("", "_blank");
+      w.document.write(`
+        <html><head><title>Накладные (${withWaybill.length})</title>
+        <style>
+          body{font-family:system-ui,sans-serif; padding:24px; max-width:480px;}
+          h2{font-size:16px; margin-bottom:16px;}
+          a{display:block; padding:12px 16px; margin-bottom:8px; background:#f5f0e6; border-radius:8px;
+             text-decoration:none; color:#2c2620; font-size:14px;}
+          a:hover{background:#e8dfc9;}
+        </style></head><body>
+        <h2>Накладные — нажмите на каждую по очереди (${withWaybill.length})</h2>
+        ${withWaybill.map(o=>`<a href="${o.waybillUrl}" target="_blank">№${o.displayNumber} — ${esc(o.productName||o.kaspiCode)}</a>`).join("")}
+        </body></html>
+      `);
     };
     document.getElementById("kaspiBulkPushKaspi").onclick = async ()=>{
       const ids = Array.from(selectedKaspiOrderIds);
@@ -2342,11 +2360,21 @@
     try{
       const data = await api("/kaspi/sync", {method:"POST", body: JSON.stringify({includeArchive})});
       if(!opts.silent){
-        box.innerHTML = data.results.map(r=>
+        const totalAdded = data.results.reduce((s,r)=>s+(r.added||0),0);
+        const totalUpdated = data.results.reduce((s,r)=>s+(r.updated||0),0);
+        const anyError = data.results.some(r=>!r.ok);
+        const details = data.results.map(r=>
           r.ok ? `<div class="kaspi-result">✅ ${esc(r.shop)}: добавлено ${r.added}, обновлено ${r.updated}${r.skippedArchive?', пропущено архивных: '+r.skippedArchive:''} (всего в ответе ${r.total})
             ${r.staleChecked!=null ? `<br><span style="color:var(--ink-soft);font-size:11.5px;">Зависшие старые: проверено ${r.staleChecked}, изменилось ${r.staleChanged}${r.staleErrors?', ошибок: '+r.staleErrors:''}</span>` : ""}</div>`
-               : `<div class="kaspi-result" style="color:var(--red)">⚠️ ${esc(r.shop)}: ${esc(r.error)}</div>`
+             : `<div class="kaspi-result" style="color:var(--red)">⚠️ ${esc(r.shop)}: ${esc(r.error)}</div>`
         ).join("");
+        // Свёрнуто по умолчанию — сверху только краткая сводка, полная запись по клику
+        box.innerHTML = `<details ${anyError?'open':''}>
+          <summary style="cursor:pointer; padding:6px 0; color:${anyError?'var(--red)':'var(--ink-soft)'}; font-size:12.5px;">
+            ${anyError ? '⚠️ Есть ошибка синхронизации — открыть подробности' : `✅ Готово: добавлено ${totalAdded}, обновлено ${totalUpdated} — подробнее`}
+          </summary>
+          <div style="margin-top:8px;">${details}</div>
+        </details>`;
       }
       const newOnes = (data.results||[]).filter(r=>r.ok && r.added>0);
       if(newOnes.length){
