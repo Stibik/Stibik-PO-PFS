@@ -1497,6 +1497,7 @@
   }
 
   let kaspiStageFilter = "active"; // "active" = всё кроме архив/завершён/отменён/возврат
+  let kaspiStageMultiSelect = new Set(); // отдельные стадии можно комбинировать — если не пусто, имеет приоритет над kaspiStageFilter
   let kaspiOrdersSearchQuery = "";
   document.getElementById("kaspiOrdersSearch").addEventListener("input", (e)=>{
     kaspiOrdersSearchQuery = e.target.value.trim().toLowerCase();
@@ -1585,7 +1586,7 @@
     const filterWrap = document.getElementById("kaspiStatusFilters");
 
     function stagePill(sd, count){
-      const isActive = kaspiStageFilter===sd.key;
+      const isActive = kaspiStageMultiSelect.has(sd.key);
       // Цвет пилюли берётся из той же палитры, что и бейдж статуса в таблице —
       // тут просто группировка по смыслу, слова и цвета статуса не меняются.
       const style = isActive ? `border-color:${sd.color};background:${sd.bg};color:${sd.color};` : "";
@@ -1593,8 +1594,8 @@
     }
 
     let html = `<div style="font-size:11px;color:var(--ink-soft);margin-bottom:6px;">Обзор</div><div class="pill-row" style="margin-bottom:14px;">`
-      + `<button class="pill ${kaspiStageFilter==='active'?'active':''}" data-stage="active">Активные <span class="count">${activeCount}</span></button>`
-      + `<button class="pill ${kaspiStageFilter==='all'?'active':''}" data-stage="all">Все <span class="count">${kaspiOrders.filter(o=>kaspiShopFilter.has(o.shop)).length}</span></button>`
+      + `<button class="pill ${kaspiStageFilter==='active' && !kaspiStageMultiSelect.size?'active':''}" data-quick="active">Активные <span class="count">${activeCount}</span></button>`
+      + `<button class="pill ${kaspiStageFilter==='all' && !kaspiStageMultiSelect.size?'active':''}" data-quick="all">Все <span class="count">${kaspiOrders.filter(o=>kaspiShopFilter.has(o.shop)).length}</span></button>`
       + `</div>`;
 
     const working = STAGE_DEFS.filter(sd=>nonTerminal.includes(sd.key));
@@ -1603,7 +1604,7 @@
       if(count===0 && sd.key==="other") return "";
       return stagePill(sd, count);
     }).join("");
-    if(workingHtml) html += `<div style="font-size:11px;color:var(--ink-soft);margin-bottom:6px;">В работе</div><div class="pill-row" style="margin-bottom:14px;">${workingHtml}</div>`;
+    if(workingHtml) html += `<div style="font-size:11px;color:var(--ink-soft);margin-bottom:6px;">В работе — можно выбрать несколько сразу</div><div class="pill-row" style="margin-bottom:14px;">${workingHtml}</div>`;
 
     const terminal = STAGE_DEFS.filter(sd=>terminalKeys.includes(sd.key));
     const terminalHtml = terminal.map(sd=>{
@@ -1613,8 +1614,20 @@
     html += `<div style="font-size:11px;color:var(--ink-soft);margin-bottom:6px;">Завершено</div><div class="pill-row">${terminalHtml}</div>`;
 
     filterWrap.innerHTML = html;
-    filterWrap.querySelectorAll("button").forEach(b=>{
-      b.addEventListener("click", ()=>{ kaspiStageFilter = b.dataset.stage; renderKaspiOrders(false); });
+    filterWrap.querySelectorAll("button[data-quick]").forEach(b=>{
+      b.addEventListener("click", ()=>{
+        kaspiStageMultiSelect.clear();
+        kaspiStageFilter = b.dataset.quick;
+        renderKaspiOrders(false);
+      });
+    });
+    filterWrap.querySelectorAll("button[data-stage]").forEach(b=>{
+      b.addEventListener("click", ()=>{
+        const key = b.dataset.stage;
+        if(kaspiStageMultiSelect.has(key)) kaspiStageMultiSelect.delete(key);
+        else kaspiStageMultiSelect.add(key);
+        renderKaspiOrders(false);
+      });
     });
 
     // заголовок таблицы по видимым колонкам
@@ -1622,7 +1635,8 @@
     document.getElementById("kaspiOrdersHead").innerHTML = `<tr><th style="width:32px;"><input type="checkbox" id="kaspiSelectAllCheckbox"></th>`+cols.map(c=>`<th>${c.label}</th>`).join("")+"<th></th></tr>";
 
     let list = kaspiOrders.slice().filter(o=>kaspiShopFilter.has(o.shop));
-    if(kaspiStageFilter==="active") list = list.filter(o=>nonTerminal.includes(o.stage));
+    if(kaspiStageMultiSelect.size) list = list.filter(o=>kaspiStageMultiSelect.has(o.stage));
+    else if(kaspiStageFilter==="active") list = list.filter(o=>nonTerminal.includes(o.stage));
     else if(kaspiStageFilter!=="all") list = list.filter(o=>o.stage===kaspiStageFilter);
     if(kaspiOrdersSearchQuery){
       const q = kaspiOrdersSearchQuery;
@@ -1653,7 +1667,15 @@
       if(key==="code") return `<span class="mono">${esc(o.kaspiCode||"")}</span>`;
       if(key==="shop") return esc(o.shop||"");
       if(key==="name") return esc(o.productName||"—");
-      if(key==="courier") return fmtDate(o.courierHandoverDate);
+      if(key==="courier"){
+        if(!o.courierHandoverDate) return "—";
+        const dueDate = new Date(o.courierHandoverDate);
+        const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+        const isUrgent = dueDate <= todayStart && !["completed","cancelled","cancelledDelivery","returns"].includes(o.stage);
+        return isUrgent
+          ? `<span style="color:var(--red); font-weight:600;">🔴 ${fmtDate(o.courierHandoverDate)}</span>`
+          : fmtDate(o.courierHandoverDate);
+      }
       if(key==="price") return o.totalPrice ? esc(o.totalPrice)+" ₸" : "—";
       if(key==="status"){
         const sd = stageDef(o.stage);
@@ -1822,7 +1844,8 @@
   document.getElementById("btnPrintKaspiList").addEventListener("click", ()=>{
     let list = kaspiOrders.slice().filter(o=>kaspiShopFilter.has(o.shop));
     const nonTerminal = ["preorder","packing","handover","toDelivery","other"];
-    if(kaspiStageFilter==="active") list = list.filter(o=>nonTerminal.includes(o.stage));
+    if(kaspiStageMultiSelect.size) list = list.filter(o=>kaspiStageMultiSelect.has(o.stage));
+    else if(kaspiStageFilter==="active") list = list.filter(o=>nonTerminal.includes(o.stage));
     else if(kaspiStageFilter!=="all") list = list.filter(o=>o.stage===kaspiStageFilter);
     if(!list.length){ toast("Нечего печатать — список пуст"); return; }
     const w = window.open("", "_blank");
@@ -2024,7 +2047,10 @@
     // "Отменить заказ" — намеренно на отдельной строке, подальше от обычных
     // кнопок, с разделителем сверху. Это редкое и рискованное действие, ему
     // не место в одном ряду с повседневными "Начать сборку"/"Передать в Kaspi".
-    if(order.status !== "shipped" && order.status !== "cancelled"){
+    // Если заказ уже отменён/возвращён СО СТОРОНЫ KASPI (а не только у нас) —
+    // отменять уже нечего, кнопка не нужна вообще, а не просто неактивна.
+    const kaspiTerminalCancelled = ["cancelled","cancelledDelivery","returns"].includes(classifyStage(order));
+    if(order.status !== "shipped" && order.status !== "cancelled" && !kaspiTerminalCancelled){
       const cancelRow = document.createElement("div");
       cancelRow.style.cssText = "margin-top:14px; padding-top:12px; border-top:1px dashed var(--line);";
       const cancelBtn = document.createElement("button");
@@ -2034,6 +2060,11 @@
       cancelBtn.onclick = ()=>openCancelStep1();
       cancelRow.appendChild(cancelBtn);
       actions.appendChild(cancelRow);
+    } else if(kaspiTerminalCancelled && order.status !== "cancelled"){
+      const note = document.createElement("div");
+      note.style.cssText = "margin-top:14px; padding-top:12px; border-top:1px dashed var(--line); font-size:12px; color:var(--ink-soft);";
+      note.textContent = "Этот заказ уже отменён/возвращён со стороны Kaspi — отменять больше нечего.";
+      actions.appendChild(note);
     }
 
     // грузовые места
