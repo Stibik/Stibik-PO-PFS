@@ -1,5 +1,5 @@
 import express from "express";
-import { db, nextReceiptNumber, logAudit, getKaspiShops } from "../db.js";
+import { db, nextReceiptNumber, logAudit, getKaspiShops, getMeta, setMeta } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
 import { isValidNormalTransition, getNextStatus, STATUS_LABELS } from "../statusMachine.js";
 
@@ -95,6 +95,38 @@ router.post("/", (req, res) => {
          b.receiveStatus || b.status || "new", b.orderDate || now.slice(0,10),
          b.buyPriceCny || 0, b.buyPriceKzt || 0, b.deliveryPrice || 0, b.salePrice || 0, b.category || "", now, now);
   logAudit({ user: req.session.username, action: "create_order", orderId: id, newValue: b.name || b.article });
+  const row = db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
+  res.json(rowToOrder(row));
+});
+
+// Заказ, созданный вручную (не из Kaspi) — например, оплата пришла напрямую,
+// минуя Kaspi. Получает номер вида "УД-N" (свой отдельный счётчик, не путать
+// с kaspi_code настоящих заказов) и, как и обычный заказ из Kaspi, сразу
+// создаёт связанную запись в "Производстве" — чтобы дальше можно было списать
+// материал и начислить зарплату исполнителю точно так же, как по заказам Kaspi.
+router.post("/manual-order", (req, res) => {
+  const b = req.body || {};
+  if (!b.name) return res.status(400).json({ error: "name_required", message: "Укажите название товара" });
+
+  const n = parseInt(getMeta("next_manual_order_number") || "1", 10);
+  setMeta("next_manual_order_number", n + 1);
+  const udCode = `УД-${n}`;
+
+  const id = uid();
+  const now = new Date().toISOString();
+  db.prepare(`INSERT INTO orders
+    (id, source, kaspi_code, display_number, shop, status, product_name, article, qty, total_price, note, created_at, updated_at)
+    VALUES (?, 'manual', ?, ?, ?, 'preorder', ?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, udCode, n, b.shop || "Прямая продажа", b.name, b.article || "",
+         b.qty || 1, b.totalPrice || 0, b.note || "", now, now);
+
+  const prodId = uid();
+  db.prepare(`INSERT INTO production (id, order_id, article, product_name, quantity, shop, stage, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`)
+    .run(prodId, id, b.article || "", b.name, b.qty || 1, b.shop || "Прямая продажа", now);
+
+  logAudit({ user: req.session.username, action: "create_manual_order", orderId: id, newValue: `${udCode}: ${b.name}` });
+
   const row = db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
   res.json(rowToOrder(row));
 });
