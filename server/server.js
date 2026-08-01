@@ -33,6 +33,8 @@ import chinaStockRoutes from "./routes/chinaStock.js";
 import payrollRoutes from "./routes/payroll.js";
 import tasksRoutes from "./routes/tasks.js";
 import monitorRoutes from "./routes/monitor.js";
+import dispatchRoutes from "./routes/dispatch.js";
+import backupRoutes from "./routes/backup.js";
 import productionRoutes from "./routes/production.js";
 import metaRoutes from "./routes/meta.js";
 import settingsRoutes from "./routes/settings.js";
@@ -100,6 +102,8 @@ app.use("/api/china-stock", requirePermission("china"), chinaStockRoutes);
 app.use("/api/payroll", requirePermission("salary"), payrollRoutes);
 app.use("/api/tasks", tasksRoutes);
 app.use("/api/monitor", monitorRoutes);
+app.use("/api/dispatch", dispatchRoutes);
+app.use("/api/backup", backupRoutes);
 app.use("/api/production", productionRoutes);
 app.use("/api/meta", metaRoutes);
 app.use("/api/settings", requirePermission("kaspi"), settingsRoutes);
@@ -134,6 +138,37 @@ app.get("/manifest.webmanifest", (req, res) => {
       { src: "/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "maskable" }
     ]
   });
+});
+
+// Service worker: без него Chrome не предлагает «Установить приложение».
+// Стратегия намеренно простая — сеть в приоритете, кэш только как подстраховка,
+// чтобы после обновления людям не показывалась старая версия программы.
+app.get("/sw.js", (req, res) => {
+  res.setHeader("Content-Type", "application/javascript");
+  res.setHeader("Cache-Control", "no-cache");
+  res.send(`
+const CACHE = "pfs-shell-v1";
+self.addEventListener("install", (e) => { self.skipWaiting(); });
+self.addEventListener("activate", (e) => {
+  e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))));
+  self.clients.claim();
+});
+self.addEventListener("fetch", (event) => {
+  const req = event.request;
+  if (req.method !== "GET") return;
+  const url = new URL(req.url);
+  if (url.origin !== location.origin) return;
+  // Данные никогда не кэшируем: зарплата и заказы должны быть свежими
+  if (url.pathname.startsWith("/api/")) return;
+  event.respondWith(
+    fetch(req).then(resp => {
+      const copy = resp.clone();
+      caches.open(CACHE).then(c => c.put(req, copy)).catch(()=>{});
+      return resp;
+    }).catch(() => caches.match(req))
+  );
+});
+`);
 });
 
 // Статика фронтенда
