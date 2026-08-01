@@ -62,6 +62,25 @@ function insertEntry(data) {
   return db.prepare("SELECT * FROM payroll_entries WHERE id = ?").get(id);
 }
 
+// Основной исполнитель: у вас швей двое-трое, но одна основная — храним её
+// на сервере, а не в браузере, потому что за программой сидят разные люди
+router.get("/settings", (req, res) => {
+  const row = db.prepare("SELECT value FROM meta WHERE key = 'payroll_default_employee'").get();
+  const id = row ? row.value : null;
+  const emp = id ? db.prepare("SELECT * FROM employees WHERE id = ?").get(id) : null;
+  res.json({ defaultEmployeeId: emp ? emp.id : null, defaultEmployeeName: emp ? emp.name : "" });
+});
+
+router.put("/settings", (req, res) => {
+  const id = req.body?.defaultEmployeeId || "";
+  if (id && !db.prepare("SELECT id FROM employees WHERE id = ?").get(id)) {
+    return res.status(400).json({ error: "no_employee", message: "Сотрудник не найден" });
+  }
+  db.prepare("INSERT INTO meta (key, value) VALUES ('payroll_default_employee', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+    .run(id);
+  res.json({ ok: true, defaultEmployeeId: id || null });
+});
+
 // ---------- Начисления ----------
 router.get("/entries", (req, res) => {
   const where = [];
