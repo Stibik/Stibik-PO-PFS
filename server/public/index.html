@@ -330,6 +330,7 @@
     <button class="tab-btn" data-tab="salary">Зарплата</button>
     <button class="tab-btn" data-tab="production">Производство</button>
     <button class="tab-btn" data-tab="tasks">Задачи</button>
+    <button class="tab-btn" data-tab="monitor">Мои заказы</button>
     <button class="tab-btn" data-tab="kaspi">Kaspi: настройки</button>
     <button class="tab-btn admin-only" data-tab="audit">Журнал</button>
     <button class="tab-btn admin-only" data-tab="users">Пользователи</button>
@@ -810,6 +811,7 @@
         <b id="prodBulkCount" style="font-size:13.5px;">Выбрано: 0</b>
         <select id="prodBulkEmployee" style="min-width:190px;"></select>
         <button class="btn amber" id="prodBulkAssign" style="padding:6px 12px; font-size:12.5px;">Назначить исполнителя</button>
+        <button class="btn secondary" id="prodBulkSpread" style="padding:6px 12px; font-size:12.5px;">🎲 Распределить поровну</button>
         <button class="btn secondary" id="prodBulkStock" style="padding:6px 12px; font-size:12.5px;">📦 Списать с остатков</button>
         <button class="btn secondary" id="prodBulkReturn" style="padding:6px 12px; font-size:12.5px;">↩️ Перекрыть возвратом</button>
         <button class="btn secondary" id="prodBulkClear" style="padding:6px 12px; font-size:12.5px; margin-left:auto;">Снять выбор</button>
@@ -833,6 +835,23 @@
       </div>
     </div>
 
+    <section id="tab-monitor" style="display:none">
+      <style>
+        #tab-monitor .mn-card{border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin-bottom:10px; background:#fff; display:flex; gap:12px; align-items:center; flex-wrap:wrap;}
+        #tab-monitor .mn-card .mn-main{flex:1; min-width:180px;}
+        #tab-monitor .mn-title{font-size:14px; font-weight:600;}
+        #tab-monitor .mn-meta{font-size:12px; color:var(--ink-soft); margin-top:2px;}
+        #tab-monitor .mn-money{font-size:17px; font-weight:700; white-space:nowrap;}
+        #tab-monitor .mn-cards{display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:16px;}
+        @media (max-width:760px){ #tab-monitor .mn-cards{grid-template-columns:1fr 1fr;} #tab-monitor .mn-card{padding:12px;} }
+      </style>
+      <div class="mn-cards" id="mnTotals"></div>
+      <div class="panel" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <div class="pill-row" id="mnTabs"></div>
+        <button class="btn secondary" id="mnRefresh" style="margin-left:auto; padding:6px 12px; font-size:12.5px;">🔄 Обновить</button>
+      </div>
+      <div id="mnList"></div>
+    </section>
     <section id="tab-tasks" style="display:none">
       <style>
         #tab-tasks .tk-cols{display:grid; grid-template-columns:repeat(3,1fr); gap:14px; align-items:start;}
@@ -886,10 +905,12 @@
       <div class="toolbar">
         <button class="btn amber" id="btnAddUser">+ Новый пользователь</button>
       </div>
-      <table>
-        <thead><tr><th>Логин</th><th>Роль</th><th>Создан</th><th></th></tr></thead>
-        <tbody id="usersBody"></tbody>
-      </table>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Логин</th><th>Роль</th><th>Сотрудник</th><th>Доступ к разделам</th><th>Состояние</th><th></th></tr></thead>
+          <tbody id="usersBody"></tbody>
+        </table>
+      </div>
     </section>
   </main>
   <footer>учёт заказов · онлайн · <span id="versionTag">v?</span></footer>
@@ -1359,6 +1380,33 @@
   </div>
 </div>
 
+<div class="overlay" id="userOverlay">
+  <div class="modal" style="max-width:640px;">
+    <h3 id="userModalTitle">Новый пользователь</h3>
+    <div class="grid2">
+      <div><label>Логин *</label><input type="text" id="us_username" style="width:100%;"></div>
+      <div><label id="us_passLabel">Пароль *</label><input type="password" id="us_password" style="width:100%;" placeholder="минимум 4 символа"></div>
+      <div><label>Роль</label><select id="us_role" style="width:100%;"></select></div>
+      <div><label>Кто это из сотрудников</label><select id="us_employee" style="width:100%;"></select></div>
+    </div>
+    <div style="font-size:11.5px; color:var(--ink-soft); margin-top:6px;">
+      Привязка к сотруднику нужна забивщикам: по ней работа и зарплата попадают именно этому человеку.
+    </div>
+    <div style="border-top:1px solid var(--line); margin-top:14px; padding-top:12px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <b style="font-size:13px;">Что можно этому человеку</b>
+        <span style="font-size:11.5px; color:var(--ink-soft);">роль подставляет галочки, дальше правьте вручную</span>
+      </div>
+      <div id="us_permissions"></div>
+    </div>
+    <div class="error" id="us_error"></div>
+    <div class="modal-actions">
+      <div></div>
+      <div><button class="btn secondary" id="us_cancel">Отмена</button> <button class="btn amber" id="us_save">Сохранить</button></div>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -1402,6 +1450,7 @@
     try{
       const data = await api("/auth/login", {method:"POST", body: JSON.stringify({username, password})});
       myRole = data.role;
+      myPermissions = data.permissions || [];
       setCurrentUser(data.username, data.role);
       applyRoleUI();
       showApp();
@@ -3727,6 +3776,103 @@
     loadChina();
   });
 
+  // ================= Монитор заказов (для забивщиков) =================
+  // Экран рассчитан на телефон: крупные кнопки, минимум данных. Закупочных цен
+  // и чужой зарплаты тут нет вообще — сервер их просто не отдаёт.
+  const MN_STATUS = {
+    free:      { label:"Свободен",   color:"#B45309", bg:"#FEF3C7" },
+    in_work:   { label:"У меня",     color:"#2563EB", bg:"#DBEAFE" },
+    reported:  { label:"Сдал",       color:"#7C3AED", bg:"#EDE9FE" },
+    confirmed: { label:"Подтверждено", color:"#166534", bg:"#DCFCE7" },
+    paid:      { label:"Оплачено",   color:"#4B5563", bg:"#F3F4F6" }
+  };
+  let mnTab = "free";
+  let mnFree = [], mnMine = null;
+
+  async function loadMonitor(){
+    document.getElementById("mnList").innerHTML = `<div class="panel" style="text-align:center; color:var(--ink-soft);">Загрузка...</div>`;
+    try{
+      const [free, mine] = await Promise.all([api("/monitor/free"), api("/monitor/mine")]);
+      mnFree = free; mnMine = mine;
+      renderMonitor();
+    }catch(e){
+      document.getElementById("mnList").innerHTML = `<div class="panel" style="color:var(--red);">Ошибка: ${esc(e.message)}</div>`;
+    }
+  }
+
+  function renderMonitor(){
+    const t = mnMine ? mnMine.totals : { inWork:0, reported:0, confirmed:0, paid:0 };
+    const card = (color, sum, label, hint) => `
+      <div class="panel" style="border-left:4px solid ${color}; margin:0;">
+        <div style="font-size:11px; text-transform:uppercase; color:var(--ink-soft);">${label}</div>
+        <div style="font-family:var(--serif); font-size:20px;">${money(sum)} ₸</div>
+        <div style="font-size:11px; color:var(--ink-soft);">${hint}</div>
+      </div>`;
+    document.getElementById("mnTotals").innerHTML =
+      card("#2563EB", t.inWork, "У меня в работе", "ещё не сдано") +
+      card("#7C3AED", t.reported, "Сдал", "ждёт подтверждения") +
+      card("#16A34A", t.confirmed, "Подтверждено", "пойдёт в выплату") +
+      card("#4B5563", t.paid, "Получено", "уже выплачено");
+
+    const mineItems = mnMine ? mnMine.items : [];
+    const activeMine = mineItems.filter(i=>i.status === "in_work" || i.status === "reported");
+    document.getElementById("mnTabs").innerHTML = [
+      { k:"free", l:`Свободные заказы (${mnFree.length})` },
+      { k:"mine", l:`Мои в работе (${activeMine.length})` },
+      { k:"done", l:`Сделанные (${mineItems.length - activeMine.length})` }
+    ].map(x=>`<button class="pill ${mnTab===x.k?"active":""}" data-mn="${x.k}">${x.l}</button>`).join("");
+    document.getElementById("mnTabs").querySelectorAll("[data-mn]").forEach(b=>
+      b.addEventListener("click", ()=>{ mnTab = b.dataset.mn; renderMonitor(); }));
+
+    if(mnMine && mnMine.employeeLinked === false){
+      document.getElementById("mnList").innerHTML = `<div class="panel" style="color:var(--red);">
+        Ваш логин не привязан к сотруднику — работу взять не получится. Попросите администратора привязать вас в разделе «Пользователи».</div>`;
+      return;
+    }
+
+    let list = mnTab === "free" ? mnFree
+      : mnTab === "mine" ? activeMine
+      : mineItems.filter(i=>i.status === "confirmed" || i.status === "paid");
+
+    const wrap = document.getElementById("mnList");
+    if(!list.length){
+      wrap.innerHTML = `<div class="panel" style="text-align:center; color:var(--ink-soft);">${
+        mnTab === "free" ? "Свободных заказов нет — всё разобрано" : "Пока пусто"}</div>`;
+      return;
+    }
+    wrap.innerHTML = list.map(i=>{
+      const s = MN_STATUS[i.status] || MN_STATUS.free;
+      return `<div class="mn-card">
+        ${i.photo ? `<img src="${esc(i.photo)}" style="width:54px; height:54px; object-fit:contain; border:1px solid var(--line); border-radius:8px;">` : ""}
+        <div class="mn-main">
+          <div class="mn-title">${esc(i.productName || i.article || "—")}</div>
+          <div class="mn-meta">${esc(i.article || "")}${i.orderNumber ? ` · заказ №${esc(i.orderNumber)}` : ""}${i.shop ? " · " + esc(i.shop) : ""} · ${money(i.qty)} шт</div>
+          <div class="mn-meta"><span style="color:${s.color}; background:${s.bg}; padding:2px 9px; border-radius:20px; font-weight:600;">${s.label}</span></div>
+        </div>
+        <div style="text-align:right;">
+          <div class="mn-money">${i.rate ? money(i.amount) + " ₸" : `<span style="font-size:12px; color:var(--red);">расценка не задана</span>`}</div>
+          <div style="margin-top:6px;">
+            ${i.status === "free" ? `<button class="btn amber" style="padding:8px 16px;" data-take="${esc(i.id)}">Беру себе</button>` : ""}
+            ${i.status === "in_work" ? `<button class="btn amber" style="padding:8px 16px;" data-done="${esc(i.id)}">Готово ✓</button>` : ""}
+            ${i.status === "reported" ? `<span style="font-size:11.5px; color:var(--ink-soft);">ждёт менеджера</span>` : ""}
+          </div>
+        </div>
+      </div>`;
+    }).join("");
+
+    wrap.querySelectorAll("[data-take]").forEach(b=>b.addEventListener("click", async ()=>{
+      b.disabled = true;
+      try{ await api("/monitor/take/" + b.dataset.take, {method:"POST"}); toast("Заказ ваш"); loadMonitor(); }
+      catch(e){ toast(e.message); loadMonitor(); }
+    }));
+    wrap.querySelectorAll("[data-done]").forEach(b=>b.addEventListener("click", async ()=>{
+      if(!confirm("Отметить, что работа сделана? Менеджер это подтвердит.")) return;
+      try{ await api("/monitor/done/" + b.dataset.done, {method:"POST"}); toast("Отмечено, ждёт подтверждения"); loadMonitor(); }
+      catch(e){ toast(e.message); }
+    }));
+  }
+  document.getElementById("mnRefresh").addEventListener("click", loadMonitor);
+
   // ================= Доска задач =================
   // Бытовые поручения: купить, сделать, съездить. Специально отдельно от
   // «Производства» — там работа по заказам и деньги, тут зарплата не считается.
@@ -4300,6 +4446,13 @@
         <b>Срочное</b> помечается красной полосой, просроченное подсвечивается целиком.<br>
         <b>Важно:</b> это бытовые поручения, зарплата за них не начисляется. Работа по заказам — в «Производстве».`
     },
+    monitor: {
+      title: "Мои заказы — экран забивщика",
+      body: `<b>Как работать:</b> «Свободные заказы» → <b>«Беру себе»</b> → шьёте → <b>«Готово ✓»</b>. Дальше менеджер подтверждает, и сумма идёт к выплате.<br>
+        <b>Сколько заработал</b> видно сверху: в работе / сдал / подтверждено / получено.<br>
+        <b>С телефона:</b> откройте сайт в браузере, меню → «Добавить на главный экран» — появится иконка, как у приложения.<br>
+        <b>Важно:</b> заказ достаётся тому, кто первый нажал «Беру себе». Чужие заказы и чужую зарплату вы не видите.`
+    },
     kaspi: {
       title: "Kaspi: настройки",
       body: `<b>Токены:</b> берутся в кабинете продавца Kaspi, раздел API. Без токена магазин не синхронизируется.<br>
@@ -4403,6 +4556,8 @@
       <div style="font-size:11px; color:var(--ink-soft);">зарплата не начисляется</div>`;
     if(!entry) return `<b style="color:var(--red); font-size:12px;">Начисления нет</b>
       <div style="font-size:11.5px; color:var(--ink-soft);">нажмите 👤, чтобы назначить заново</div>`;
+    if(entry.status === "pending" && entry.reportedDone) return `<b style="color:#7C3AED; font-size:12px;">Шаг 2 из 3 · сдано</b>
+      <div style="font-size:11.5px; color:var(--ink-soft);">${esc(entry.reportedBy || "забивщик")} отметил готово — подтвердите</div>`;
     if(entry.status === "pending") return `<b style="color:var(--navy); font-size:12px;">Шаг 2 из 3</b>
       <div style="font-size:11.5px; color:var(--ink-soft);">отметить «Сделали», когда готово</div>`;
     if(entry.status === "payable") return `<b style="color:var(--green); font-size:12px;">Шаг 3 из 3</b>
@@ -4499,7 +4654,7 @@
               <button class="btn amber prod-quick-assign" data-prod-id="${esc(p.id)}" style="padding:4px 10px; font-size:11.5px;">${prodDefaultEmployeeName ? "Шьёт " + esc(prodDefaultEmployeeName) : "Назначить"}</button>
               <button class="btn secondary prod-action-stock" data-prod-id="${esc(p.id)}" style="padding:4px 8px; font-size:11.5px;" title="Товар уже есть на складе">📦 Со склада</button>
               <button class="btn secondary prod-action-return" data-prod-id="${esc(p.id)}" style="padding:4px 8px; font-size:11.5px;" title="Берём из вернувшегося заказа">↩️ Возврат</button>` : ""}
-            ${entry && entry.status === "pending" ? `<button class="btn amber prod-accept" data-entry-id="${esc(entry.id)}" style="padding:4px 12px; font-size:11.5px;">✓ Сделали</button>` : ""}
+            ${entry && entry.status === "pending" ? `<button class="btn amber prod-accept" data-entry-id="${esc(entry.id)}" style="padding:4px 12px; font-size:11.5px;">${entry.reportedDone ? "✓ Подтвердить" : "✓ Сделали"}</button>` : ""}
             ${entry && entry.status !== "paid" ? `<button class="btn secondary prod-reassign" data-entry-id="${esc(entry.id)}" style="padding:4px 8px; font-size:11.5px;" title="Передать другому">👤</button>` : ""}
           </td>
         </tr>`;
@@ -4637,6 +4792,27 @@
     const name = (employeesList.find(e=>e.id===employeeId)||{}).name || "";
     prodBulkResolve("assigned", { employeeId }, `Назначить «${name}»`);
   });
+  // Раскидать отмеченные заказы по исполнителям по кругу — когда всё равно,
+  // кто именно шьёт, лишь бы поровну
+  document.getElementById("prodBulkSpread").addEventListener("click", async ()=>{
+    const ids = Array.from(selectedProdIds);
+    if(!ids.length) return;
+    if(!employeesList.length){ try{ employeesList = await api("/employees"); }catch(e){} }
+    if(employeesList.length < 2){ toast("Для распределения нужно минимум два сотрудника"); return; }
+    if(!confirm(`Раскидать ${ids.length} заказов поровну между ${employeesList.length} сотрудниками?`)) return;
+    let ok = 0; const errors = [];
+    for(let i = 0; i < ids.length; i++){
+      const employeeId = employeesList[i % employeesList.length].id;
+      try{
+        await api("/production/"+ids[i]+"/resolve", {method:"POST", body:JSON.stringify({decision:"assigned", employeeId})});
+        try{ await api("/payroll/from-production/" + ids[i], {method:"POST"}); }catch(e){}
+        ok++;
+      }catch(e){ errors.push(e.message); }
+    }
+    selectedProdIds.clear();
+    await loadProduction();
+    toast(errors.length ? `Распределено: ${ok}, ошибок: ${errors.length}` : `Распределено поровну: ${ok}`);
+  });
   document.getElementById("prodBulkStock").addEventListener("click", ()=>prodBulkResolve("stock", null, "Списать с остатков"));
   document.getElementById("prodBulkReturn").addEventListener("click", ()=>prodBulkResolve("return_offset", null, "Перекрыть возвратом"));
   document.getElementById("btnManageEmployees").addEventListener("click", async ()=>{
@@ -4682,13 +4858,14 @@
     b.addEventListener("click", ()=>{
       document.querySelectorAll(".tab-btn").forEach(x=>x.classList.remove("active"));
       b.classList.add("active");
-      ["orders","kaspiOrders","claims","price","catalog","salary","production","tasks","kaspi","audit","users"].forEach(t=> document.getElementById("tab-"+t).style.display = (t===b.dataset.tab)?"":"none");
+      ["orders","kaspiOrders","claims","price","catalog","salary","production","tasks","monitor","kaspi","audit","users"].forEach(t=> document.getElementById("tab-"+t).style.display = (t===b.dataset.tab)?"":"none");
       if(b.dataset.tab === "orders") applyContour();
       if(b.dataset.tab === "catalog") loadCatalog();
       if(b.dataset.tab === "price") { loadPriceCompanies().catch(()=>{}).then(loadPriceTab); }
       if(b.dataset.tab === "production") loadProduction();
       if(b.dataset.tab === "salary") loadSalary();
       if(b.dataset.tab === "tasks") loadTasks();
+      if(b.dataset.tab === "monitor") loadMonitor();
       if(b.dataset.tab === "kaspiOrders") renderKaspiOrders();
       if(b.dataset.tab === "claims") { if(!kaspiOrders.length) renderKaspiOrders().then(renderClaims); else renderClaims(); }
       if(b.dataset.tab === "kaspi") { loadKaspiSettings(); loadOrderNumbering(); }
@@ -6390,9 +6567,11 @@
   // (старый обработчик кнопки синхронизации удалён — теперь используется btnSyncKaspi2 во вкладке «Заказы»)
 
   // ---------- Шапка: пользователь, состояние данных, уведомления ----------
-  function setCurrentUser(username, role){
+  let myEmployeeId = null;
+  const ROLE_LABELS_UI = { admin:"Администратор", manager:"Менеджер", warehouse:"Склад", stitcher:"Забивщик" };
+  function setCurrentUser(username, role, roleLabel){
     document.getElementById("whoami").textContent = username || "";
-    document.getElementById("hdrRole").textContent = role === "admin" ? "Администратор" : "Склад";
+    document.getElementById("hdrRole").textContent = roleLabel || ROLE_LABELS_UI[role] || role;
     document.getElementById("hdrAvatar").textContent = (username || "?").slice(0, 2).toUpperCase();
   }
 
@@ -6469,10 +6648,30 @@
   }
 
   // ---------- Роли: скрываем админ-разделы для склада ----------
+  let myPermissions = [];
+  const TAB_PERMISSION = {
+    orders:"prihod", kaspiOrders:"orders", claims:"claims", catalog:"catalog", price:"price",
+    salary:"salary", production:"production", tasks:"tasks", monitor:"monitor",
+    kaspi:"kaspi", audit:"audit", users:"users"
+  };
+  function can(perm){ return myRole === "admin" || myPermissions.includes(perm); }
+
+  // Прячем разделы, на которые нет прав. Сервер всё равно проверяет отдельно —
+  // это только чтобы человек не видел лишних вкладок.
   function applyRoleUI(){
     document.querySelectorAll(".admin-only").forEach(el=>{
       el.style.display = (myRole === "admin") ? "" : "none";
     });
+    let firstVisible = null;
+    document.querySelectorAll(".tab-btn").forEach(btn=>{
+      const perm = TAB_PERMISSION[btn.dataset.tab];
+      const allowed = !perm || can(perm);
+      btn.style.display = allowed ? "" : "none";
+      if(allowed && !firstVisible) firstVisible = btn;
+    });
+    // Если открытая вкладка стала недоступной — переключаемся на первую разрешённую
+    const active = document.querySelector(".tab-btn.active");
+    if(firstVisible && (!active || active.style.display === "none")) firstVisible.click();
   }
 
   // ---------- Журнал действий (админ) ----------
@@ -6491,40 +6690,111 @@
   }
 
   // ---------- Пользователи (админ) ----------
+  let permMeta = null, usersList = [], editingUserId = null;
+
   async function loadUsers(){
-    const rows = await api("/auth/users");
-    document.getElementById("usersBody").innerHTML = rows.map(u=>`
-      <tr>
-        <td>${esc(u.username)}</td>
-        <td>${u.role==='admin'?'Админ':'Склад'}</td>
-        <td class="mono" style="font-size:11px;">${esc((u.created_at||"").slice(0,10))}</td>
-        <td><button class="btn danger" style="padding:4px 10px;font-size:12px" onclick="window.__deleteUser('${u.id}')">Удалить</button></td>
-      </tr>`).join("") || `<tr><td colspan="4" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет пользователей</td></tr>`;
+    if(!permMeta){ try{ permMeta = await api("/auth/permissions-meta"); }catch(e){} }
+    if(!employeesList.length){ try{ employeesList = await api("/employees"); }catch(e){} }
+    usersList = await api("/auth/users");
+    const labels = {};
+    (permMeta?.permissions || []).forEach(p=>labels[p.key] = p.label);
+    document.getElementById("usersBody").innerHTML = usersList.map(u=>`
+      <tr style="${u.isActive ? "" : "opacity:.5;"}">
+        <td><b>${esc(u.username)}</b><div style="font-size:11px; color:var(--ink-soft);">${esc((u.created_at||"").slice(0,10))}</div></td>
+        <td>${esc(u.roleLabel || u.role)}</td>
+        <td>${esc(u.employeeName || "—")}</td>
+        <td style="max-width:320px; font-size:11.5px; color:var(--ink-soft);">
+          ${u.role === "admin" ? "все разделы" : (u.permissions.map(p=>labels[p] || p).join(", ") || "нет доступа")}</td>
+        <td>${u.isActive ? `<span style="color:var(--green); font-size:12px;">работает</span>` : `<span style="color:var(--ink-soft); font-size:12px;">отключён</span>`}</td>
+        <td style="white-space:nowrap;">
+          <button class="btn secondary" style="padding:4px 10px; font-size:12px;" data-uedit="${esc(u.id)}">Изменить</button>
+          <button class="btn secondary" style="padding:4px 10px; font-size:12px;" data-utoggle="${esc(u.id)}">${u.isActive ? "Отключить" : "Включить"}</button>
+        </td>
+      </tr>`).join("") || `<tr><td colspan="6" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет пользователей</td></tr>`;
+
+    document.querySelectorAll("[data-uedit]").forEach(b=>b.addEventListener("click", ()=>openUserForm(usersList.find(u=>u.id === b.dataset.uedit))));
+    document.querySelectorAll("[data-utoggle]").forEach(b=>b.addEventListener("click", async ()=>{
+      try{ await api(`/auth/users/${b.dataset.utoggle}/toggle-active`, {method:"POST"}); loadUsers(); }
+      catch(e){ toast(e.message); }
+    }));
   }
-  document.getElementById("btnAddUser").addEventListener("click", async ()=>{
-    const username = prompt("Логин нового пользователя:");
-    if(!username) return;
-    const password = prompt("Пароль (минимум 4 символа):");
-    if(!password || password.length < 4){ toast("Пароль слишком короткий"); return; }
-    const role = confirm("Нажмите OK для роли «Админ», Отмена — для «Склад»") ? "admin" : "warehouse";
-    try{
-      await api("/auth/users", {method:"POST", body:JSON.stringify({username, password, role})});
-      await loadUsers();
-      toast("Пользователь создан");
-    }catch(e){ toast("Ошибка: "+e.message); }
+
+  function renderPermissionChecks(selected){
+    const groups = {};
+    (permMeta?.permissions || []).forEach(p=>{
+      if(!groups[p.group]) groups[p.group] = [];
+      groups[p.group].push(p);
+    });
+    document.getElementById("us_permissions").innerHTML = Object.entries(groups).map(([g, items])=>`
+      <div style="margin-bottom:10px;">
+        <div class="panel-label">${esc(g)}</div>
+        <div style="display:grid; grid-template-columns:repeat(2,1fr); gap:2px 12px;">
+          ${items.map(p=>`<label style="font-size:12.5px; padding:3px 0;">
+            <input type="checkbox" class="us-perm" value="${esc(p.key)}" ${selected.includes(p.key)?"checked":""}> ${esc(p.label)}</label>`).join("")}
+        </div>
+      </div>`).join("");
+  }
+
+  function openUserForm(user){
+    editingUserId = user ? user.id : null;
+    document.getElementById("userModalTitle").textContent = user ? `Пользователь ${user.username}` : "Новый пользователь";
+    document.getElementById("us_username").value = user ? user.username : "";
+    document.getElementById("us_username").disabled = !!user;
+    document.getElementById("us_password").value = "";
+    document.getElementById("us_passLabel").textContent = user ? "Новый пароль (оставьте пустым, чтобы не менять)" : "Пароль *";
+    document.getElementById("us_role").innerHTML = (permMeta?.roles || []).map(r=>`<option value="${esc(r.key)}">${esc(r.label)}</option>`).join("");
+    document.getElementById("us_role").value = user ? user.role : "warehouse";
+    document.getElementById("us_employee").innerHTML = `<option value="">— не привязан —</option>` +
+      employeesList.map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join("");
+    document.getElementById("us_employee").value = user ? (user.employeeId || "") : "";
+    renderPermissionChecks(user ? user.permissions : (permMeta?.roles.find(r=>r.key === "warehouse")?.preset || []));
+    document.getElementById("us_error").textContent = "";
+    document.getElementById("userOverlay").classList.add("show");
+  }
+
+  // Смена роли подставляет типовой набор галочек — дальше можно править руками
+  document.getElementById("us_role").addEventListener("change", (e)=>{
+    const preset = (permMeta?.roles || []).find(r=>r.key === e.target.value);
+    if(preset) renderPermissionChecks(preset.preset);
   });
-  window.__deleteUser = async function(id){
-    if(!confirm("Удалить пользователя?")) return;
-    await api("/auth/users/"+id, {method:"DELETE"});
-    await loadUsers();
-  };
+  document.getElementById("us_cancel").addEventListener("click", ()=>document.getElementById("userOverlay").classList.remove("show"));
+  document.getElementById("us_save").addEventListener("click", async ()=>{
+    const permissions = Array.from(document.querySelectorAll(".us-perm:checked")).map(cb=>cb.value);
+    const body = {
+      role: document.getElementById("us_role").value,
+      permissions,
+      employeeId: document.getElementById("us_employee").value || null
+    };
+    const password = document.getElementById("us_password").value;
+    try{
+      if(editingUserId){
+        if(password) body.password = password;
+        await api("/auth/users/" + editingUserId, {method:"PUT", body: JSON.stringify(body)});
+      } else {
+        body.username = document.getElementById("us_username").value.trim();
+        body.password = password;
+        if(!body.username || !password){ document.getElementById("us_error").textContent = "Логин и пароль обязательны"; return; }
+        await api("/auth/users", {method:"POST", body: JSON.stringify(body)});
+      }
+      document.getElementById("userOverlay").classList.remove("show");
+      toast("Сохранено");
+      loadUsers();
+    }catch(e){ document.getElementById("us_error").textContent = e.message; }
+  });
+  document.getElementById("btnAddUser").addEventListener("click", async ()=>{
+    if(!permMeta){ try{ permMeta = await api("/auth/permissions-meta"); }catch(e){} }
+    if(!employeesList.length){ try{ employeesList = await api("/employees"); }catch(e){} }
+    openUserForm(null);
+  });
 
   // init: try /auth/me to see if already logged in
   (async ()=>{
     try{
       const me = await api("/auth/me");
       myRole = me.role;
-      setCurrentUser(me.username, me.role);
+      myPermissions = me.permissions || [];
+      myEmployeeId = me.employeeId || null;
+      setCurrentUser(me.username, me.role, me.roleLabel);
       applyRoleUI();
       showApp();
       await loadAll();
