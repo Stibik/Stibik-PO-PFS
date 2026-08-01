@@ -39,6 +39,8 @@ function rowToCatalogItem(row) {
     totalPoints: row.kaspi_total_points,
     preorderDays: row.kaspi_preorder_days,
     syncedAt: row.kaspi_synced_at,
+    showInPrice: row.show_in_price !== 0, // по умолчанию true (в базе default 1)
+    sortOrder: row.sort_order || 0,
     createdAt: row.created_at
   };
 }
@@ -107,9 +109,9 @@ router.put("/:id", (req, res) => {
     material: "material", color: "color", height: "height", diameter: "diameter",
     weight: "weight", mount: "mount", note: "note", photo: "photo",
     laborRate: "labor_rate", materialCost: "material_cost", miscCost: "misc_cost", ragsCost: "rags_cost",
-    costPrice: "cost", retailPrice: "retail"
+    costPrice: "cost", retailPrice: "retail", sortOrder: "sort_order"
   };
-  const numericFields = new Set(["height","diameter","weight","laborRate","materialCost","miscCost","ragsCost","costPrice","retailPrice"]);
+  const numericFields = new Set(["height","diameter","weight","laborRate","materialCost","miscCost","ragsCost","costPrice","retailPrice","sortOrder"]);
   for (const [jsKey, col] of Object.entries(map)) {
     if (Object.prototype.hasOwnProperty.call(b, jsKey)) {
       updates.push(`${col} = ?`);
@@ -118,6 +120,10 @@ router.put("/:id", (req, res) => {
       if (numericFields.has(jsKey) && v === "") v = null;
       params.push(v);
     }
+  }
+  if (Object.prototype.hasOwnProperty.call(b, "showInPrice")) {
+    updates.push("show_in_price = ?");
+    params.push(b.showInPrice ? 1 : 0);
   }
   if (updates.length) {
     params.push(req.params.id);
