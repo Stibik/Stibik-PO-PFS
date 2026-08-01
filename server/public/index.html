@@ -280,6 +280,80 @@
   </nav>
   <main>
     <section id="tab-orders">
+      <style>
+        #cn-screen{ --cn-navy:#172554; --cn-amber:#F59E0B; --cn-border:#E5E7EB; --cn-soft:#6B7280; }
+        #cn-screen .cn-head{display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:16px;}
+        #cn-screen h2{font-family:var(--serif); font-weight:400; font-size:24px; margin:0;}
+        #cn-screen .cn-sub{font-size:13px; color:var(--ink-soft); margin-top:2px;}
+        #cn-screen .cn-cards{display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:16px;}
+        #cn-screen .cn-card{background:#fff; border:1px solid var(--cn-border); border-radius:14px; padding:16px 18px; display:flex; gap:13px; align-items:flex-start;}
+        #cn-screen .cn-ic{width:44px; height:44px; border-radius:11px; display:flex; align-items:center; justify-content:center; font-size:20px; flex-shrink:0;}
+        #cn-screen .cn-card .cn-big{font-size:21px; font-weight:700; line-height:1.2;}
+        #cn-screen .cn-card .cn-lbl{font-size:12.5px; color:var(--cn-soft);}
+        #cn-screen .cn-card .cn-extra{font-size:11.5px; color:var(--cn-soft); margin-top:4px;}
+        #cn-screen table.cn-table{width:100%; border-collapse:collapse; background:#fff; box-shadow:none;}
+        #cn-screen table.cn-table thead th{position:sticky; top:0; background:#fff; z-index:2; font-size:10.5px; text-transform:uppercase; color:var(--cn-soft); text-align:left; padding:9px 8px; border-bottom:1px solid var(--cn-border); white-space:nowrap;}
+        #cn-screen table.cn-table td{padding:8px; border-bottom:1px solid var(--cn-border); font-size:13px; vertical-align:middle;}
+        #cn-screen tr.cn-row:hover{background:#FAF7F0;}
+        #cn-screen .cn-photo{width:40px; height:40px; object-fit:contain; border:1px solid var(--cn-border); border-radius:6px; background:#fff;}
+        #cn-screen .cn-photo-empty{width:40px; height:40px; border:1px dashed var(--cn-border); border-radius:6px; display:flex; align-items:center; justify-content:center; color:var(--cn-soft); font-size:9px;}
+        #cn-screen .cn-badge{display:inline-block; padding:3px 10px; border-radius:20px; font-size:11.5px; font-weight:600; white-space:nowrap;}
+        #cn-screen .cn-late{color:var(--red); font-weight:700;}
+        #cn-screen .cn-num{text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums;}
+        @media (max-width:900px){ #cn-screen .cn-cards{grid-template-columns:1fr 1fr;} }
+      </style>
+
+      <div class="panel" style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+        <span style="font-size:12.5px; color:var(--ink-soft);">Контур:</span>
+        <div class="pill-row" id="cnContourSwitch"></div>
+        <span id="cnContourHint" style="font-size:12px; color:var(--ink-soft);"></span>
+      </div>
+
+      <div id="cn-screen" style="display:none;">
+        <div class="cn-head">
+          <div>
+            <h2>Закупки из Китая</h2>
+            <div class="cn-sub">Контроль заказанного товара и сроков поставки. Отдельный контур: продажи, маржа, Kaspi и зарплата тут не участвуют.</div>
+          </div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button class="btn amber" id="cnBtnNew">+ Новая закупка</button>
+            <button class="btn secondary" id="cnBtnStock">📦 Склад и ячейки</button>
+            <button class="btn secondary" id="cnBtnInventory">🧮 Инвентаризация</button>
+            <button class="btn secondary" id="cnBtnSuppliers">Поставщики</button>
+            <button class="btn secondary" id="cnBtnExport">Экспорт в Excel</button>
+          </div>
+        </div>
+
+        <div class="cn-cards" id="cnCards"></div>
+
+        <div class="panel">
+          <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+            <input type="text" id="cnSearch" placeholder="Поиск по артикулу, названию, треку..." style="flex:1; min-width:220px;">
+            <select id="cnFilterSupplier" style="min-width:170px;"><option value="">Все поставщики</option></select>
+            <select id="cnFilterCategory" style="min-width:160px;"><option value="">Все категории</option></select>
+            <input type="date" id="cnFrom" title="Дата заказа с">
+            <input type="date" id="cnTo" title="Дата заказа по">
+            <label style="font-size:12.5px;"><input type="checkbox" id="cnShowArchive"> Показывать архив</label>
+            <button class="btn secondary" id="cnBtnReset" style="padding:5px 12px; font-size:12px;">Сбросить</button>
+          </div>
+          <div class="panel-divider"></div>
+          <div class="pill-row" id="cnQuickFilters"></div>
+        </div>
+
+        <div class="panel" style="padding:0; overflow:hidden;">
+          <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 16px; border-bottom:1px solid var(--cn-border); flex-wrap:wrap; gap:8px;">
+            <b style="font-size:14px;">Заказы из Китая</b>
+            <span id="cnCount" style="font-size:12.5px; color:var(--ink-soft);"></span>
+          </div>
+          <div style="overflow:auto; max-height:62vh;">
+            <table class="cn-table">
+              <thead id="cnTableHead"></thead>
+              <tbody id="cnTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div id="prihodClassic">
       <div class="toolbar">
         <button class="btn amber" id="btnAddOrder">+ Новый приход</button>
         <button class="btn secondary" id="btnImportOrders">Импорт из Excel</button>
@@ -327,6 +401,7 @@
         <thead id="ordersHead"></thead>
         <tbody id="ordersBody"></tbody>
       </table>
+      </div>
       </div>
     </section>
     <section id="tab-kaspiOrders" style="display:none">
@@ -678,6 +753,7 @@
       <div><label>Доставка, ₸ (за шт.)</label><input id="o_delivery" type="number" step="0.01"></div>
       <div><label>Продажная цена, ₸</label><input id="o_sale" type="number" step="0.01"></div>
       <div><label>Категория</label><select id="o_category"></select></div>
+      <div><label>Магазин</label><select id="o_shop"></select></div>
       <div><label>Статус</label>
         <select id="o_status"><option value="new">Новый</option><option value="transit">В пути</option><option value="arrived">Пришло</option><option value="problem">Проблема</option></select>
       </div>
@@ -867,6 +943,122 @@
   </div>
 </div>
 
+<div class="overlay" id="cnPurchaseOverlay">
+  <div class="modal" style="max-width:820px;">
+    <h3 id="cnPurchaseTitle">Новая закупка</h3>
+    <div class="grid2">
+      <div><label>Поставщик *</label><select id="cnP_supplier" style="width:100%;"></select></div>
+      <div><label>Дата заказа *</label><input type="date" id="cnP_orderDate" style="width:100%;"></div>
+      <div><label>Номер заказа у поставщика</label><input type="text" id="cnP_supplierOrderNo" style="width:100%;"></div>
+      <div><label>Площадка / канал</label><input type="text" id="cnP_channel" style="width:100%;" placeholder="1688, Taobao, напрямую..."></div>
+      <div><label>План отправки</label><input type="date" id="cnP_planShip" style="width:100%;"></div>
+      <div><label>План прихода</label><input type="date" id="cnP_planArrive" style="width:100%;"></div>
+      <div><label>Валюта</label><input type="text" id="cnP_currency" style="width:100%;" value="CNY"></div>
+      <div><label>Курс к ₸ (необязательно)</label><input type="number" step="0.01" id="cnP_rate" style="width:100%;"></div>
+      <div><label>Трек-номер / карго</label><input type="text" id="cnP_track" style="width:100%;"></div>
+      <div><label>Ссылка на заказ</label><input type="text" id="cnP_link" style="width:100%;"></div>
+      <div class="full"><label>Комментарий</label><input type="text" id="cnP_comment" style="width:100%;"></div>
+    </div>
+
+    <div style="border-top:1px solid var(--line); margin-top:14px; padding-top:12px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:8px;">
+        <b style="font-size:13px;">Позиции закупки</b>
+        <div style="display:flex; gap:8px;">
+          <input type="text" id="cnP_searchCatalog" placeholder="Найти товар в Справочнике..." style="min-width:220px;">
+          <button class="btn secondary" id="cnP_addManual" style="padding:6px 12px; font-size:12.5px;">+ Позиция вручную</button>
+        </div>
+      </div>
+      <div id="cnP_catalogHits" style="margin-bottom:8px;"></div>
+      <div id="cnP_items"></div>
+      <div style="text-align:right; font-size:14px; font-weight:700; margin-top:10px;">
+        Итого: <span id="cnP_total">0</span> <span id="cnP_totalCur">CNY</span>
+      </div>
+      <div style="text-align:right; font-size:11.5px; color:var(--ink-soft);">Сумма пересчитывается на сервере при сохранении</div>
+    </div>
+
+    <div class="error" id="cnP_error"></div>
+    <div class="modal-actions">
+      <div></div>
+      <div><button class="btn secondary" id="cnP_cancel">Отмена</button> <button class="btn amber" id="cnP_save">Сохранить</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="cnCardOverlay">
+  <div class="modal" style="max-width:860px;">
+    <h3 id="cnCardTitle">Закупка</h3>
+    <div id="cnCardBody"></div>
+    <div class="modal-actions">
+      <div id="cnCardLeftActions" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
+      <button class="btn secondary" id="cnCardClose">Закрыть</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="cnReceiveOverlay">
+  <div class="modal" style="max-width:760px;">
+    <h3>Оприходовать на склад Китая</h3>
+    <div style="font-size:12.5px; color:var(--ink-soft); margin-bottom:12px;">
+      Товар встаёт на отдельный склад контура «Китай». Основной склад, Справочник и Kaspi не затрагиваются.
+      Каждой позиции присваивается свой штрих-код — его и печатаем на этикетке.
+    </div>
+    <div id="cnReceiveBody"></div>
+    <div class="error" id="cnReceiveError"></div>
+    <div class="modal-actions">
+      <div></div>
+      <div><button class="btn secondary" id="cnReceiveCancel">Отмена</button> <button class="btn amber" id="cnReceiveSave">Оприходовать</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="cnStockOverlay">
+  <div class="modal" style="max-width:900px;">
+    <h3>Склад «Китай» — остатки и ячейки</h3>
+    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:10px;">
+      <input type="text" id="cnStockSearch" placeholder="Название, артикул, штрих-код или ячейка..." style="flex:1; min-width:220px;">
+      <select id="cnStockCell" style="min-width:150px;"><option value="">Все ячейки</option></select>
+      <button class="btn secondary" id="cnStockPrintAll" style="padding:6px 12px; font-size:12.5px;">🏷️ Печать этикеток</button>
+    </div>
+    <div id="cnStockBody" style="max-height:55vh; overflow:auto;"></div>
+    <div class="modal-actions">
+      <div></div>
+      <button class="btn secondary" id="cnStockClose">Закрыть</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="cnInvOverlay">
+  <div class="modal" style="max-width:860px;">
+    <h3>Инвентаризация склада «Китай»</h3>
+    <div id="cnInvBody"></div>
+    <div class="modal-actions">
+      <div id="cnInvActions" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
+      <button class="btn secondary" id="cnInvClose">Закрыть</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="cnSuppliersOverlay">
+  <div class="modal" style="max-width:620px;">
+    <h3>Поставщики</h3>
+    <div id="cnSuppliersList" style="margin-bottom:14px;"></div>
+    <div style="border-top:1px solid var(--line); padding-top:12px;">
+      <div class="grid2">
+        <div><label>Название *</label><input type="text" id="cnS_name" style="width:100%;"></div>
+        <div><label>Контактное лицо</label><input type="text" id="cnS_contact" style="width:100%;"></div>
+        <div><label>Телефон / мессенджер</label><input type="text" id="cnS_phone" style="width:100%;"></div>
+        <div><label>Ссылка</label><input type="text" id="cnS_link" style="width:100%;"></div>
+        <div class="full"><label>Комментарий</label><input type="text" id="cnS_comment" style="width:100%;"></div>
+      </div>
+      <div class="error" id="cnS_error"></div>
+      <div class="modal-actions">
+        <button class="btn secondary" id="cnS_reset" style="display:none;">Отменить редактирование</button>
+        <div><button class="btn secondary" id="cnSuppliersClose">Закрыть</button> <button class="btn amber" id="cnS_save">Сохранить</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -972,6 +1164,7 @@
     document.getElementById("o_delivery").value = o.deliveryPrice ?? "";
     document.getElementById("o_sale").value = o.salePrice ?? "";
     populateCategorySelect(o.category||"", "o_category");
+    populateShopSelect(o.shop || "");
     document.getElementById("o_note").value = o.note||"";
     currentOrderPhoto = o.photo || null;
     updateOrderPhotoPreview();
@@ -2316,6 +2509,783 @@
   });
 
 
+  // ================= Контур «Китай»: контроль закупок =================
+  // Полностью автономный контур. Ничего не отправляет в Kaspi, зарплату,
+  // производство и основной склад — только собственные таблицы на сервере.
+  const CN_STATUS = {
+    ordered:   { label:"Заказано",         color:"#4B5563", bg:"#F3F4F6" },
+    ready:     { label:"Готово к отправке", color:"#7C3AED", bg:"#EDE9FE" },
+    transit:   { label:"В пути",            color:"#2563EB", bg:"#DBEAFE" },
+    received:  { label:"Получено",          color:"#16A34A", bg:"#DCFCE7" },
+    cancelled: { label:"Отменено",          color:"#6B7280", bg:"#F3F4F6" }
+  };
+  const CN_PAGE_SIZE = 25;
+
+  let cnContour = localStorage.getItem("prihodContour") || "all";
+  let cnPurchases = [], cnStats = null, cnSuppliers = [];
+  let cnQuick = "";          // быстрый фильтр: статус или "overdue"
+  let cnPage = 1;
+  let cnEditingId = null;
+  let cnFormItems = [];      // позиции в форме закупки
+  let cnEditingSupplierId = null;
+  let cnShopNames = [];
+
+  function cnStatusBadge(p){
+    const s = CN_STATUS[p.status] || CN_STATUS.ordered;
+    if(p.overdue) return `<span class="cn-badge" style="color:var(--red); background:#FEE2E2;">Просрочено</span>`;
+    return `<span class="cn-badge" style="color:${s.color}; background:${s.bg};">${esc(s.label)}</span>`;
+  }
+  function cnMoney(n, cur){ return money(n) + " " + (cur || "CNY"); }
+
+  // ---------- Переключатель контуров ----------
+  function renderContourSwitch(){
+    const wrap = document.getElementById("cnContourSwitch");
+    const options = [{ key:"all", label:"Все" }]
+      .concat(cnShopNames.map(s=>({ key:"shop:"+s, label:s })))
+      .concat([{ key:"china", label:"🇨🇳 Китай" }]);
+    wrap.innerHTML = options.map(o=>
+      `<button class="pill ${cnContour===o.key?"active":""}" data-contour="${esc(o.key)}">${esc(o.label)}</button>`).join("");
+    wrap.querySelectorAll("button[data-contour]").forEach(b=>{
+      b.addEventListener("click", ()=>{
+        cnContour = b.dataset.contour;
+        localStorage.setItem("prihodContour", cnContour);
+        applyContour();
+      });
+    });
+    const hint = document.getElementById("cnContourHint");
+    hint.textContent = cnContour === "china"
+      ? "Контур для отслеживания заказов у поставщиков, а не продаж"
+      : (cnContour === "all" ? "Поступления по всем магазинам" : "");
+  }
+
+  function applyContour(){
+    const isChina = cnContour === "china";
+    document.getElementById("prihodClassic").style.display = isChina ? "none" : "";
+    document.getElementById("cn-screen").style.display = isChina ? "" : "none";
+    renderContourSwitch();
+    if(isChina) loadChina();
+    else renderOrders(false);
+  }
+
+  // ---------- Загрузка данных контура ----------
+  async function loadChina(){
+    document.getElementById("cnTableBody").innerHTML = `<tr><td colspan="14" style="padding:20px; text-align:center; color:var(--ink-soft);">Загрузка...</td></tr>`;
+    const qs = cnQueryString();
+    try{
+      const [list, stats, sups] = await Promise.all([
+        api("/china-purchases" + qs),
+        api("/china-purchases/stats" + qs),
+        api("/china-purchases/suppliers?all=1")
+      ]);
+      cnPurchases = list; cnStats = stats; cnSuppliers = sups;
+      cnFillSupplierFilter();
+      renderCnCards();
+      renderCnQuickFilters();
+      renderCnTable();
+    }catch(e){
+      document.getElementById("cnTableBody").innerHTML = `<tr><td colspan="14" style="padding:20px; color:var(--red);">Ошибка загрузки: ${esc(e.message)}</td></tr>`;
+    }
+  }
+
+  function cnQueryString(){
+    const p = new URLSearchParams();
+    const q = document.getElementById("cnSearch").value.trim();
+    if(q) p.set("q", q);
+    const sup = document.getElementById("cnFilterSupplier").value;
+    if(sup) p.set("supplierId", sup);
+    const cat = document.getElementById("cnFilterCategory").value;
+    if(cat) p.set("category", cat);
+    const from = document.getElementById("cnFrom").value;
+    if(from) p.set("from", from);
+    const to = document.getElementById("cnTo").value;
+    if(to) p.set("to", to);
+    if(document.getElementById("cnShowArchive").checked) p.set("archived", "1");
+    if(cnQuick === "overdue") p.set("overdue", "1");
+    else if(cnQuick) p.set("status", cnQuick);
+    const s = p.toString();
+    return s ? "?" + s : "";
+  }
+
+  function cnFillSupplierFilter(){
+    const sel = document.getElementById("cnFilterSupplier");
+    const prev = sel.value;
+    sel.innerHTML = `<option value="">Все поставщики</option>` +
+      cnSuppliers.map(s=>`<option value="${esc(s.id)}">${esc(s.name)}</option>`).join("");
+    sel.value = prev;
+    const cats = Array.from(new Set(cnPurchases.flatMap(p=>p.items.map(i=>i.category).filter(Boolean)))).sort();
+    const csel = document.getElementById("cnFilterCategory");
+    const cprev = csel.value;
+    csel.innerHTML = `<option value="">Все категории</option>` + cats.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join("");
+    csel.value = cprev;
+  }
+
+  function renderCnCards(){
+    const s = cnStats;
+    if(!s) return;
+    const card = (icon, bg, color, big, lbl, extra) => `
+      <div class="cn-card">
+        <div class="cn-ic" style="background:${bg}; color:${color};">${icon}</div>
+        <div>
+          <div class="cn-big">${big}</div>
+          <div class="cn-lbl">${lbl}</div>
+          <div class="cn-extra">${extra}</div>
+        </div>
+      </div>`;
+    document.getElementById("cnCards").innerHTML =
+      card("📦", "#FEF3C7", "#D97706", `${s.ordered.positions} поз. · ${money(s.ordered.units)} шт`, "Заказано",
+           `Сумма ${money(s.ordered.amount)}<br>Ожидает отправки: ${s.ordered.waitingShipment}`) +
+      card("🚚", "#DBEAFE", "#2563EB", `${s.transit.positions} поз. · ${money(s.transit.units)} шт`, "В пути",
+           `Сумма ${money(s.transit.amount)}<br>Средний срок: ${s.transit.avgDays} дн.`) +
+      card("✅", "#DCFCE7", "#16A34A", `${s.received.positions} поз. · ${money(s.received.units)} шт`, "Получено",
+           `Сумма ${money(s.received.amount)}<br>За текущий месяц: ${s.received.thisMonth}`) +
+      card("⏱", "#EDE9FE", "#7C3AED", `${s.active.positions} поз. · ${money(s.active.units)} шт`, "Активные закупки",
+           `Общая сумма ${money(s.active.amount)}<br>${s.active.overdue ? `<span style="color:var(--red); font-weight:600;">Просрочено: ${s.active.overdue}</span>` : "Просроченных нет"}`);
+  }
+
+  function renderCnQuickFilters(){
+    const c = cnStats ? cnStats.counts : { all:0, ordered:0, ready:0, transit:0, received:0, overdue:0 };
+    const defs = [
+      { key:"", label:"Все", n:c.all },
+      { key:"ordered", label:"Заказано", n:c.ordered },
+      { key:"ready", label:"Готово к отправке", n:c.ready },
+      { key:"transit", label:"В пути", n:c.transit },
+      { key:"overdue", label:"Просрочено", n:c.overdue },
+      { key:"received", label:"Получено", n:c.received }
+    ];
+    const wrap = document.getElementById("cnQuickFilters");
+    wrap.innerHTML = defs.map(d=>
+      `<button class="pill ${cnQuick===d.key?"active":""}" data-quick="${d.key}">${d.label} <span class="count">${d.n}</span></button>`).join("");
+    wrap.querySelectorAll("button[data-quick]").forEach(b=>{
+      b.addEventListener("click", ()=>{ cnQuick = b.dataset.quick; cnPage = 1; loadChina(); });
+    });
+  }
+
+  function renderCnTable(){
+    const total = cnPurchases.length;
+    const pages = Math.max(1, Math.ceil(total / CN_PAGE_SIZE));
+    if(cnPage > pages) cnPage = pages;
+    const slice = cnPurchases.slice((cnPage-1)*CN_PAGE_SIZE, cnPage*CN_PAGE_SIZE);
+    document.getElementById("cnCount").textContent = total
+      ? `Показано ${slice.length} из ${total}` + (pages > 1 ? ` · страница ${cnPage} из ${pages}` : "")
+      : "";
+
+    document.getElementById("cnTableHead").innerHTML = `<tr>
+      <th>№</th><th>Фото</th><th>Артикул / название</th><th>Поставщик</th>
+      <th class="cn-num">Заказано</th><th class="cn-num">Отправлено</th><th class="cn-num">Получено</th>
+      <th>Дата заказа</th><th>План отправки</th><th>План прихода</th><th class="cn-num">Дней в пути</th>
+      <th class="cn-num">Цена/шт</th><th class="cn-num">Итого</th><th>Статус</th><th></th></tr>`;
+
+    const body = document.getElementById("cnTableBody");
+    if(!slice.length){
+      body.innerHTML = `<tr><td colspan="15" style="padding:26px; text-align:center; color:var(--ink-soft);">
+        Закупок пока нет. Нажмите «+ Новая закупка», чтобы завести первый заказ поставщику.</td></tr>`;
+      return;
+    }
+    const today = new Date().toISOString().slice(0,10);
+    const dateCell = (d, late) => !d ? "—" : `<span class="${late?"cn-late":""}">${fmtDate(d)}</span>`;
+
+    body.innerHTML = slice.map(p=>{
+      const first = p.items[0] || {};
+      const more = p.items.length > 1 ? `<div style="font-size:11px; color:var(--ink-soft);">и ещё ${p.items.length-1} поз.</div>` : "";
+      const unit = p.items.length === 1 ? cnMoney(first.unitPrice, p.currency) : "—";
+      const shipLate = p.planShipDate && !p.factShipDate && p.planShipDate < today && p.status !== "received";
+      const arrLate = p.planArriveDate && p.planArriveDate < today && p.status !== "received";
+      return `<tr class="cn-row" data-id="${esc(p.id)}">
+        <td>${p.number}${p.isArchived?`<div style="font-size:10px; color:var(--ink-soft);">архив</div>`:""}</td>
+        <td>${first.photo?`<img class="cn-photo" src="${esc(first.photo)}">`:`<div class="cn-photo-empty">нет</div>`}</td>
+        <td>
+          <div style="font-weight:600;">${esc(first.name || "—")}</div>
+          <div style="font-size:11px; color:var(--ink-soft);">${esc(first.article || "")}</div>
+          ${more}
+        </td>
+        <td>${esc(p.supplierName || "—")}</td>
+        <td class="cn-num">${money(p.qtyOrdered)}</td>
+        <td class="cn-num">${p.qtyShipped ? money(p.qtyShipped) : "—"}</td>
+        <td class="cn-num">${p.qtyReceived ? `${money(p.qtyReceived)}${p.qtyReceived !== p.qtyOrdered && p.status==="received" ? `<div style="font-size:10.5px; color:var(--red);">−${money(p.qtyOrdered - p.qtyReceived)}</div>` : ""}` : "—"}</td>
+        <td>${fmtDate(p.orderDate)}</td>
+        <td>${dateCell(p.planShipDate, shipLate)}</td>
+        <td>${dateCell(p.planArriveDate, arrLate)}</td>
+        <td class="cn-num">${p.daysInTransit == null ? "—" : p.daysInTransit}</td>
+        <td class="cn-num">${unit}</td>
+        <td class="cn-num"><b>${cnMoney(p.totalAmount, p.currency)}</b></td>
+        <td>${cnStatusBadge(p)}</td>
+        <td style="white-space:nowrap;"><button class="btn secondary" style="padding:4px 10px; font-size:12px;" data-open="${esc(p.id)}">Открыть</button></td>
+      </tr>`;
+    }).join("") + (pages > 1 ? `<tr><td colspan="15" style="text-align:center; padding:12px;">
+        <button class="btn secondary" style="padding:4px 12px; font-size:12px;" data-page="prev" ${cnPage===1?"disabled":""}>← Назад</button>
+        <span style="margin:0 10px; font-size:12.5px;">${cnPage} / ${pages}</span>
+        <button class="btn secondary" style="padding:4px 12px; font-size:12px;" data-page="next" ${cnPage===pages?"disabled":""}>Вперёд →</button>
+      </td></tr>` : "");
+
+    body.querySelectorAll("[data-open]").forEach(b=>b.addEventListener("click", ()=>openCnCard(b.dataset.open)));
+    body.querySelectorAll("[data-page]").forEach(b=>b.addEventListener("click", ()=>{
+      cnPage += b.dataset.page === "next" ? 1 : -1;
+      renderCnTable();
+    }));
+  }
+
+  // ---------- Форма закупки ----------
+  function openCnPurchaseForm(existing){
+    cnEditingId = existing ? existing.id : null;
+    document.getElementById("cnPurchaseTitle").textContent = existing ? `Закупка №${existing.number}` : "Новая закупка";
+    const sel = document.getElementById("cnP_supplier");
+    sel.innerHTML = `<option value="">— выберите —</option>` +
+      cnSuppliers.filter(s=>s.isActive || (existing && existing.supplierId === s.id))
+                 .map(s=>`<option value="${esc(s.id)}">${esc(s.name)}</option>`).join("");
+    const v = (id, val) => document.getElementById(id).value = val || "";
+    v("cnP_supplier", existing?.supplierId);
+    v("cnP_orderDate", existing?.orderDate || new Date().toISOString().slice(0,10));
+    v("cnP_supplierOrderNo", existing?.supplierOrderNo);
+    v("cnP_channel", existing?.channel);
+    v("cnP_planShip", existing?.planShipDate);
+    v("cnP_planArrive", existing?.planArriveDate);
+    v("cnP_currency", existing?.currency || "CNY");
+    v("cnP_rate", existing?.rate);
+    v("cnP_track", existing?.trackNo);
+    v("cnP_link", existing?.link);
+    v("cnP_comment", existing?.comment);
+    document.getElementById("cnP_error").textContent = "";
+    document.getElementById("cnP_searchCatalog").value = "";
+    document.getElementById("cnP_catalogHits").innerHTML = "";
+    cnFormItems = existing ? existing.items.map(i=>({ ...i })) : [];
+    renderCnFormItems();
+    document.getElementById("cnPurchaseOverlay").classList.add("show");
+  }
+
+  function renderCnFormItems(){
+    const wrap = document.getElementById("cnP_items");
+    if(!cnFormItems.length){
+      wrap.innerHTML = `<div style="font-size:12.5px; color:var(--ink-soft); padding:10px 0;">Позиций пока нет. Найдите товар в Справочнике или добавьте вручную — китайские новинки часто ещё не заведены.</div>`;
+    } else {
+      wrap.innerHTML = cnFormItems.map((it, i)=>`
+        <div style="display:flex; gap:8px; align-items:flex-start; padding:8px 0; border-bottom:1px solid var(--line); flex-wrap:wrap;">
+          <div style="flex:1; min-width:180px;">
+            <input type="text" data-f="name" data-i="${i}" value="${esc(it.name||"")}" placeholder="Название" style="width:100%; margin-bottom:4px;">
+            <input type="text" data-f="article" data-i="${i}" value="${esc(it.article||"")}" placeholder="Артикул" style="width:48%;">
+            <input type="text" data-f="category" data-i="${i}" value="${esc(it.category||"")}" placeholder="Категория" style="width:48%;">
+          </div>
+          <div style="width:90px;"><label style="font-size:10.5px; color:var(--ink-soft);">Кол-во</label>
+            <input type="number" step="1" min="0" data-f="qtyOrdered" data-i="${i}" value="${it.qtyOrdered ?? ""}" style="width:100%;"></div>
+          <div style="width:110px;"><label style="font-size:10.5px; color:var(--ink-soft);">Цена/шт</label>
+            <input type="number" step="0.01" min="0" data-f="unitPrice" data-i="${i}" value="${it.unitPrice ?? ""}" style="width:100%;"></div>
+          <div style="width:110px; text-align:right; padding-top:16px; font-weight:600;">${money((Number(it.qtyOrdered)||0)*(Number(it.unitPrice)||0))}</div>
+          <button class="btn danger" style="padding:4px 9px; font-size:12px; margin-top:14px;" data-del="${i}">✕</button>
+        </div>`).join("");
+      wrap.querySelectorAll("input[data-f]").forEach(inp=>{
+        inp.addEventListener("input", ()=>{
+          const i = Number(inp.dataset.i), f = inp.dataset.f;
+          cnFormItems[i][f] = (f === "qtyOrdered" || f === "unitPrice") ? (parseFloat(inp.value) || 0) : inp.value;
+          updateCnFormTotal();
+        });
+      });
+      wrap.querySelectorAll("[data-del]").forEach(b=>b.addEventListener("click", ()=>{
+        cnFormItems.splice(Number(b.dataset.del), 1);
+        renderCnFormItems();
+      }));
+    }
+    updateCnFormTotal();
+  }
+  function updateCnFormTotal(){
+    const total = cnFormItems.reduce((s,it)=> s + (Number(it.qtyOrdered)||0)*(Number(it.unitPrice)||0), 0);
+    document.getElementById("cnP_total").textContent = money(total);
+    document.getElementById("cnP_totalCur").textContent = document.getElementById("cnP_currency").value || "CNY";
+  }
+
+  document.getElementById("cnP_addManual").addEventListener("click", ()=>{
+    cnFormItems.push({ name:"", article:"", category:"", qtyOrdered:1, unitPrice:0 });
+    renderCnFormItems();
+  });
+  document.getElementById("cnP_searchCatalog").addEventListener("input", async (e)=>{
+    const q = e.target.value.trim().toLowerCase();
+    const hits = document.getElementById("cnP_catalogHits");
+    if(q.length < 2){ hits.innerHTML = ""; return; }
+    if(!catalogItems.length){ try{ catalogItems = await api("/catalog"); }catch(err){} }
+    const found = catalogItems.filter(it=>
+      (it.printName||"").toLowerCase().includes(q) ||
+      (it.kaspiName||"").toLowerCase().includes(q) ||
+      (it.article||"").toLowerCase().includes(q)).slice(0, 6);
+    hits.innerHTML = found.length
+      ? found.map(it=>`<button class="btn secondary" style="padding:4px 10px; font-size:12px; margin:0 6px 6px 0;" data-add="${esc(it.id)}">+ ${esc(it.printName || it.kaspiName || it.article)}</button>`).join("")
+      : `<span style="font-size:12px; color:var(--ink-soft);">В Справочнике не нашлось — добавьте позицию вручную</span>`;
+    hits.querySelectorAll("[data-add]").forEach(b=>b.addEventListener("click", ()=>{
+      const it = catalogItems.find(x=>x.id === b.dataset.add);
+      if(!it) return;
+      cnFormItems.push({
+        itemId: it.id, name: it.printName || it.kaspiName || "", article: it.article || "",
+        category: it.category || "", photo: it.photo || null, qtyOrdered: 1, unitPrice: 0
+      });
+      renderCnFormItems();
+      document.getElementById("cnP_searchCatalog").value = "";
+      hits.innerHTML = "";
+    }));
+  });
+  document.getElementById("cnP_currency").addEventListener("input", updateCnFormTotal);
+  document.getElementById("cnP_cancel").addEventListener("click", ()=>document.getElementById("cnPurchaseOverlay").classList.remove("show"));
+
+  document.getElementById("cnP_save").addEventListener("click", async ()=>{
+    const body = {
+      supplierId: document.getElementById("cnP_supplier").value,
+      orderDate: document.getElementById("cnP_orderDate").value,
+      supplierOrderNo: document.getElementById("cnP_supplierOrderNo").value,
+      channel: document.getElementById("cnP_channel").value,
+      planShipDate: document.getElementById("cnP_planShip").value,
+      planArriveDate: document.getElementById("cnP_planArrive").value,
+      currency: document.getElementById("cnP_currency").value,
+      rate: document.getElementById("cnP_rate").value,
+      trackNo: document.getElementById("cnP_track").value,
+      link: document.getElementById("cnP_link").value,
+      comment: document.getElementById("cnP_comment").value,
+      items: cnFormItems
+    };
+    try{
+      if(cnEditingId) await api("/china-purchases/" + cnEditingId, { method:"PUT", body: JSON.stringify(body) });
+      else await api("/china-purchases", { method:"POST", body: JSON.stringify(body) });
+      document.getElementById("cnPurchaseOverlay").classList.remove("show");
+      toast(cnEditingId ? "Закупка обновлена" : "Закупка создана");
+      loadChina();
+    }catch(e){
+      document.getElementById("cnP_error").textContent = e.message;
+    }
+  });
+
+  // ---------- Карточка закупки ----------
+  let cnCardData = null;
+  async function openCnCard(id){
+    try{
+      cnCardData = await api("/china-purchases/" + id);
+    }catch(e){ toast("Не открылось: " + e.message); return; }
+    const p = cnCardData;
+    document.getElementById("cnCardTitle").textContent = `Закупка №${p.number} — ${p.supplierName || "без поставщика"}`;
+
+    const row = (k, v) => v ? `<tr><td style="color:var(--ink-soft); width:190px; font-size:12.5px;">${k}</td><td style="font-size:13px;">${v}</td></tr>` : "";
+    const info = `<table style="width:100%; box-shadow:none;"><tbody>
+      ${row("Статус", cnStatusBadge(p))}
+      ${row("Поставщик", esc(p.supplierName))}
+      ${row("Номер у поставщика", esc(p.supplierOrderNo))}
+      ${row("Площадка", esc(p.channel))}
+      ${row("Дата заказа", fmtDate(p.orderDate))}
+      ${row("План отправки", fmtDate(p.planShipDate))}
+      ${row("Факт отправки", fmtDate(p.factShipDate))}
+      ${row("План прихода", fmtDate(p.planArriveDate))}
+      ${row("Факт получения", fmtDate(p.factReceiveDate))}
+      ${row("Дней в пути", p.daysInTransit == null ? "" : String(p.daysInTransit))}
+      ${row("Трек / карго", p.trackNo ? `${esc(p.trackNo)} <button class="btn secondary" style="padding:2px 8px; font-size:11px;" id="cnCopyTrack">копировать</button>` : "")}
+      ${row("Ссылка", p.link ? `<a href="${esc(p.link)}" target="_blank" rel="noopener">${esc(p.link.slice(0,60))}</a>` : "")}
+      ${row("Комментарий", esc(p.comment))}
+      ${row("Создал", `${esc(p.createdBy||"")} · ${fmtDate((p.createdAt||"").slice(0,10))}`)}
+    </tbody></table>`;
+
+    const items = `<div style="margin-top:14px;"><b style="font-size:13px;">Позиции</b>
+      <table style="width:100%; margin-top:6px;"><thead><tr>
+        <th>Товар</th><th class="num">Заказано</th><th class="num">Отправлено</th><th class="num">Получено</th><th class="num">Цена</th><th class="num">Сумма</th>
+      </tr></thead><tbody>
+      ${p.items.map(i=>`<tr>
+        <td>${esc(i.name||"—")}<div style="font-size:11px; color:var(--ink-soft);">${esc(i.article||"")}</div></td>
+        <td class="num">${money(i.qtyOrdered)}</td>
+        <td class="num">${i.qtyShipped ? money(i.qtyShipped) : "—"}</td>
+        <td class="num">${i.qtyReceived ? money(i.qtyReceived) : "—"}${i.qtyReceived && i.qtyReceived < i.qtyOrdered ? `<div style="font-size:10.5px; color:var(--red);">недостача ${money(i.qtyOrdered - i.qtyReceived)}</div>` : ""}</td>
+        <td class="num">${money(i.unitPrice)}</td>
+        <td class="num"><b>${money(i.totalPrice)}</b></td>
+      </tr>`).join("")}
+      </tbody></table>
+      <div style="text-align:right; margin-top:6px; font-size:14px;"><b>Итого: ${cnMoney(p.totalAmount, p.currency)}</b></div></div>`;
+
+    const history = `<div style="margin-top:14px; border-top:1px solid var(--line); padding-top:10px;">
+      <b style="font-size:13px;">История</b>
+      <div style="font-size:12px; color:var(--ink-soft); margin-top:6px;">
+        ${(p.history||[]).map(h=>`<div>${esc((h.createdAt||"").slice(0,16).replace("T"," "))} — ${esc(h.fromLabel||"создано")} → <b>${esc(h.toLabel)}</b> (${esc(h.user||"")})${h.comment?": "+esc(h.comment):""}</div>`).join("") || "Пока пусто"}
+      </div></div>`;
+
+    document.getElementById("cnCardBody").innerHTML = info + items + history;
+    const copyBtn = document.getElementById("cnCopyTrack");
+    if(copyBtn) copyBtn.addEventListener("click", async ()=>{
+      try{ await navigator.clipboard.writeText(p.trackNo); toast("Трек скопирован"); }
+      catch(e){ toast("Браузер не дал скопировать"); }
+    });
+
+    // Действия зависят от текущего статуса — показываем только осмысленные
+    const actions = [];
+    if(p.status === "ordered") actions.push(["ready", "Готово к отправке", "secondary"]);
+    if(p.status === "ordered" || p.status === "ready") actions.push(["transit", "Отметить отправку", "amber"]);
+    if(p.status === "transit" || p.status === "ready") actions.push(["received", "Отметить получение", "amber"]);
+    if(p.status !== "cancelled" && p.status !== "received") actions.push(["cancelled", "Отменить закупку", "danger"]);
+
+    const el = document.getElementById("cnCardLeftActions");
+    el.innerHTML = actions.map(([st, label, cls])=>`<button class="btn ${cls}" style="padding:6px 12px; font-size:12.5px;" data-st="${st}">${label}</button>`).join("")
+      + `<button class="btn secondary" style="padding:6px 12px; font-size:12.5px;" id="cnCardEdit">Редактировать</button>`
+      + (p.status === "received" ? `<button class="btn amber" style="padding:6px 12px; font-size:12.5px;" id="cnCardReceive">📦 Оприходовать</button>` : "")
+      + `<button class="btn secondary" style="padding:6px 12px; font-size:12.5px;" id="cnCardArchive">${p.isArchived ? "Вернуть из архива" : "В архив"}</button>`;
+
+    el.querySelectorAll("[data-st]").forEach(b=>b.addEventListener("click", async ()=>{
+      if(b.dataset.st === "cancelled" && !confirm("Отменить закупку? Она останется в истории, но уйдёт из активных.")) return;
+      try{
+        await api(`/china-purchases/${p.id}/status`, { method:"POST", body: JSON.stringify({ status: b.dataset.st }) });
+        toast("Статус обновлён");
+        await openCnCard(p.id);
+        loadChina();
+      }catch(e){ toast("Не получилось: " + e.message); }
+    }));
+    document.getElementById("cnCardEdit").addEventListener("click", ()=>{
+      document.getElementById("cnCardOverlay").classList.remove("show");
+      openCnPurchaseForm(p);
+    });
+    const recvBtn = document.getElementById("cnCardReceive");
+    if(recvBtn) recvBtn.addEventListener("click", ()=>{
+      document.getElementById("cnCardOverlay").classList.remove("show");
+      openCnReceive(p);
+    });
+    document.getElementById("cnCardArchive").addEventListener("click", async ()=>{
+      try{
+        await api(`/china-purchases/${p.id}/archive`, { method:"POST", body: JSON.stringify({ archived: !p.isArchived }) });
+        document.getElementById("cnCardOverlay").classList.remove("show");
+        loadChina();
+      }catch(e){ toast("Не получилось: " + e.message); }
+    });
+
+    document.getElementById("cnCardOverlay").classList.add("show");
+  }
+  document.getElementById("cnCardClose").addEventListener("click", ()=>document.getElementById("cnCardOverlay").classList.remove("show"));
+
+  // ---------- Оприходование на склад контура ----------
+  let cnReceivePurchase = null;
+  function openCnReceive(p){
+    cnReceivePurchase = p;
+    document.getElementById("cnReceiveError").textContent = "";
+    document.getElementById("cnReceiveBody").innerHTML = p.items.map(i=>`
+      <div style="display:flex; gap:10px; align-items:center; padding:8px 0; border-bottom:1px solid var(--line); flex-wrap:wrap;">
+        <div style="flex:1; min-width:180px;">
+          <div style="font-weight:600; font-size:13px;">${esc(i.name||"—")}</div>
+          <div style="font-size:11.5px; color:var(--ink-soft);">${esc(i.article||"")} · получено ${money(i.qtyReceived)} из ${money(i.qtyOrdered)}</div>
+        </div>
+        <div style="width:100px;"><label style="font-size:10.5px; color:var(--ink-soft);">Принять, шт</label>
+          <input type="number" min="0" step="1" data-recv="${esc(i.id)}" value="${i.qtyReceived || 0}" style="width:100%;"></div>
+        <div style="width:130px;"><label style="font-size:10.5px; color:var(--ink-soft);">Ячейка</label>
+          <input type="text" data-cell="${esc(i.id)}" placeholder="A-01-03" style="width:100%;"></div>
+      </div>`).join("");
+    document.getElementById("cnReceiveOverlay").classList.add("show");
+  }
+  document.getElementById("cnReceiveCancel").addEventListener("click", ()=>document.getElementById("cnReceiveOverlay").classList.remove("show"));
+  document.getElementById("cnReceiveSave").addEventListener("click", async ()=>{
+    const lines = [];
+    document.querySelectorAll("[data-recv]").forEach(inp=>{
+      const qty = parseFloat(inp.value) || 0;
+      if(qty <= 0) return;
+      const cell = document.querySelector(`[data-cell="${inp.dataset.recv}"]`).value;
+      lines.push({ itemId: inp.dataset.recv, qty, cell });
+    });
+    if(!lines.length){ document.getElementById("cnReceiveError").textContent = "Укажите количество хотя бы по одной позиции"; return; }
+    try{
+      const r = await api("/china-stock/receive/" + cnReceivePurchase.id, { method:"POST", body: JSON.stringify({ lines }) });
+      document.getElementById("cnReceiveOverlay").classList.remove("show");
+      toast(`Оприходовано позиций: ${r.created.length}`);
+      if(confirm("Напечатать этикетки со штрих-кодами на оприходованное?")) cnPrintLabels(r.created);
+      loadChina();
+    }catch(e){ document.getElementById("cnReceiveError").textContent = e.message; }
+  });
+
+  // ---------- Печать этикеток (58×30 мм, тот же формат, что в «Приходе») ----------
+  function cnPrintLabels(rows){
+    const w = window.open("", "_blank", "width=460,height=620");
+    if(!w){ toast("Браузер заблокировал окно печати"); return; }
+    const labels = rows.map((r, i)=>`
+      <div class="label">
+        <div class="name">${esc(r.name||"")}</div>
+        <div class="meta">${esc(r.article||"")}${r.cell?" · "+esc(r.cell):""}</div>
+        <svg class="bc" data-code="${esc(r.barcode)}" id="bc${i}"></svg>
+      </div>`).join("");
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Этикетки (${rows.length})</title>
+      <style>
+        @page{ size: 58mm 30mm; margin:0; }
+        html,body{ margin:0; padding:0; font-family:Arial, sans-serif; }
+        .toolbar{ padding:10px; background:#f4f0e4; }
+        .label{ width:58mm; height:30mm; box-sizing:border-box; padding:1.5mm; text-align:center;
+                display:flex; flex-direction:column; justify-content:center; align-items:center; overflow:hidden; page-break-after:always; }
+        .label .name{ font-size:8px; line-height:1.15; max-height:18px; overflow:hidden; }
+        .label .meta{ font-size:7px; color:#444; margin:1px 0; }
+        .label svg{ width:100%; height:9mm; max-height:9mm; }
+        @media print{ .toolbar{ display:none; } }
+      </style></head><body>
+      <div class="toolbar">
+        <b>Этикеток: ${rows.length}</b>
+        <button onclick="window.print()" style="padding:6px 12px; background:#C8862B; color:#fff; border:none; border-radius:4px; margin-left:8px;">🖨️ Печать</button>
+      </div>
+      ${labels}
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/JsBarcode/3.11.5/JsBarcode.all.min.js"><\\/script>
+      <script>
+        document.querySelectorAll(".bc").forEach(function(el){
+          try{ JsBarcode(el, el.dataset.code, { format:"CODE128", height:28, fontSize:10, margin:0, displayValue:true }); }
+          catch(e){ el.outerHTML = "<div style='font-size:9px;color:red'>Ошибка кода</div>"; }
+        });
+      <\\/script></body></html>`);
+    w.document.close();
+  }
+
+  // ---------- Склад и ячейки ----------
+  let cnStockRows = [];
+  async function openCnStock(){
+    document.getElementById("cnStockOverlay").classList.add("show");
+    await loadCnStock();
+  }
+  async function loadCnStock(){
+    const body = document.getElementById("cnStockBody");
+    body.innerHTML = `<div style="padding:16px; color:var(--ink-soft);">Загрузка...</div>`;
+    try{
+      const p = new URLSearchParams();
+      const q = document.getElementById("cnStockSearch").value.trim();
+      if(q) p.set("q", q);
+      const cell = document.getElementById("cnStockCell").value;
+      if(cell) p.set("cell", cell);
+      cnStockRows = await api("/china-stock" + (p.toString() ? "?" + p.toString() : ""));
+      const cells = await api("/china-stock/cells");
+      const sel = document.getElementById("cnStockCell");
+      const prev = sel.value;
+      sel.innerHTML = `<option value="">Все ячейки</option>` +
+        cells.map(c=>`<option value="${esc(c.cell)}">${esc(c.cell || "без ячейки")} — ${c.positions} поз. / ${money(c.units)} шт</option>`).join("");
+      sel.value = prev;
+
+      body.innerHTML = cnStockRows.length ? `<table style="width:100%;"><thead><tr>
+          <th>Товар</th><th>Штрих-код</th><th>Ячейка</th><th class="num">Остаток</th><th></th>
+        </tr></thead><tbody>${cnStockRows.map(r=>`
+          <tr>
+            <td>${esc(r.name||"—")}<div style="font-size:11px; color:var(--ink-soft);">${esc(r.article||"")}</div></td>
+            <td class="mono" style="font-size:11.5px;">${esc(r.barcode)}</td>
+            <td><input type="text" value="${esc(r.cell||"")}" data-cellof="${esc(r.id)}" style="width:110px; padding:4px 6px;"></td>
+            <td class="num"><input type="number" min="0" value="${r.qty}" data-qtyof="${esc(r.id)}" style="width:80px; padding:4px 6px; text-align:right;"></td>
+            <td style="white-space:nowrap;">
+              <button class="btn secondary" style="padding:3px 9px; font-size:11.5px;" data-save="${esc(r.id)}">Сохранить</button>
+              <button class="btn secondary" style="padding:3px 9px; font-size:11.5px;" data-label="${esc(r.id)}">🏷️</button>
+            </td>
+          </tr>`).join("")}</tbody></table>`
+        : `<div style="padding:20px; text-align:center; color:var(--ink-soft);">Пока пусто. Товар появится здесь после оприходования полученной закупки.</div>`;
+
+      body.querySelectorAll("[data-save]").forEach(b=>b.addEventListener("click", async ()=>{
+        const id = b.dataset.save;
+        try{
+          await api("/china-stock/" + id, { method:"PUT", body: JSON.stringify({
+            cell: document.querySelector(`[data-cellof="${id}"]`).value,
+            qty: parseFloat(document.querySelector(`[data-qtyof="${id}"]`).value) || 0
+          })});
+          toast("Сохранено");
+          loadCnStock();
+        }catch(e){ toast("Не получилось: " + e.message); }
+      }));
+      body.querySelectorAll("[data-label]").forEach(b=>b.addEventListener("click", ()=>{
+        const r = cnStockRows.find(x=>x.id === b.dataset.label);
+        if(r) cnPrintLabels([r]);
+      }));
+    }catch(e){
+      body.innerHTML = `<div style="padding:16px; color:var(--red);">Ошибка: ${esc(e.message)}</div>`;
+    }
+  }
+  document.getElementById("cnStockSearch").addEventListener("input", ()=>loadCnStock());
+  document.getElementById("cnStockCell").addEventListener("change", ()=>loadCnStock());
+  document.getElementById("cnStockPrintAll").addEventListener("click", ()=>{
+    if(!cnStockRows.length){ toast("Нечего печатать"); return; }
+    cnPrintLabels(cnStockRows);
+  });
+  document.getElementById("cnStockClose").addEventListener("click", ()=>document.getElementById("cnStockOverlay").classList.remove("show"));
+
+  // ---------- Инвентаризация ----------
+  let cnInv = null;
+  async function openCnInventory(){
+    document.getElementById("cnInvOverlay").classList.add("show");
+    await loadCnInventory();
+  }
+  async function loadCnInventory(){
+    const body = document.getElementById("cnInvBody");
+    const actions = document.getElementById("cnInvActions");
+    body.innerHTML = `<div style="padding:16px; color:var(--ink-soft);">Загрузка...</div>`;
+    try{
+      cnInv = await api("/china-stock/inventory/current");
+    }catch(e){
+      body.innerHTML = `<div style="padding:16px; color:var(--red);">Ошибка: ${esc(e.message)}</div>`;
+      return;
+    }
+    if(!cnInv.exists){
+      body.innerHTML = `<div style="padding:16px; font-size:13px; color:var(--ink-soft);">
+        Открытой инвентаризации нет. Запустите пересчёт — система зафиксирует текущие остатки,
+        вы пройдёте по ячейкам и впишете факт. Остатки изменятся только после завершения.</div>`;
+      actions.innerHTML = `<button class="btn amber" id="cnInvStart" style="padding:6px 12px; font-size:12.5px;">Начать инвентаризацию</button>`;
+      document.getElementById("cnInvStart").addEventListener("click", async ()=>{
+        try{ await api("/china-stock/inventory", { method:"POST", body: JSON.stringify({}) }); loadCnInventory(); }
+        catch(e){ toast("Не получилось: " + e.message); }
+      });
+      return;
+    }
+
+    body.innerHTML = `
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
+        <b style="font-size:13px;">Инвентаризация №${cnInv.number}</b>
+        <span style="font-size:12.5px; color:var(--ink-soft);">посчитано ${cnInv.counted} из ${cnInv.total}</span>
+        <input type="text" id="cnInvScan" placeholder="Сканируйте штрих-код..." style="margin-left:auto; min-width:220px;">
+      </div>
+      <div style="max-height:50vh; overflow:auto;">
+        <table style="width:100%;"><thead><tr>
+          <th>Товар</th><th>Ячейка</th><th class="num">Числится</th><th class="num">Факт</th><th class="num">Расхождение</th>
+        </tr></thead><tbody>
+        ${cnInv.items.map(i=>`<tr>
+          <td>${esc(i.name||"—")}<div style="font-size:11px; color:var(--ink-soft);">${esc(i.barcode)}</div></td>
+          <td>${esc(i.cell||"—")}</td>
+          <td class="num">${money(i.expectedQty)}</td>
+          <td class="num"><input type="number" min="0" data-inv="${esc(i.id)}" value="${i.countedQty == null ? "" : i.countedQty}" style="width:80px; padding:4px 6px; text-align:right;"></td>
+          <td class="num">${i.diff == null ? "—" : `<span style="color:${i.diff === 0 ? "var(--green)" : "var(--red)"}; font-weight:600;">${i.diff > 0 ? "+" : ""}${money(i.diff)}</span>`}</td>
+        </tr>`).join("")}
+        </tbody></table>
+      </div>`;
+
+    body.querySelectorAll("[data-inv]").forEach(inp=>{
+      inp.addEventListener("change", async ()=>{
+        try{
+          await api(`/china-stock/inventory/${cnInv.id}/count`, { method:"PUT", body: JSON.stringify({ itemId: inp.dataset.inv, countedQty: parseFloat(inp.value) || 0 })});
+          loadCnInventory();
+        }catch(e){ toast("Не сохранилось: " + e.message); }
+      });
+    });
+    const scan = document.getElementById("cnInvScan");
+    scan.addEventListener("keydown", async (e)=>{
+      if(e.key !== "Enter") return;
+      const code = scan.value.trim();
+      if(!code) return;
+      try{
+        const r = await api(`/china-stock/inventory/${cnInv.id}/count`, { method:"PUT", body: JSON.stringify({ barcode: code, increment: true, qty: 1 })});
+        toast(`${code}: ${r.countedQty} шт`);
+        scan.value = "";
+        loadCnInventory();
+      }catch(err){ toast("Не найдено: " + err.message); scan.select(); }
+    });
+    setTimeout(()=>scan.focus(), 100);
+
+    actions.innerHTML = `
+      <button class="btn amber" id="cnInvFinish" style="padding:6px 12px; font-size:12.5px;">Завершить и применить</button>
+      <button class="btn danger" id="cnInvCancel" style="padding:6px 12px; font-size:12.5px;">Отменить пересчёт</button>`;
+    document.getElementById("cnInvFinish").addEventListener("click", async ()=>{
+      if(!confirm("Завершить инвентаризацию? Остатки станут равны факту, непосчитанные позиции останутся без изменений.")) return;
+      try{
+        const r = await api(`/china-stock/inventory/${cnInv.id}/finish`, { method:"POST" });
+        toast(`Готово: изменено ${r.changed}, излишек ${r.surplus}, недостача ${r.shortage}`);
+        loadCnInventory();
+      }catch(e){ toast("Не получилось: " + e.message); }
+    });
+    document.getElementById("cnInvCancel").addEventListener("click", async ()=>{
+      if(!confirm("Отменить пересчёт? Введённый факт не применится.")) return;
+      try{ await api(`/china-stock/inventory/${cnInv.id}/cancel`, { method:"POST" }); loadCnInventory(); }
+      catch(e){ toast("Не получилось: " + e.message); }
+    });
+  }
+  document.getElementById("cnInvClose").addEventListener("click", ()=>document.getElementById("cnInvOverlay").classList.remove("show"));
+
+  // ---------- Поставщики ----------
+  async function openCnSuppliers(){
+    cnEditingSupplierId = null;
+    await renderCnSuppliers();
+    document.getElementById("cnSuppliersOverlay").classList.add("show");
+  }
+  async function renderCnSuppliers(){
+    cnSuppliers = await api("/china-purchases/suppliers?all=1");
+    document.getElementById("cnSuppliersList").innerHTML = cnSuppliers.length
+      ? cnSuppliers.map(s=>`
+        <div style="display:flex; align-items:center; gap:10px; padding:7px 0; border-bottom:1px solid var(--line); ${s.isActive?"":"opacity:.5;"}">
+          <div style="flex:1;">
+            <div style="font-size:13.5px; font-weight:600;">${esc(s.name)}</div>
+            <div style="font-size:11.5px; color:var(--ink-soft);">${[s.contact, s.phone].filter(Boolean).map(esc).join(" · ")}</div>
+          </div>
+          <button class="btn secondary" style="padding:3px 9px; font-size:11.5px;" data-edit="${esc(s.id)}">Изменить</button>
+          <button class="btn secondary" style="padding:3px 9px; font-size:11.5px;" data-toggle="${esc(s.id)}">${s.isActive?"Отключить":"Включить"}</button>
+        </div>`).join("")
+      : `<div style="font-size:12.5px; color:var(--ink-soft);">Поставщиков пока нет — добавьте первого ниже.</div>`;
+    document.querySelectorAll("#cnSuppliersList [data-edit]").forEach(b=>b.addEventListener("click", ()=>{
+      const s = cnSuppliers.find(x=>x.id === b.dataset.edit);
+      cnEditingSupplierId = s.id;
+      document.getElementById("cnS_name").value = s.name || "";
+      document.getElementById("cnS_contact").value = s.contact || "";
+      document.getElementById("cnS_phone").value = s.phone || "";
+      document.getElementById("cnS_link").value = s.link || "";
+      document.getElementById("cnS_comment").value = s.comment || "";
+      document.getElementById("cnS_reset").style.display = "inline-block";
+    }));
+    document.querySelectorAll("#cnSuppliersList [data-toggle]").forEach(b=>b.addEventListener("click", async ()=>{
+      await api(`/china-purchases/suppliers/${b.dataset.toggle}/toggle-active`, { method:"POST" });
+      renderCnSuppliers();
+    }));
+  }
+  function resetCnSupplierForm(){
+    cnEditingSupplierId = null;
+    ["cnS_name","cnS_contact","cnS_phone","cnS_link","cnS_comment"].forEach(id=>document.getElementById(id).value = "");
+    document.getElementById("cnS_reset").style.display = "none";
+    document.getElementById("cnS_error").textContent = "";
+  }
+  document.getElementById("cnS_reset").addEventListener("click", resetCnSupplierForm);
+  document.getElementById("cnS_save").addEventListener("click", async ()=>{
+    const body = {
+      name: document.getElementById("cnS_name").value,
+      contact: document.getElementById("cnS_contact").value,
+      phone: document.getElementById("cnS_phone").value,
+      link: document.getElementById("cnS_link").value,
+      comment: document.getElementById("cnS_comment").value
+    };
+    try{
+      if(cnEditingSupplierId) await api("/china-purchases/suppliers/" + cnEditingSupplierId, { method:"PUT", body: JSON.stringify(body) });
+      else await api("/china-purchases/suppliers", { method:"POST", body: JSON.stringify(body) });
+      resetCnSupplierForm();
+      renderCnSuppliers();
+      toast("Сохранено");
+    }catch(e){ document.getElementById("cnS_error").textContent = e.message; }
+  });
+  document.getElementById("cnSuppliersClose").addEventListener("click", ()=>{
+    document.getElementById("cnSuppliersOverlay").classList.remove("show");
+    if(cnContour === "china") loadChina();
+  });
+
+  // ---------- Экспорт ----------
+  document.getElementById("cnBtnExport").addEventListener("click", ()=>{
+    if(!cnPurchases.length){ toast("Нечего выгружать — список пуст"); return; }
+    const rows = [];
+    cnPurchases.forEach(p=>p.items.forEach(i=>rows.push({
+      "№ закупки": p.number, "Поставщик": p.supplierName, "Номер у поставщика": p.supplierOrderNo || "",
+      "Артикул": i.article || "", "Название": i.name || "", "Категория": i.category || "",
+      "Заказано": i.qtyOrdered, "Отправлено": i.qtyShipped, "Получено": i.qtyReceived,
+      "Цена/шт": i.unitPrice, "Сумма": i.totalPrice, "Валюта": p.currency || "",
+      "Дата заказа": p.orderDate || "", "План отправки": p.planShipDate || "", "Факт отправки": p.factShipDate || "",
+      "План прихода": p.planArriveDate || "", "Факт получения": p.factReceiveDate || "",
+      "Дней в пути": p.daysInTransit == null ? "" : p.daysInTransit,
+      "Статус": (CN_STATUS[p.status]||{}).label || p.status, "Просрочено": p.overdue ? "да" : "",
+      "Трек/карго": p.trackNo || "", "Комментарий": p.comment || ""
+    })));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Закупки Китай");
+    XLSX.writeFile(wb, `закупки_китай_${new Date().toISOString().slice(0,10)}.xlsx`);
+    toast(`Выгружено строк: ${rows.length} (по текущим фильтрам)`);
+  });
+
+  // ---------- Привязка управляющих элементов ----------
+  document.getElementById("cnBtnNew").addEventListener("click", async ()=>{
+    if(!cnSuppliers.length){
+      try{ cnSuppliers = await api("/china-purchases/suppliers?all=1"); }catch(e){}
+    }
+    if(!cnSuppliers.length){
+      toast("Сначала добавьте поставщика — без него закупку не сохранить");
+      openCnSuppliers();
+      return;
+    }
+    openCnPurchaseForm(null);
+  });
+  document.getElementById("cnBtnSuppliers").addEventListener("click", openCnSuppliers);
+  document.getElementById("cnBtnStock").addEventListener("click", openCnStock);
+  document.getElementById("cnBtnInventory").addEventListener("click", openCnInventory);
+  ["cnSearch","cnFilterSupplier","cnFilterCategory","cnFrom","cnTo","cnShowArchive"].forEach(id=>{
+    const el = document.getElementById(id);
+    el.addEventListener(el.tagName === "INPUT" && el.type === "text" ? "input" : "change", ()=>{ cnPage = 1; loadChina(); });
+  });
+  document.getElementById("cnBtnReset").addEventListener("click", ()=>{
+    ["cnSearch","cnFrom","cnTo"].forEach(id=>document.getElementById(id).value = "");
+    document.getElementById("cnFilterSupplier").value = "";
+    document.getElementById("cnFilterCategory").value = "";
+    document.getElementById("cnShowArchive").checked = false;
+    cnQuick = ""; cnPage = 1;
+    loadChina();
+  });
+
   // ---------- Производство ----------
   // Каждый новый заказ уже создаёт запись автоматически (на сервере, при
   // синхронизации). Здесь — только интерфейс принятия решения по ней.
@@ -2483,6 +3453,7 @@
       document.querySelectorAll(".tab-btn").forEach(x=>x.classList.remove("active"));
       b.classList.add("active");
       ["orders","kaspiOrders","claims","price","catalog","salary","production","kaspi","audit","users"].forEach(t=> document.getElementById("tab-"+t).style.display = (t===b.dataset.tab)?"":"none");
+      if(b.dataset.tab === "orders") applyContour();
       if(b.dataset.tab === "catalog") loadCatalog();
       if(b.dataset.tab === "price") { loadPriceCompanies().catch(()=>{}).then(loadPriceTab); }
       if(b.dataset.tab === "production") loadProduction();
@@ -2520,6 +3491,8 @@
 
     try{
       const shops = await api("/kaspi/shops");
+      cnShopNames = shops;
+      applyContour();
       document.getElementById("shopList2").textContent = shops.length ? ("Активные магазины: "+shops.join(", ")) : "Нет настроенных магазинов — заполните вкладку «Kaspi: настройки»";
     }catch(e){}
   }
@@ -3904,13 +4877,17 @@
     });
   }
   function renderOrders(refetchNotUsed){
+    // Контур SA/PFS сужает «Приход» до одного магазина, «Все» показывает всё.
+    // Записи без магазина (заведённые до появления поля) видны только во «Все».
+    const __contourShop = cnContour && cnContour.startsWith("shop:") ? cnContour.slice(5) : null;
+    const contourOrders = __contourShop ? orders.filter(o=>o.shop === __contourShop) : orders;
     // Сводка: сколько сейчас в пути и сколько уже пришло, плюс прогноз —
     // сколько можно выручить, если продать по указанной цене "Продажа",
     // прогноз прибыли (выручка минус закупка+доставка) и % маржи. Отдельно
     // по "В пути", по "Пришло" и общий "Итого" по обеим группам сразу.
-    const transitOrders = orders.filter(o=>{ const s = o.receiveStatus||'new'; return s==='new' || s==='transit'; });
-    const arrivedOrders = orders.filter(o=>o.receiveStatus==='arrived' && !isArchivedOrder(o));
-    const archivedOrders = orders.filter(o=>isArchivedOrder(o));
+    const transitOrders = contourOrders.filter(o=>{ const s = o.receiveStatus||'new'; return s==='new' || s==='transit'; });
+    const arrivedOrders = contourOrders.filter(o=>o.receiveStatus==='arrived' && !isArchivedOrder(o));
+    const archivedOrders = contourOrders.filter(o=>isArchivedOrder(o));
     const sumCost = (list)=> list.reduce((s,o)=> s + ((Number(o.buyPriceKzt)||0)+(Number(o.deliveryPrice)||0))*(Number(o.qty)||0), 0);
     const sumQty = (list)=> list.reduce((s,o)=> s+(Number(o.qty)||0), 0);
     // Прогноз продаж — если продать все позиции по цене "Продажа"
@@ -3943,7 +4920,7 @@
 
     // список категорий в фильтре
     const catSelect = document.getElementById("ordersFilterCategory");
-    const usedCats = Array.from(new Set(orders.map(o=>o.category).filter(Boolean))).sort();
+    const usedCats = Array.from(new Set(contourOrders.map(o=>o.category).filter(Boolean))).sort();
     const prevCatVal = catSelect.value;
     catSelect.innerHTML = `<option value="all">Все категории</option>` + usedCats.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join("");
     catSelect.value = usedCats.includes(prevCatVal) ? prevCatVal : "all";
@@ -3965,7 +4942,7 @@
       });
     });
 
-    let list = orders.slice();
+    let list = contourOrders.slice();
     if(!showArchivedOrders) list = list.filter(o=>!isArchivedOrder(o));
     if(ordersFilterStatus!=="all") list = list.filter(o=>(o.receiveStatus||'transit')===ordersFilterStatus);
     if(ordersFilterCategory!=="all") list = list.filter(o=>o.category===ordersFilterCategory);
@@ -4082,6 +5059,7 @@
     document.getElementById("o_delivery").value = o?.deliveryPrice ?? "";
     document.getElementById("o_sale").value = o?.salePrice ?? "";
     populateCategorySelect(o?.category||"", "o_category");
+    populateShopSelect(o?.shop || (cnContour && cnContour.startsWith("shop:") ? cnContour.slice(5) : ""));
     document.getElementById("o_note").value = o?.note||"";
     currentOrderPhoto = o?.photo || null;
     updateOrderPhotoPreview();
@@ -4102,6 +5080,7 @@
       deliveryPrice: parseFloat(document.getElementById("o_delivery").value)||0,
       salePrice: parseFloat(document.getElementById("o_sale").value)||0,
       category: document.getElementById("o_category").value,
+      shop: document.getElementById("o_shop").value || null,
       note: document.getElementById("o_note").value.trim(),
       photo: currentOrderPhoto
     };
@@ -4122,6 +5101,15 @@
   // Категории (общий список) — используется формой "Приход". Управление списком
   // категорий — отдельная панель (btnManageCategories), редактирование самих
   // товаров теперь только через "Справочник".
+  // Магазин у записи «Прихода»: пока не заполнен, запись видна только в контуре
+  // «Все» — на этом и строятся вкладки SA/PFS
+  function populateShopSelect(value){
+    const el = document.getElementById("o_shop");
+    el.innerHTML = `<option value="">— не указан —</option>` +
+      cnShopNames.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join("");
+    el.value = cnShopNames.includes(value) ? value : "";
+  }
+
   function populateCategorySelect(sel, elId){
     elId = elId || "o_category";
     const el = document.getElementById(elId);
