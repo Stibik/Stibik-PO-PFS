@@ -608,7 +608,6 @@
       <div><label>Артикул (для Справочника, необязательно)</label><input type="text" id="manualOrder_article" style="width:100%;"></div>
       <div><label>Количество</label><input type="number" id="manualOrder_qty" style="width:100%;" value="1" min="1"></div>
       <div><label>Сумма заказа, ₸</label><input type="number" id="manualOrder_price" style="width:100%;" min="0"></div>
-      <div><label>Магазин/канал (необязательно)</label><input type="text" id="manualOrder_shop" style="width:100%;" placeholder="Прямая продажа"></div>
       <div class="full"><label>Примечание</label><input type="text" id="manualOrder_note" style="width:100%;"></div>
     </div>
     <div class="error" id="manualOrderError"></div>
@@ -1664,7 +1663,7 @@
     // Стадию берём напрямую из нашего же внутреннего статуса (тот же самый,
     // что двигает "Начать сборку"/"Готово к отгрузке" у обычных заказов).
     if(o.source === "manual"){
-      const map = { preorder:"preorder", packing:"packing", label_printed:"packing", ready:"handover", shipped:"completed", cancelled:"cancelled" };
+      const map = { preorder:"preorder", packing:"packing", label_printed:"packing", ready:"handover", shipped:"archive", cancelled:"cancelled" };
       return map[o.status] || "preorder";
     }
     // "Отменены при доставке" (по скриншоту кабинета Kaspi) — предположительно
@@ -1760,17 +1759,32 @@
       </div>`).join("");
   }
 
-  // ---------- Создание заказа вручную (для "Заказы", не путать с "Приходом") ----------
+  // ---------- Создание/редактирование заказа вручную (для "Заказы", не путать с "Приходом") ----------
+  let editingManualOrderId = null; // null = создаём новый; иначе редактируем существующий
   document.getElementById("btnCreateManualOrder").addEventListener("click", ()=>{
+    editingManualOrderId = null;
+    document.querySelector("#manualOrderOverlay h3").textContent = "Создать заказ вручную";
+    document.getElementById("manualOrderSaveBtn").textContent = "Создать";
     document.getElementById("manualOrder_name").value = "";
     document.getElementById("manualOrder_article").value = "";
     document.getElementById("manualOrder_qty").value = "1";
     document.getElementById("manualOrder_price").value = "";
-    document.getElementById("manualOrder_shop").value = "";
     document.getElementById("manualOrder_note").value = "";
     document.getElementById("manualOrderError").textContent = "";
     document.getElementById("manualOrderOverlay").classList.add("show");
   });
+  window.openEditManualOrder = function(order){
+    editingManualOrderId = order.id;
+    document.querySelector("#manualOrderOverlay h3").textContent = `Изменить заказ ${order.kaspiCode}`;
+    document.getElementById("manualOrderSaveBtn").textContent = "Сохранить";
+    document.getElementById("manualOrder_name").value = order.productName || "";
+    document.getElementById("manualOrder_article").value = order.article || "";
+    document.getElementById("manualOrder_qty").value = order.qty || 1;
+    document.getElementById("manualOrder_price").value = order.totalPrice || "";
+    document.getElementById("manualOrder_note").value = order.note || "";
+    document.getElementById("manualOrderError").textContent = "";
+    document.getElementById("manualOrderOverlay").classList.add("show");
+  };
   document.getElementById("manualOrderCancelBtn").addEventListener("click", ()=>{
     document.getElementById("manualOrderOverlay").classList.remove("show");
   });
@@ -1782,18 +1796,34 @@
       article: document.getElementById("manualOrder_article").value.trim(),
       qty: parseFloat(document.getElementById("manualOrder_qty").value) || 1,
       totalPrice: parseFloat(document.getElementById("manualOrder_price").value) || 0,
-      shop: document.getElementById("manualOrder_shop").value.trim(),
       note: document.getElementById("manualOrder_note").value.trim()
     };
     try{
-      await api("/orders/manual-order", {method:"POST", body:JSON.stringify(body)});
+      if(editingManualOrderId){
+        await api("/orders/"+editingManualOrderId+"/manual-order", {method:"PUT", body:JSON.stringify(body)});
+        toast("Заказ обновлён");
+        document.getElementById("workflowOverlay").classList.remove("show");
+      } else {
+        await api("/orders/manual-order", {method:"POST", body:JSON.stringify(body)});
+        toast("Заказ создан");
+      }
       document.getElementById("manualOrderOverlay").classList.remove("show");
-      toast("Заказ создан");
       await renderKaspiOrders();
     }catch(e){
       document.getElementById("manualOrderError").textContent = e.message;
     }
   });
+  window.deleteManualOrder = async function(id){
+    if(!confirm("Удалить этот заказ полностью, без возможности восстановить? Связанная запись в Производстве тоже удалится.")) return;
+    try{
+      await api("/orders/"+id+"/manual-order", {method:"DELETE"});
+      toast("Заказ удалён");
+      document.getElementById("workflowOverlay").classList.remove("show");
+      await renderKaspiOrders();
+    }catch(e){
+      toast("Не получилось: "+e.message);
+    }
+  };
 
   async function renderKaspiOrders(refetch){
     if(refetch !== false){
@@ -1930,8 +1960,10 @@
         let photo = o.productPhoto;
         if(!photo){
           // У Kaspi в API заказов фото товара нет в принципе (подтверждено
-          // документацией) — берём из Справочника по совпадению артикула
-          const article = o.entriesRaw?.data?.[0]?.attributes?.offer?.code;
+          // документацией) — берём из Справочника по совпадению артикула.
+          // У ручных (УД) заказов артикул лежит прямо на самом заказе (o.article),
+          // у заказов из Kaspi — внутри entriesRaw.
+          const article = o.article || o.entriesRaw?.data?.[0]?.attributes?.offer?.code;
           if(article && catalogPhotoByArticle[article]) photo = catalogPhotoByArticle[article];
         }
         return photo ? `<img class="o2-thumb" src="${esc(photo)}" style="cursor:zoom-in;" onclick="window.open('${esc(photo)}','_blank')">`
@@ -2030,8 +2062,8 @@
 
     const selectedOrders = Array.from(selectedKaspiOrderIds).map(id=>kaspiOrders.find(o=>o.id===id)).filter(Boolean);
     const canPrint = selectedOrders.some(o=>o.waybillUrl);
-    const canPush = selectedOrders.some(o=>!o.assembled && !o.preOrder && o.status!=="cancelled" && o.status!=="shipped");
-    const canConfirmPreorder = selectedOrders.some(o=>o.preOrder);
+    const canPush = selectedOrders.some(o=>o.source!=="manual" && !o.assembled && !o.preOrder && o.status!=="cancelled" && o.status!=="shipped");
+    const canConfirmPreorder = selectedOrders.some(o=>o.source!=="manual" && o.preOrder);
     const canQuickAdvance = selectedOrders.some(o=>o.status==="label_printed");
     const dis = (ok)=> ok ? "" : "disabled";
 
@@ -2341,7 +2373,9 @@
     // Для предзаказов (preOrder=true) — ОТДЕЛЬНАЯ кнопка другим методом (ARRIVED),
     // ASSEMBLE для предзаказов не работает (подтверждено и практикой, и
     // независимым источником — это ограничение самого API Kaspi).
-    if(!order.assembled && order.status !== "cancelled" && order.status !== "shipped"){
+    // Для заказов, созданных ВРУЧНУЮ (не из Kaspi) — эти кнопки вообще не нужны,
+    // там нет реального заказа на стороне Kaspi, толкать нечего.
+    if(order.source !== "manual" && !order.assembled && order.status !== "cancelled" && order.status !== "shipped"){
       if(order.preOrder){
         const preorderBtn = document.createElement("button");
         preorderBtn.className = "btn secondary";
@@ -2356,6 +2390,13 @@
         primaryRow.appendChild(kaspiBtn);
       }
     }
+    if(order.source === "manual"){
+      const editBtn = document.createElement("button");
+      editBtn.className = "btn secondary";
+      editBtn.textContent = "✏ Изменить заказ";
+      editBtn.onclick = ()=>openEditManualOrder(order);
+      primaryRow.appendChild(editBtn);
+    }
     if(myRole === "admin"){
       const fixBtn = document.createElement("button");
       fixBtn.className = "btn secondary";
@@ -2369,16 +2410,26 @@
     // не место в одном ряду с повседневными "Начать сборку"/"Передать в Kaspi".
     // Если заказ уже отменён/возвращён СО СТОРОНЫ KASPI (а не только у нас) —
     // отменять уже нечего, кнопка не нужна вообще, а не просто неактивна.
-    const kaspiTerminalCancelled = ["cancelled","cancelledDelivery","returns"].includes(classifyStage(order));
+    const kaspiTerminalCancelled = order.source !== "manual" && ["cancelled","cancelledDelivery","returns"].includes(classifyStage(order));
     if(order.status !== "shipped" && order.status !== "cancelled" && !kaspiTerminalCancelled){
       const cancelRow = document.createElement("div");
-      cancelRow.style.cssText = "margin-top:14px; padding-top:12px; border-top:1px dashed var(--line);";
+      cancelRow.style.cssText = "margin-top:14px; padding-top:12px; border-top:1px dashed var(--line); display:flex; gap:8px;";
       const cancelBtn = document.createElement("button");
       cancelBtn.className = "btn danger";
       cancelBtn.style.opacity = "0.85";
       cancelBtn.textContent = "Отменить заказ";
       cancelBtn.onclick = ()=>openCancelStep1();
       cancelRow.appendChild(cancelBtn);
+      // Удаление — только для ручных заказов (не Kaspi). Это разные вещи от
+      // "Отменить": отмена оставляет след в истории, удаление стирает совсем —
+      // для ручных ошибок ввода это нужнее, чем для заказов Kaspi.
+      if(order.source === "manual"){
+        const deleteBtn = document.createElement("button");
+        deleteBtn.className = "btn danger";
+        deleteBtn.textContent = "🗑 Удалить заказ полностью";
+        deleteBtn.onclick = ()=>deleteManualOrder(order.id);
+        cancelRow.appendChild(deleteBtn);
+      }
       actions.appendChild(cancelRow);
     } else if(kaspiTerminalCancelled && order.status !== "cancelled"){
       const note = document.createElement("div");
