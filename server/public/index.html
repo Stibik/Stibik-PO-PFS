@@ -485,48 +485,95 @@
     </div>
 
     <section id="tab-price" style="display:none">
-      <div class="panel" style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
-        <div style="flex:1; min-width:240px;">
+      <style>
+        #tab-price .pz-layout{display:grid; grid-template-columns:230px minmax(0,1fr) 250px; gap:14px; align-items:start;}
+        #tab-price .pz-side .panel{margin-bottom:14px;}
+        #tab-price .pz-node{display:flex; align-items:center; gap:6px; padding:6px 8px; border-radius:7px; cursor:pointer; font-size:13px;}
+        #tab-price .pz-node:hover{background:#F3EEE1;}
+        #tab-price .pz-node.active{background:var(--navy); color:#fff;}
+        #tab-price .pz-node .pz-count{margin-left:auto; font-size:11.5px; opacity:.7;}
+        #tab-price .pz-node .pz-arrow{width:11px; font-size:9px; color:var(--ink-soft); flex-shrink:0;}
+        #tab-price .pz-node.active .pz-arrow{color:#fff;}
+        #tab-price .pz-sub{padding-left:18px;}
+        #tab-price table.pz-table{width:100%; border-collapse:collapse; background:#fff; box-shadow:none;}
+        #tab-price table.pz-table thead th{position:sticky; top:0; background:#fff; z-index:2; font-size:10.5px; text-transform:uppercase; letter-spacing:.02em; color:var(--ink-soft); text-align:left; padding:9px 8px; border-bottom:1px solid var(--line); white-space:nowrap;}
+        #tab-price table.pz-table td{padding:7px 8px; border-bottom:1px solid var(--line); font-size:13px; vertical-align:middle;}
+        #tab-price tr.pz-group td{background:#F0EAD9; padding:8px; font-size:12.5px;}
+        #tab-price tr.pz-row{cursor:pointer;}
+        #tab-price tr.pz-row:hover{background:#FAF7F0;}
+        #tab-price tr.pz-row.pz-active{background:var(--amber-light);}
+        #tab-price .pz-photo{width:48px; height:64px; object-fit:contain; background:#fff; border:1px solid var(--line); border-radius:4px; display:block;}
+        #tab-price .pz-photo-empty{width:48px; height:64px; border:1px dashed var(--line); border-radius:4px; display:flex; align-items:center; justify-content:center; color:var(--ink-soft); font-size:10px;}
+        #tab-price .pz-badge{display:inline-block; border:1px solid var(--line); border-radius:6px; padding:1px 8px; font-size:11.5px; white-space:nowrap;}
+        #tab-price .pz-price{font-weight:700; white-space:nowrap; text-align:right;}
+        #tab-price .pz-setting{display:flex; align-items:center; justify-content:space-between; gap:8px; padding:5px 0; font-size:12.5px; cursor:pointer;}
+        @media (max-width:1100px){ #tab-price .pz-layout{grid-template-columns:1fr;} }
+      </style>
+
+      <div class="panel" style="display:flex; align-items:flex-end; gap:14px; flex-wrap:wrap;">
+        <div style="min-width:220px;">
           <label style="display:block; font-size:12px; color:var(--ink-soft); margin-bottom:4px;">Компания для прайса *</label>
-          <select id="priceCompanySelect" style="width:100%; max-width:360px; padding:8px 10px;">
+          <select id="priceCompanySelect" style="width:100%; min-width:220px; padding:8px 10px;">
             <option value="">— выберите компанию —</option>
           </select>
         </div>
-        <span id="priceCompanyHint" style="font-size:12.5px; color:var(--red);">Выберите компанию</span>
+        <div style="min-width:200px;">
+          <label style="display:block; font-size:12px; color:var(--ink-soft); margin-bottom:4px;">Название прайса</label>
+          <input type="text" id="priceName" placeholder="напр. Боксёрские груши" style="width:100%; min-width:200px;">
+        </div>
+        <span id="priceCompanyHint" style="font-size:12.5px; color:var(--red); padding-bottom:8px;">Выберите компанию</span>
         <button class="btn secondary" id="btnManageCompanies" style="padding:7px 12px;" title="Справочник компаний">⚙ Компании</button>
-      </div>
-      <div class="panel">
-        <div class="panel-label">Поиск</div>
-        <input type="text" id="priceSearch" placeholder="Название или артикул..." style="width:100%; max-width:360px;">
-        <div class="panel-divider"></div>
-        <div class="panel-label">Категория</div>
-        <div class="pill-row" id="priceCatFilters"></div>
-        <div class="panel-divider"></div>
-        <div class="panel-label">Диаметр</div>
-        <div class="pill-row" id="priceDiamFilters"></div>
-        <div class="panel-divider"></div>
-        <div class="panel-label">Материал</div>
-        <div class="pill-row" id="priceMatFilters"></div>
-        <div class="panel-divider"></div>
-        <label style="font-size:12.5px; margin-right:16px;"><input type="checkbox" id="priceOnlyReady" checked> Только с названием и ценой</label>
-        <label style="font-size:12.5px; margin-right:16px;"><input type="checkbox" id="priceOnlyShown" checked> Только «Показывать в прайсе»</label>
-        <button class="btn secondary" id="btnPriceResetFilters" style="padding:5px 12px; font-size:12px;">Сбросить фильтры</button>
-      </div>
-
-      <div class="panel" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; position:sticky; top:0; z-index:15;">
-        <span id="priceSelectedInfo" style="font-weight:600; font-size:13.5px; margin-right:6px;">Выбрано: 0</span>
-        <button class="btn secondary" id="btnPriceSelectAll" style="padding:6px 12px; font-size:12.5px;">Выбрать всё видимое</button>
-        <button class="btn secondary" id="btnPriceSelectNone" style="padding:6px 12px; font-size:12.5px;">Снять выбор</button>
-        <button class="btn secondary" id="btnPriceToggleAll" style="padding:6px 12px; font-size:12.5px;">Развернуть всё</button>
-        <button class="btn secondary" id="btnPricePdfSettings" style="padding:6px 12px; font-size:12.5px;">⚙ Что показывать в PDF</button>
         <div style="margin-left:auto; display:flex; gap:8px;">
           <button class="btn secondary" id="btnPricePreviewPdf">👁 Предпросмотр</button>
           <button class="btn amber" id="btnPriceDownloadPdf">⬇ Скачать PDF</button>
         </div>
       </div>
 
-      <div id="priceTreeInfo" style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;"></div>
-      <div id="priceTree"></div>
+      <div class="panel">
+        <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
+          <input type="text" id="priceSearch" placeholder="Поиск по названию или артикулу..." style="flex:1; min-width:220px;">
+          <label style="font-size:12.5px;"><input type="checkbox" id="priceOnlyReady" checked> Только с названием и ценой</label>
+          <label style="font-size:12.5px;"><input type="checkbox" id="priceOnlyShown" checked> Только «Показывать в прайсе»</label>
+          <button class="btn secondary" id="btnPriceResetFilters" style="padding:5px 12px; font-size:12px;">Сбросить</button>
+        </div>
+        <div id="priceFilterRows"></div>
+      </div>
+
+      <div class="pz-layout">
+        <div class="pz-side">
+          <div class="panel">
+            <div class="panel-label">Каталог</div>
+            <div id="priceCatalogTree"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-label">Настройки PDF</div>
+            <div id="pricePdfSettingsBody"></div>
+            <div style="font-size:11px; color:var(--ink-soft); margin-top:8px;">Влияют только на PDF и предпросмотр — в таблице слева данные видны всегда.</div>
+            <button class="btn secondary" id="pricePdfSettingsReset" style="padding:5px 10px; font-size:12px; margin-top:8px;">Вернуть по умолчанию</button>
+          </div>
+        </div>
+
+        <div>
+          <div class="panel" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:10px 14px;">
+            <span id="priceSelectedInfo" style="font-weight:600; font-size:13.5px;">Выбрано: 0</span>
+            <button class="btn secondary" id="btnPriceSelectAll" style="padding:5px 12px; font-size:12.5px;">Выбрать всё видимое</button>
+            <button class="btn secondary" id="btnPriceSelectNone" style="padding:5px 12px; font-size:12.5px;">Снять выбор</button>
+            <span id="priceTreeInfo" style="margin-left:auto; font-size:12.5px; color:var(--ink-soft);"></span>
+          </div>
+          <div class="panel" style="padding:0; overflow:hidden;">
+            <div style="max-height:66vh; overflow:auto;">
+              <table class="pz-table">
+                <thead id="priceTableHead"></thead>
+                <tbody id="priceTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="pz-side">
+          <div class="panel" id="priceItemCard"></div>
+        </div>
+      </div>
     </section>
     <section id="tab-salary" style="display:none">
       <div style="text-align:center; padding:60px 20px; color:var(--ink-soft);">
@@ -810,18 +857,6 @@
     <div class="modal-actions">
       <div></div>
       <button class="btn secondary" id="categoriesManageClose">Закрыть</button>
-    </div>
-  </div>
-</div>
-
-<div class="overlay" id="pricePdfSettingsOverlay">
-  <div class="modal" style="max-width:420px;">
-    <h3>Что показывать в PDF</h3>
-    <div style="font-size:12.5px; color:var(--ink-soft); margin-bottom:10px;">Настройки запоминаются в этом браузере и применяются и к предпросмотру, и к скачиванию.</div>
-    <div id="pricePdfSettingsBody" style="font-size:13.5px;"></div>
-    <div class="modal-actions">
-      <button class="btn secondary" id="pricePdfSettingsReset">Вернуть по умолчанию</button>
-      <button class="btn amber" id="pricePdfSettingsClose">Готово</button>
     </div>
   </div>
 </div>
@@ -1407,36 +1442,52 @@
     }catch(e){ toast("Ошибка удаления: "+e.message); }
   });
 
-  // ---------- Прайс: выбор товаров и генерация PDF ----------
+  // ---------- Прайс: конструктор прайс-листа ----------
   // Односторонний поток: Справочник -> Прайс. Прайс ничего не пишет обратно —
   // это витрина поверх тех же данных. Редактирование — только в «Справочнике».
-  // Дерево на экране строится ровно так же, как группирует серверный генератор
-  // PDF (категория -> диаметр -> материал), чтобы увиденное совпадало с файлом.
+  // Группировка на экране и в PDF одна и та же: Категория -> Диаметр -> Материал,
+  // внутри — по высоте и названию.
   const PRICE_PDF_DEFAULTS = {
     showPhoto:true, showArticle:true, showMaterial:true, showSizes:true,
     showWeight:true, showRequisites:true, showExtraText:true, onlyWithPrice:true
   };
   const PRICE_PDF_LABELS = {
-    showPhoto:"Фото товара", showArticle:"Артикул", showMaterial:"Материал",
-    showSizes:"Высота / размеры", showWeight:"Вес", showRequisites:"Реквизиты компании",
-    showExtraText:"Доп. текст компании", onlyWithPrice:"Пропускать товары без цены"
+    showPhoto:"Фото", showArticle:"Артикул", showMaterial:"Материал",
+    showSizes:"Размеры", showWeight:"Вес", showRequisites:"Реквизиты компании",
+    showExtraText:"Доп. текст компании", onlyWithPrice:"Только товары с ценой"
   };
   function priceLoadStored(key, fallback){
-    try{ return JSON.parse(localStorage.getItem(key)) ?? fallback; }catch(e){ return fallback; }
+    try{ const v = JSON.parse(localStorage.getItem(key)); return v === null ? fallback : v; }
+    catch(e){ return fallback; }
   }
   let pricePdfSettings = Object.assign({}, PRICE_PDF_DEFAULTS, priceLoadStored("pricePdfSettings", {}));
   let priceSelected = new Set(priceLoadStored("priceSelectedIds", []));
-  let priceExpanded = new Set();
-  let priceGrouped = [];
-  let priceFilterCats = new Set(), priceFilterDiams = new Set(), priceFilterMats = new Set();
+  let priceFilterCat = null;                 // выбранная в дереве категория (одна)
+  let priceFilterDiams = new Set();
+  let priceFilterMats = new Set();
+  let priceFilterHeights = new Set();
   let priceSearchQuery = "";
+  let priceTreeOpen = new Set();
+  let priceActiveItemId = null;              // товар, показанный в карточке справа
+  let priceGroups = [];
 
   function priceCatKey(it){ return it.category || "Без категории"; }
   function priceDiamKey(it){ return it.diameter ? "Ø " + it.diameter + " см" : "Без диаметра"; }
   function priceMatKey(it){ return it.material || "Без материала"; }
+  function priceHeightKey(it){ return it.height ? it.height + " см" : "Без высоты"; }
+  // Число из строки вида «Ø 35 см» — чтобы сортировать 35/40/45 по-человечески,
+  // а не как текст (иначе «Ø 100» встанет раньше «Ø 35»)
+  // «1 модель / 2 модели / 5 моделей» — иначе в заголовке группы криво
+  function priceModelsWord(n){
+    const d = n % 10, dd = n % 100;
+    if(d === 1 && dd !== 11) return "модель";
+    if(d >= 2 && d <= 4 && (dd < 12 || dd > 14)) return "модели";
+    return "моделей";
+  }
+  function priceNumIn(s){ const m = String(s||"").match(/-?\d+([.,]\d+)?/); return m ? parseFloat(m[0].replace(",",".")) : 0; }
 
   async function loadPriceTab(){
-    document.getElementById("priceTree").innerHTML = `<div class="panel" style="text-align:center;color:var(--ink-soft);">Загрузка...</div>`;
+    document.getElementById("priceTableBody").innerHTML = `<tr><td style="padding:20px; text-align:center; color:var(--ink-soft);">Загрузка...</td></tr>`;
     try{
       catalogItems = await api("/catalog");
       // Выбор с прошлого раза чистим от товаров, которых в справочнике уже нет,
@@ -1444,14 +1495,17 @@
       const alive = new Set(catalogItems.map(it=>it.id));
       Array.from(priceSelected).forEach(id=>{ if(!alive.has(id)) priceSelected.delete(id); });
       savePriceSelection();
+      document.getElementById("priceName").value = priceLoadStored("priceName", "") || "";
+      renderPricePdfSettings();
+      renderPriceCatalogTree();
       renderPriceFilters();
-      renderPriceTree();
+      renderPriceTable();
     }catch(e){
-      document.getElementById("priceTree").innerHTML = `<div class="panel" style="color:var(--red);">Ошибка загрузки: ${esc(e.message)}</div>`;
+      document.getElementById("priceTableBody").innerHTML = `<tr><td style="padding:20px; color:var(--red);">Ошибка загрузки: ${esc(e.message)}</td></tr>`;
     }
   }
 
-  // База — что вообще может попасть в прайс (до фильтров-пилюль)
+  // База — что вообще может попасть в прайс (до фильтров)
   function priceBaseItems(){
     let list = catalogItems.slice();
     if(document.getElementById("priceOnlyShown").checked) list = list.filter(it=>it.showInPrice !== false);
@@ -1459,11 +1513,17 @@
     if(document.getElementById("priceOnlyReady").checked) list = list.filter(it=>it.retailPrice);
     return list;
   }
+  // База, суженная до выбранной в дереве категории — по ней считаются
+  // варианты в фильтрах диаметра/материала/высоты
+  function priceScopeItems(){
+    const base = priceBaseItems();
+    return priceFilterCat ? base.filter(it=>priceCatKey(it) === priceFilterCat) : base;
+  }
   function priceVisibleItems(){
-    let list = priceBaseItems();
-    if(priceFilterCats.size) list = list.filter(it=>priceFilterCats.has(priceCatKey(it)));
+    let list = priceScopeItems();
     if(priceFilterDiams.size) list = list.filter(it=>priceFilterDiams.has(priceDiamKey(it)));
     if(priceFilterMats.size) list = list.filter(it=>priceFilterMats.has(priceMatKey(it)));
+    if(priceFilterHeights.size) list = list.filter(it=>priceFilterHeights.has(priceHeightKey(it)));
     if(priceSearchQuery){
       const q = priceSearchQuery;
       list = list.filter(it=>
@@ -1474,154 +1534,221 @@
     return list;
   }
 
-  function renderPriceFilters(){
+  // ---------- Дерево категорий ----------
+  function renderPriceCatalogTree(){
     const base = priceBaseItems();
-    function fill(elId, keyFn, selectedSet){
-      const counts = new Map();
-      base.forEach(it=>{ const k = keyFn(it); counts.set(k, (counts.get(k)||0)+1); });
-      const keys = Array.from(counts.keys()).sort((a,b)=>a.localeCompare(b,"ru"));
-      const el = document.getElementById(elId);
-      el.innerHTML = keys.length
-        ? keys.map(k=>`<button class="pill ${selectedSet.has(k)?'active':''}" data-key="${esc(k)}">${esc(k)} <span class="count">${counts.get(k)}</span></button>`).join("")
-        : `<span style="font-size:12.5px;color:var(--ink-soft);">нет данных</span>`;
-      el.querySelectorAll("button[data-key]").forEach(b=>{
-        b.addEventListener("click", ()=>{
-          const k = b.dataset.key;
-          if(selectedSet.has(k)) selectedSet.delete(k); else selectedSet.add(k);
-          renderPriceFilters();
-          renderPriceTree();
-        });
+    const catCounts = new Map();
+    const catDiams = new Map();
+    base.forEach(it=>{
+      const c = priceCatKey(it);
+      catCounts.set(c, (catCounts.get(c)||0) + 1);
+      if(!catDiams.has(c)) catDiams.set(c, new Map());
+      if(it.diameter){
+        const d = priceDiamKey(it);
+        catDiams.get(c).set(d, (catDiams.get(c).get(d)||0) + 1);
+      }
+    });
+    const names = Array.from(catCounts.keys()).sort((a,b)=>a.localeCompare(b,"ru"));
+
+    let html = `<div class="pz-node ${priceFilterCat===null?"active":""}" data-cat=""><span class="pz-arrow"></span><span>Все товары</span><span class="pz-count">${base.length}</span></div>`;
+    names.forEach(c=>{
+      const diams = Array.from(catDiams.get(c).keys()).sort((a,b)=>priceNumIn(a)-priceNumIn(b));
+      const open = priceTreeOpen.has(c);
+      const arrow = diams.length
+        ? `<span class="pz-arrow" data-toggle="${esc(c)}">${open?"▾":"▸"}</span>`
+        : `<span class="pz-arrow"></span>`;
+      html += `<div class="pz-node ${priceFilterCat===c && !priceFilterDiams.size ? "active":""}" data-cat="${esc(c)}">
+          ${arrow}<span>${esc(c)}</span><span class="pz-count">${catCounts.get(c)}</span>
+        </div>`;
+      if(open && diams.length){
+        html += `<div class="pz-sub">` + diams.map(d=>
+          `<div class="pz-node ${priceFilterCat===c && priceFilterDiams.has(d) ? "active":""}" data-cat="${esc(c)}" data-diam="${esc(d)}">
+             <span class="pz-arrow"></span><span>${esc(d)}</span><span class="pz-count">${catDiams.get(c).get(d)}</span>
+           </div>`).join("") + `</div>`;
+      }
+    });
+
+    const el = document.getElementById("priceCatalogTree");
+    el.innerHTML = html || `<div style="font-size:12.5px; color:var(--ink-soft);">Пока пусто — заполните Справочник</div>`;
+    el.querySelectorAll(".pz-node").forEach(node=>{
+      node.addEventListener("click", (e)=>{
+        // Стрелка только раскрывает/сворачивает ветку, фильтр не меняет
+        if(e.target.hasAttribute && e.target.hasAttribute("data-toggle")){
+          const c = e.target.getAttribute("data-toggle");
+          if(priceTreeOpen.has(c)) priceTreeOpen.delete(c); else priceTreeOpen.add(c);
+          renderPriceCatalogTree();
+          return;
+        }
+        const cat = node.dataset.cat || null;
+        const diam = node.dataset.diam || null;
+        priceFilterCat = cat;
+        priceFilterDiams.clear();
+        priceFilterMats.clear();
+        priceFilterHeights.clear();
+        if(diam) priceFilterDiams.add(diam);
+        if(cat) priceTreeOpen.add(cat);
+        renderPriceCatalogTree();
+        renderPriceFilters();
+        renderPriceTable();
       });
-    }
-    fill("priceCatFilters", priceCatKey, priceFilterCats);
-    fill("priceDiamFilters", priceDiamKey, priceFilterDiams);
-    fill("priceMatFilters", priceMatKey, priceFilterMats);
+    });
   }
 
-  function priceGroupItems(g){
-    return g.diams.reduce((acc,d)=>acc.concat(d.mats.reduce((a2,m)=>a2.concat(m.items), [])), []);
-  }
-  function priceDiamItems(g, di){
-    return g.diams[di].mats.reduce((acc,m)=>acc.concat(m.items), []);
+  // ---------- Фильтры характеристик ----------
+  // Строка фильтра появляется только если характеристика вообще заполнена
+  // у товаров текущей категории — иначе не засоряем экран (ТЗ: «фильтры
+  // формируются из доступных характеристик»)
+  function renderPriceFilters(){
+    const scope = priceScopeItems();
+    const rows = [
+      { label:"Диаметр",  set:priceFilterDiams,   key:priceDiamKey,   has:it=>it.diameter != null && it.diameter !== "", numeric:true },
+      { label:"Материал", set:priceFilterMats,    key:priceMatKey,    has:it=>!!it.material, numeric:false },
+      { label:"Высота",   set:priceFilterHeights, key:priceHeightKey, has:it=>it.height != null && it.height !== "", numeric:true }
+    ];
+    let html = "";
+    rows.forEach((r, ri)=>{
+      if(!scope.some(r.has)) return;
+      const counts = new Map();
+      scope.forEach(it=>{ const k = r.key(it); counts.set(k, (counts.get(k)||0) + 1); });
+      const keys = Array.from(counts.keys()).sort((a,b)=> r.numeric ? (priceNumIn(a)-priceNumIn(b)) : a.localeCompare(b,"ru"));
+      html += `<div class="panel-divider"></div><div class="panel-label">${r.label}</div><div class="pill-row">` +
+        keys.map(k=>`<button class="pill ${r.set.has(k)?"active":""}" data-row="${ri}" data-key="${esc(k)}">${esc(k)} <span class="count">${counts.get(k)}</span></button>`).join("") +
+        `</div>`;
+    });
+    const el = document.getElementById("priceFilterRows");
+    el.innerHTML = html;
+    el.querySelectorAll("button[data-key]").forEach(b=>{
+      b.addEventListener("click", ()=>{
+        const set = rows[Number(b.dataset.row)].set;
+        const k = b.dataset.key;
+        if(set.has(k)) set.delete(k); else set.add(k);
+        renderPriceFilters();
+        renderPriceTable();
+      });
+    });
   }
 
-  function priceItemRowHtml(it){
-    const meta = [
-      it.article ? "Арт. " + it.article : "",
-      it.height ? it.height + " см" : "",
-      it.weight ? it.weight + " кг" : ""
-    ].filter(Boolean).join(" · ");
-    const priceCell = it.retailPrice
-      ? `<span style="font-weight:700; white-space:nowrap;">${money(it.retailPrice)} ₸</span>`
-      : `<span style="color:var(--red); font-size:12px; white-space:nowrap;">нет цены</span>`;
-    return `<label style="display:flex; align-items:center; gap:10px; padding:6px 0; border-bottom:1px solid var(--line); cursor:pointer;">
-        <input type="checkbox" class="price-item-check" data-id="${esc(it.id)}" ${priceSelected.has(it.id)?"checked":""}>
-        ${it.photo?`<img class="thumb" src="${esc(it.photo)}">`:`<div class="thumb-empty">—</div>`}
-        <span style="flex:1; min-width:0;">
-          <span style="display:block; font-size:13px;">${esc(it.printName||"—")}</span>
-          <span style="display:block; font-size:11.5px; color:var(--ink-soft);">${esc(meta)}</span>
-        </span>
-        ${priceCell}
-      </label>`;
-  }
-
-  function renderPriceTree(){
-    const items = priceVisibleItems();
-    const filtersOn = priceFilterCats.size || priceFilterDiams.size || priceFilterMats.size || priceSearchQuery;
-    document.getElementById("priceTreeInfo").textContent =
-      `Показано ${items.length} товаров из ${catalogItems.length} в справочнике` + (filtersOn ? " (действуют фильтры)" : "");
-
-    const byCat = new Map();
+  // ---------- Таблица товаров ----------
+  function priceBuildGroups(items){
+    const map = new Map();
     for(const it of items){
-      const c = priceCatKey(it), d = priceDiamKey(it), m = priceMatKey(it);
-      if(!byCat.has(c)) byCat.set(c, new Map());
-      const bd = byCat.get(c);
-      if(!bd.has(d)) bd.set(d, new Map());
-      const bm = bd.get(d);
-      if(!bm.has(m)) bm.set(m, []);
-      bm.get(m).push(it);
+      const cat = priceCatKey(it);
+      const d = it.diameter ? "Ø " + it.diameter + " см" : "";
+      const m = it.material || "";
+      const key = cat + "||" + d + "||" + m;
+      if(!map.has(key)) map.set(key, { cat, d, m, items: [] });
+      map.get(key).items.push(it);
     }
-    priceGrouped = Array.from(byCat.entries()).map(([cat, bd])=>({
-      cat,
-      diams: Array.from(bd.entries()).map(([d, bm])=>({
-        d,
-        mats: Array.from(bm.entries()).map(([m, list])=>({
-          m,
-          items: list.slice().sort((a,b)=>(a.sortOrder||0)-(b.sortOrder||0) || (a.printName||"").localeCompare(b.printName||"","ru"))
-        }))
-      }))
-    }));
-    priceGrouped.sort((a,b)=>a.cat.localeCompare(b.cat,"ru"));
+    const groups = Array.from(map.values());
+    groups.forEach(g=>g.items.sort((a,b)=>
+      (a.sortOrder||0)-(b.sortOrder||0) ||
+      (Number(a.height)||0)-(Number(b.height)||0) ||
+      (a.printName||"").localeCompare(b.printName||"","ru")));
+    groups.sort((a,b)=>
+      a.cat.localeCompare(b.cat,"ru") ||
+      priceNumIn(a.d)-priceNumIn(b.d) ||
+      a.m.localeCompare(b.m,"ru"));
+    return groups;
+  }
 
-    const wrap = document.getElementById("priceTree");
-    if(!priceGrouped.length){
-      wrap.innerHTML = `<div class="panel" style="text-align:center;color:var(--ink-soft);">Ничего не подходит под текущие фильтры. Если товаров нет совсем — заполните «Название для печати» и «Розницу» в Справочнике.</div>`;
+  function renderPriceTable(){
+    const items = priceVisibleItems();
+    const filtersOn = priceFilterCat || priceFilterDiams.size || priceFilterMats.size || priceFilterHeights.size || priceSearchQuery;
+    document.getElementById("priceTreeInfo").textContent =
+      `Найдено моделей: ${items.length} из ${catalogItems.length} в справочнике` + (filtersOn ? " (действуют фильтры)" : "");
+
+    // Колонку показываем, только если характеристика применима к найденным
+    // товарам — пустые столбцы не нужны (ТЗ 5: «диаметр — если применим»)
+    const cols = {
+      material: items.some(it=>it.material),
+      diameter: items.some(it=>it.diameter),
+      height:   items.some(it=>it.height),
+      weight:   items.some(it=>it.weight)
+    };
+    const colCount = 3 + Object.values(cols).filter(Boolean).length + 1;
+
+    document.getElementById("priceTableHead").innerHTML = `<tr>
+        <th style="width:30px;"><input type="checkbox" id="priceSelectAllVisible" title="Отметить всё найденное"></th>
+        <th style="width:60px;">Фото</th>
+        <th>Модель</th>
+        ${cols.material?`<th style="width:90px;">Материал</th>`:""}
+        ${cols.diameter?`<th style="width:70px;">Диаметр</th>`:""}
+        ${cols.height?`<th style="width:70px;">Высота</th>`:""}
+        ${cols.weight?`<th style="width:60px;">Вес</th>`:""}
+        <th style="width:100px; text-align:right;">Цена</th>
+      </tr>`;
+
+    const body = document.getElementById("priceTableBody");
+    if(!items.length){
+      body.innerHTML = `<tr><td colspan="${colCount}" style="padding:26px; text-align:center; color:var(--ink-soft);">
+        Ничего не найдено. Если товаров нет совсем — заполните в «Справочнике» «Название для печати» и «Розницу», либо снимите галочку «Только с названием и ценой».</td></tr>`;
+      priceGroups = [];
       updatePriceSelectedInfo();
+      renderPriceItemCard();
       return;
     }
 
-    // При активном поиске разворачиваем всё — иначе найденное пришлось бы искать
-    // ещё раз внутри свёрнутых категорий
-    const forceOpen = !!priceSearchQuery;
-    wrap.innerHTML = priceGrouped.map((g, gi)=>{
-      const catItems = priceGroupItems(g);
-      const sel = catItems.filter(it=>priceSelected.has(it.id)).length;
-      const open = forceOpen || priceExpanded.has(g.cat);
-      const body = !open ? "" : g.diams.map((dg, di)=>{
-        const dItems = priceDiamItems(g, di);
-        const dSel = dItems.filter(it=>priceSelected.has(it.id)).length;
-        const diamHead = `<div style="padding:10px 16px 2px; border-top:1px solid var(--line);">
-            <label style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; color:var(--navy); cursor:pointer;">
-              <input type="checkbox" class="price-diam-check" data-gi="${gi}" data-di="${di}">
-              <span>${esc(dg.d)}</span>
-              <span style="font-weight:400; color:var(--ink-soft); font-size:12px;">${dSel} из ${dItems.length}</span>
-            </label>
-          </div>`;
-        const mats = dg.mats.map(mg=>`
-          <div style="padding:0 16px;">
-            ${mg.m === "Без материала" ? "" : `<div style="display:inline-block; background:var(--amber-light); color:#8A5A12; border-radius:10px; padding:2px 10px; font-size:11.5px; margin:8px 0 2px;">${esc(mg.m)}</div>`}
-            ${mg.items.map(priceItemRowHtml).join("")}
-          </div>`).join("");
-        return diamHead + mats;
-      }).join("");
-
-      return `<div class="panel" style="padding:0; overflow:hidden;">
-        <div style="display:flex; align-items:center; gap:10px; padding:12px 16px; background:#F0EAD9;">
-          <input type="checkbox" class="price-cat-check" data-gi="${gi}">
-          <span class="price-cat-toggle" data-cat="${esc(g.cat)}" style="flex:1; cursor:pointer; font-family:var(--serif); font-size:16px;">${esc(g.cat)}</span>
-          <span style="font-size:12px; color:var(--ink-soft); white-space:nowrap;">выбрано ${sel} из ${catItems.length}</span>
-          <span class="price-cat-toggle" data-cat="${esc(g.cat)}" style="cursor:pointer; color:var(--ink-soft); font-size:12px; white-space:nowrap;">${open?"▴ свернуть":"▾ развернуть"}</span>
-        </div>
-        ${body}
-      </div>`;
+    priceGroups = priceBuildGroups(items);
+    body.innerHTML = priceGroups.map((g, gi)=>{
+      const sel = g.items.filter(it=>priceSelected.has(it.id)).length;
+      const title = [g.cat, g.d].filter(Boolean).join(" · ");
+      const groupRow = `<tr class="pz-group"><td colspan="${colCount}">
+          <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
+            <input type="checkbox" class="pz-group-check" data-gi="${gi}">
+            ${g.m?`<span class="pz-badge" style="background:#fff;">${esc(g.m)}</span>`:""}
+            <span style="font-weight:600;">${esc(title)}${g.m?" · "+esc(g.m):""}</span>
+            <span style="color:var(--ink-soft); font-weight:400; font-size:12px;">${g.items.length} ${priceModelsWord(g.items.length)} · выбрано ${sel}</span>
+          </label>
+        </td></tr>`;
+      const rows = g.items.map(it=>`
+        <tr class="pz-row ${priceActiveItemId===it.id?"pz-active":""}" data-id="${esc(it.id)}">
+          <td><input type="checkbox" class="pz-item-check" data-id="${esc(it.id)}" ${priceSelected.has(it.id)?"checked":""}></td>
+          <td>${it.photo?`<img class="pz-photo" src="${esc(it.photo)}">`:`<div class="pz-photo-empty">нет фото</div>`}</td>
+          <td>
+            <div style="font-weight:600;">${esc(it.printName||"—")}</div>
+            <div style="font-size:11.5px; color:var(--ink-soft);">${it.article?"Арт. "+esc(it.article):"—"}</div>
+          </td>
+          ${cols.material?`<td>${it.material?`<span class="pz-badge">${esc(it.material)}</span>`:"—"}</td>`:""}
+          ${cols.diameter?`<td>${it.diameter?esc(it.diameter)+" см":"—"}</td>`:""}
+          ${cols.height?`<td>${it.height?esc(it.height)+" см":"—"}</td>`:""}
+          ${cols.weight?`<td>${it.weight?esc(it.weight)+" кг":"—"}</td>`:""}
+          <td class="pz-price">${it.retailPrice?money(it.retailPrice)+" ₸":`<span style="color:var(--red); font-weight:400; font-size:12px;">нет цены</span>`}</td>
+        </tr>`).join("");
+      return groupRow + rows;
     }).join("");
 
-    bindPriceTreeHandlers();
+    bindPriceTableHandlers(items);
     updatePriceSelectedInfo();
+    renderPriceItemCard();
   }
 
-  function bindPriceTreeHandlers(){
-    const wrap = document.getElementById("priceTree");
+  function bindPriceTableHandlers(visibleItems){
+    const body = document.getElementById("priceTableBody");
 
-    wrap.querySelectorAll(".price-cat-toggle").forEach(el=>{
-      el.addEventListener("click", ()=>{
-        const cat = el.dataset.cat;
-        if(priceExpanded.has(cat)) priceExpanded.delete(cat); else priceExpanded.add(cat);
-        renderPriceTree();
-      });
-    });
-
-    wrap.querySelectorAll(".price-item-check").forEach(cb=>{
+    body.querySelectorAll(".pz-item-check").forEach(cb=>{
       cb.addEventListener("change", ()=>{
         if(cb.checked) priceSelected.add(cb.dataset.id); else priceSelected.delete(cb.dataset.id);
         savePriceSelection();
-        renderPriceTree();
+        renderPriceTable();
       });
     });
 
-    // Групповые галочки: отмечены полностью / частично (indeterminate) — это
-    // состояние нельзя задать через HTML-атрибут, только из кода
-    function bindGroupCheck(cb, list){
+    // Клик по строке — показать товар в карточке справа (крупная цена для
+    // разговора с клиентом). Клик по самой галочке сюда не считается.
+    body.querySelectorAll("tr.pz-row").forEach(tr=>{
+      tr.addEventListener("click", (e)=>{
+        if(e.target.classList && e.target.classList.contains("pz-item-check")) return;
+        priceActiveItemId = tr.dataset.id;
+        body.querySelectorAll("tr.pz-row").forEach(x=>x.classList.remove("pz-active"));
+        tr.classList.add("pz-active");
+        renderPriceItemCard();
+      });
+    });
+
+    // Галочка группы: отмечена полностью / частично. Частичное состояние
+    // (indeterminate) нельзя задать атрибутом в HTML — только из кода.
+    body.querySelectorAll(".pz-group-check").forEach(cb=>{
+      const list = priceGroups[Number(cb.dataset.gi)].items;
       const sel = list.filter(it=>priceSelected.has(it.id)).length;
       cb.checked = sel > 0 && sel === list.length;
       cb.indeterminate = sel > 0 && sel < list.length;
@@ -1629,14 +1756,79 @@
         const on = cb.checked;
         list.forEach(it=>{ if(on) priceSelected.add(it.id); else priceSelected.delete(it.id); });
         savePriceSelection();
-        renderPriceTree();
+        renderPriceTable();
+      });
+    });
+
+    const selectAll = document.getElementById("priceSelectAllVisible");
+    if(selectAll){
+      const sel = visibleItems.filter(it=>priceSelected.has(it.id)).length;
+      selectAll.checked = sel > 0 && sel === visibleItems.length;
+      selectAll.indeterminate = sel > 0 && sel < visibleItems.length;
+      selectAll.addEventListener("change", ()=>{
+        const on = selectAll.checked;
+        visibleItems.forEach(it=>{ if(on) priceSelected.add(it.id); else priceSelected.delete(it.id); });
+        savePriceSelection();
+        renderPriceTable();
       });
     }
-    wrap.querySelectorAll(".price-cat-check").forEach(cb=>{
-      bindGroupCheck(cb, priceGroupItems(priceGrouped[Number(cb.dataset.gi)]));
+  }
+
+  // ---------- Карточка выбранного товара ----------
+  function renderPriceItemCard(){
+    const el = document.getElementById("priceItemCard");
+    const it = catalogItems.find(x=>x.id === priceActiveItemId);
+    if(!it){
+      el.innerHTML = `<div class="panel-label">Выбранный товар</div>
+        <div style="font-size:12.5px; color:var(--ink-soft);">Нажмите на строку товара — здесь появятся фото, характеристики и крупная цена, удобная во время разговора с клиентом.</div>`;
+      return;
+    }
+    const specs = [
+      it.material,
+      it.diameter ? "Ø" + it.diameter + " см" : "",
+      it.height ? it.height + " см" : "",
+      it.weight ? it.weight + " кг" : ""
+    ].filter(Boolean).join(" · ");
+    const inPrice = priceSelected.has(it.id);
+    el.innerHTML = `
+      <div class="panel-label">Выбранный товар</div>
+      ${it.photo
+        ? `<img src="${esc(it.photo)}" style="width:100%; max-height:170px; object-fit:contain; border:1px solid var(--line); border-radius:6px; background:#fff;">`
+        : `<div style="height:110px; border:1px dashed var(--line); border-radius:6px; display:flex; align-items:center; justify-content:center; color:var(--ink-soft); font-size:12px;">нет фото</div>`}
+      <div style="font-weight:600; font-size:14px; margin-top:10px;">${esc(it.printName||"—")}</div>
+      <div style="font-size:12px; color:var(--ink-soft); margin-top:2px;">${esc(specs||"—")}</div>
+      ${it.article?`<div style="font-size:11.5px; color:var(--ink-soft);">Арт. ${esc(it.article)}</div>`:""}
+      <div style="border-top:1px solid var(--line); margin:12px 0;"></div>
+      <div style="font-size:26px; font-weight:700;">${it.retailPrice
+        ? money(it.retailPrice) + " ₸"
+        : `<span style="font-size:13px; color:var(--red); font-weight:400;">цена не заполнена в Справочнике</span>`}</div>
+      <button class="btn secondary" id="btnPriceCopy" style="width:100%; margin-top:12px;">📋 Скопировать цену</button>
+      <button class="btn ${inPrice?"danger":"amber"}" id="btnPriceToggleItem" style="width:100%; margin-top:8px;">${inPrice?"Убрать из прайса":"+ Добавить в прайс"}</button>`;
+
+    document.getElementById("btnPriceCopy").addEventListener("click", async ()=>{
+      if(!it.retailPrice){ toast("У этого товара не заполнена цена"); return; }
+      const text = money(it.retailPrice) + " ₸";
+      try{
+        await navigator.clipboard.writeText(text);
+        toast("Скопировано: " + text);
+      }catch(e){
+        // Запасной путь: без https или в старом браузере clipboard API недоступен
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        let ok = false;
+        try{ ok = document.execCommand("copy"); }catch(err){}
+        ta.remove();
+        toast(ok ? "Скопировано: " + text : "Браузер не дал скопировать — выделите цену вручную");
+      }
     });
-    wrap.querySelectorAll(".price-diam-check").forEach(cb=>{
-      bindGroupCheck(cb, priceDiamItems(priceGrouped[Number(cb.dataset.gi)], Number(cb.dataset.di)));
+    document.getElementById("btnPriceToggleItem").addEventListener("click", ()=>{
+      if(priceSelected.has(it.id)) priceSelected.delete(it.id); else priceSelected.add(it.id);
+      savePriceSelection();
+      renderPriceTable();
     });
   }
 
@@ -1658,44 +1850,43 @@
     });
   }
 
+  // ---------- Управляющие элементы ----------
   document.getElementById("priceSearch").addEventListener("input", (e)=>{
     priceSearchQuery = e.target.value.trim().toLowerCase();
-    renderPriceTree();
+    renderPriceTable();
   });
-  document.getElementById("priceOnlyReady").addEventListener("change", ()=>{ renderPriceFilters(); renderPriceTree(); });
-  document.getElementById("priceOnlyShown").addEventListener("change", ()=>{ renderPriceFilters(); renderPriceTree(); });
+  document.getElementById("priceName").addEventListener("input", (e)=>{
+    localStorage.setItem("priceName", JSON.stringify(e.target.value));
+  });
+  document.getElementById("priceOnlyReady").addEventListener("change", ()=>{ renderPriceCatalogTree(); renderPriceFilters(); renderPriceTable(); });
+  document.getElementById("priceOnlyShown").addEventListener("change", ()=>{ renderPriceCatalogTree(); renderPriceFilters(); renderPriceTable(); });
   document.getElementById("btnPriceResetFilters").addEventListener("click", ()=>{
-    priceFilterCats.clear(); priceFilterDiams.clear(); priceFilterMats.clear();
+    priceFilterCat = null;
+    priceFilterDiams.clear(); priceFilterMats.clear(); priceFilterHeights.clear();
     priceSearchQuery = "";
     document.getElementById("priceSearch").value = "";
+    renderPriceCatalogTree();
     renderPriceFilters();
-    renderPriceTree();
+    renderPriceTable();
   });
   document.getElementById("btnPriceSelectAll").addEventListener("click", ()=>{
     const visible = priceVisibleItems();
     visible.forEach(it=>priceSelected.add(it.id));
     savePriceSelection();
-    renderPriceTree();
+    renderPriceTable();
     toast(`Отмечено товаров: ${visible.length}`);
   });
   document.getElementById("btnPriceSelectNone").addEventListener("click", ()=>{
     priceSelected.clear();
     savePriceSelection();
-    renderPriceTree();
-  });
-  document.getElementById("btnPriceToggleAll").addEventListener("click", ()=>{
-    const btn = document.getElementById("btnPriceToggleAll");
-    const allOpen = priceGrouped.length > 0 && priceGrouped.every(g=>priceExpanded.has(g.cat));
-    if(allOpen){ priceExpanded.clear(); btn.textContent = "Развернуть всё"; }
-    else { priceGrouped.forEach(g=>priceExpanded.add(g.cat)); btn.textContent = "Свернуть всё"; }
-    renderPriceTree();
+    renderPriceTable();
   });
 
-  // ---------- Что показывать в PDF ----------
+  // ---------- Настройки PDF ----------
   function renderPricePdfSettings(){
     const body = document.getElementById("pricePdfSettingsBody");
     body.innerHTML = Object.keys(PRICE_PDF_DEFAULTS).map(k=>
-      `<label style="display:block; padding:6px 0;"><input type="checkbox" class="price-pdf-setting" data-key="${k}" ${pricePdfSettings[k]?"checked":""}> ${esc(PRICE_PDF_LABELS[k])}</label>`
+      `<label class="pz-setting"><span>${esc(PRICE_PDF_LABELS[k])}</span><input type="checkbox" class="price-pdf-setting" data-key="${k}" ${pricePdfSettings[k]?"checked":""}></label>`
     ).join("");
     body.querySelectorAll(".price-pdf-setting").forEach(cb=>{
       cb.addEventListener("change", ()=>{
@@ -1704,17 +1895,11 @@
       });
     });
   }
-  document.getElementById("btnPricePdfSettings").addEventListener("click", ()=>{
-    renderPricePdfSettings();
-    document.getElementById("pricePdfSettingsOverlay").classList.add("show");
-  });
-  document.getElementById("pricePdfSettingsClose").addEventListener("click", ()=>{
-    document.getElementById("pricePdfSettingsOverlay").classList.remove("show");
-  });
   document.getElementById("pricePdfSettingsReset").addEventListener("click", ()=>{
     pricePdfSettings = Object.assign({}, PRICE_PDF_DEFAULTS);
     localStorage.setItem("pricePdfSettings", JSON.stringify(pricePdfSettings));
     renderPricePdfSettings();
+    toast("Настройки PDF сброшены");
   });
 
   // ---------- Настоящий PDF с сервера ----------
@@ -1737,7 +1922,12 @@
         method: "POST",
         headers: {"Content-Type":"application/json"},
         credentials: "same-origin",
-        body: JSON.stringify({ companyId, itemIds, settings: pricePdfSettings })
+        body: JSON.stringify({
+          companyId,
+          itemIds,
+          settings: pricePdfSettings,
+          priceName: document.getElementById("priceName").value.trim()
+        })
       });
       if(!resp.ok){
         const t = await resp.json().catch(()=>({}));
@@ -1749,7 +1939,7 @@
         if(win) win.location.href = url; else window.open(url, "_blank");
       } else {
         // Имя файла сервер присылает в заголовке (там оно с названием компании).
-        // Для скачивания через blob браузер его не применяет сам — достаём вручную.
+        // При скачивании через blob браузер его сам не применяет — достаём вручную.
         let fileName = `Прайс_${new Date().toISOString().slice(0,10)}.pdf`;
         const cd = resp.headers.get("content-disposition") || "";
         const m = cd.match(/filename\*=UTF-8''([^;]+)/i);
@@ -2097,7 +2287,7 @@
       b.classList.add("active");
       ["orders","kaspiOrders","claims","price","catalog","salary","production","kaspi","audit","users"].forEach(t=> document.getElementById("tab-"+t).style.display = (t===b.dataset.tab)?"":"none");
       if(b.dataset.tab === "catalog") loadCatalog();
-      if(b.dataset.tab === "price") { loadPriceTab(); loadPriceCompanies(); }
+      if(b.dataset.tab === "price") { loadPriceCompanies().catch(()=>{}).then(loadPriceTab); }
       if(b.dataset.tab === "production") loadProduction();
       if(b.dataset.tab === "kaspiOrders") renderKaspiOrders();
       if(b.dataset.tab === "claims") { if(!kaspiOrders.length) renderKaspiOrders().then(renderClaims); else renderClaims(); }
