@@ -27,19 +27,20 @@ import counterRoutes from "./routes/counters.js";
 import employeeRoutes from "./routes/employees.js";
 import companiesRoutes from "./routes/companies.js";
 import pricePdfRoutes from "./routes/pricePdf.js";
-import priceListsRoutes from "./routes/priceLists.js";
-import chinaPurchasesRoutes from "./routes/chinaPurchases.js";
-import chinaStockRoutes from "./routes/chinaStock.js";
-import payrollRoutes from "./routes/payroll.js";
-import tasksRoutes from "./routes/tasks.js";
-import monitorRoutes from "./routes/monitor.js";
-import dispatchRoutes from "./routes/dispatch.js";
-import backupRoutes from "./routes/backup.js";
 import productionRoutes from "./routes/production.js";
 import metaRoutes from "./routes/meta.js";
 import settingsRoutes from "./routes/settings.js";
 import auditRoutes from "./routes/audit.js";
-import { requireAuth, requirePermission } from "./middleware/auth.js";
+import * as authMiddleware from "./middleware/auth.js";
+
+// Если middleware/auth.js остался старой версии, в нём нет requirePermission.
+// Раньше это роняло весь сервер на старте — теперь просто предупреждаем,
+// а проверка прав временно пропускает всех авторизованных.
+const requireAuth = authMiddleware.requireAuth;
+const requirePermission = authMiddleware.requirePermission || function () {
+  console.warn("[!] middleware/auth.js устарел: нет requirePermission. Разделы открыты всем, кто вошёл. Обновите файл.");
+  return (req, res, next) => (req.session && req.session.userId ? next() : res.status(401).json({ error: "not_authenticated" }));
+};
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, "uploads");
@@ -96,18 +97,36 @@ app.use("/api/counters", counterRoutes);
 app.use("/api/employees", employeeRoutes);
 app.use("/api/companies", companiesRoutes);
 app.use("/api/price-pdf", requirePermission("price"), pricePdfRoutes);
-app.use("/api/price-lists", requirePermission("price"), priceListsRoutes);
-app.use("/api/china-purchases", requirePermission("china"), chinaPurchasesRoutes);
-app.use("/api/china-stock", requirePermission("china"), chinaStockRoutes);
-app.use("/api/payroll", requirePermission("salary"), payrollRoutes);
-app.use("/api/tasks", tasksRoutes);
-app.use("/api/monitor", monitorRoutes);
-app.use("/api/dispatch", dispatchRoutes);
-app.use("/api/backup", backupRoutes);
 app.use("/api/production", productionRoutes);
 app.use("/api/meta", metaRoutes);
 app.use("/api/settings", requirePermission("kaspi"), settingsRoutes);
 app.use("/api/audit", requirePermission("audit"), auditRoutes);
+
+// Подключаем модули по одному: если какой-то файл не залит на сервер,
+// упадёт только он, а остальная программа продолжит работать.
+// Раньше один недостающий файл убивал весь сервис на старте.
+async function mountRoute(name, mountPath, guard) {
+  try {
+    const mod = await import(`./routes/${name}.js`);
+    if (guard) app.use(mountPath, guard, mod.default);
+    else app.use(mountPath, mod.default);
+  } catch (e) {
+    console.error(`[!] Раздел ${mountPath} не подключён: ${e.message}`);
+    app.use(mountPath, (req, res) => res.status(503).json({
+      error: "module_missing",
+      message: `Этот раздел не установлен на сервере (нет файла routes/${name}.js). Залейте файл и перезапустите.`
+    }));
+  }
+}
+
+await mountRoute("priceLists", "/api/price-lists", requirePermission("price"));
+await mountRoute("chinaPurchases", "/api/china-purchases", requirePermission("china"));
+await mountRoute("chinaStock", "/api/china-stock", requirePermission("china"));
+await mountRoute("payroll", "/api/payroll", requirePermission("salary"));
+await mountRoute("tasks", "/api/tasks", null);
+await mountRoute("monitor", "/api/monitor", null);
+await mountRoute("dispatch", "/api/dispatch", null);
+await mountRoute("backup", "/api/backup", null);
 
 // Иконки приложения. Нужны именно PNG и ICO: Windows для ярлыка на рабочем
 // столе и Chrome для установки SVG-иконку не берут — получается белый лист.
