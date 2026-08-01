@@ -1502,12 +1502,41 @@
       Скачайте оба файла перед любыми работами с сервером. База — это все заказы, товары,
       зарплата и закупки; архив — фотографии товаров.
     </div>
-    <div class="modal-actions">
-      <div style="display:flex; gap:8px; flex-wrap:wrap;">
-        <a class="btn amber" style="text-decoration:none; padding:8px 14px;" href="/api/backup/database">💾 Скачать базу</a>
-        <a class="btn secondary" style="text-decoration:none; padding:8px 14px;" href="/api/backup/photos">🖼️ Скачать фото</a>
+    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:14px;">
+      <a class="btn amber" style="text-decoration:none; padding:8px 14px;" href="/api/backup/database">💾 Скачать базу</a>
+      <a class="btn secondary" style="text-decoration:none; padding:8px 14px;" href="/api/backup/photos">🖼️ Скачать фото</a>
+    </div>
+
+    <div style="border-top:1px solid var(--line); margin-top:16px; padding-top:12px;">
+      <div style="font-weight:600; font-size:13px; margin-bottom:4px;">Восстановить базу из копии</div>
+      <div style="font-size:12px; color:var(--ink-soft); margin-bottom:10px;">
+        Заменяет все данные на те, что в файле: заказы, номера, товары, зарплату, пользователей.
+        Нужно после переезда на постоянный диск. Текущая база сохранится рядом на всякий случай.
       </div>
+      <input type="file" id="restoreInput" accept=".sqlite,.db,application/octet-stream" style="display:none">
+      <button class="btn danger" id="btnRestore" style="padding:7px 14px;">♻️ Выбрать файл и восстановить</button>
+      <div id="restoreStatus" style="font-size:12.5px; margin-top:8px;"></div>
+    </div>
+
+    <div class="modal-actions">
+      <div></div>
       <button class="btn secondary" id="backupClose">Закрыть</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="photoLinkOverlay">
+  <div class="modal" style="max-width:700px;">
+    <h3>Привязать фотографии к товарам</h3>
+    <div style="font-size:12.5px; color:var(--ink-soft); margin-bottom:10px;">
+      У этих файлов имя не совпало с артикулом — обычное дело для фото с телефона.
+      Найдите товар по названию и нажмите на него. Файлы уже загружены, заново выбирать не нужно.
+    </div>
+    <div id="photoLinkCount" style="font-size:13px; font-weight:600; margin-bottom:8px;"></div>
+    <div id="photoLinkBody" style="max-height:56vh; overflow:auto;"></div>
+    <div class="modal-actions">
+      <div></div>
+      <button class="btn amber" id="photoLinkClose">Готово</button>
     </div>
   </div>
 </div>
@@ -2069,33 +2098,112 @@
     toast("Назовите файлы по артикулу: SA40150K.jpg — тогда они разложатся сами");
     document.getElementById("bulkPhotosInput").click();
   });
+  // Фото, которым не нашлось товара по имени файла: не выбрасываем, а даём
+  // привязать руками — у файлов с телефона и из мессенджеров имена случайные
+  let pendingPhotos = [];
+
   document.getElementById("bulkPhotosInput").addEventListener("change", async (e)=>{
     const files = Array.from(e.target.files || []);
     e.target.value = "";
     if(!files.length) return;
     if(!catalogItems.length) await loadCatalog();
-    let ok = 0; const notFound = [];
-    document.getElementById("catalogImportInfo").textContent = `Загружаю фото: 0 из ${files.length}...`;
-    for(const file of files){
-      const base = file.name.replace(/\.[^.]+$/, "").trim();
-      const item = catalogItems.find(it=>String(it.article||"").toLowerCase() === base.toLowerCase());
-      if(!item){ notFound.push(file.name); continue; }
+
+    const info = document.getElementById("catalogImportInfo");
+    let ok = 0;
+    pendingPhotos = [];
+    info.textContent = `Обрабатываю фото: 0 из ${files.length}...`;
+
+    for(let i = 0; i < files.length; i++){
+      const file = files[i];
+      const base = file.name.replace(/\.[^.]+$/, "").trim().toLowerCase();
+      // Совпадение по артикулу: точное или когда артикул внутри имени файла
+      const item = catalogItems.find(it=>{
+        const art = String(it.article||"").toLowerCase();
+        return art && (art === base || base.includes(art));
+      });
       try{
         const normalized = await normalizeCatalogPhoto(file);
         const fd = new FormData();
         fd.append("photo", normalized);
         const resp = await fetch("/api/upload", {method:"POST", body:fd, credentials:"same-origin"});
-        if(!resp.ok) throw new Error("upload_failed");
+        if(!resp.ok) throw new Error("не удалось загрузить файл");
         const data = await resp.json();
-        await api("/catalog/" + item.id, {method:"PUT", body: JSON.stringify({photo: data.path})});
-        ok++;
-        document.getElementById("catalogImportInfo").textContent = `Загружаю фото: ${ok} из ${files.length}...`;
-      }catch(err){ notFound.push(file.name + " (ошибка загрузки)"); }
+        if(item){
+          await api("/catalog/" + item.id, {method:"PUT", body: JSON.stringify({photo: data.path})});
+          ok++;
+        } else {
+          // Файл уже на сервере — осталось указать, чей он
+          pendingPhotos.push({ path: data.path, name: file.name });
+        }
+      }catch(err){
+        console.warn("Фото не загрузилось:", file.name, err);
+      }
+      info.textContent = `Обрабатываю фото: ${i+1} из ${files.length}...`;
     }
+
     await loadCatalog();
-    document.getElementById("catalogImportInfo").textContent =
-      `Фото загружено: ${ok}${notFound.length ? `. Не совпал артикул: ${notFound.slice(0,5).join(", ")}${notFound.length>5?" и ещё "+(notFound.length-5):""}` : ""}`;
-    toast(`Фото проставлено: ${ok} из ${files.length}`);
+    info.textContent = `Привязано по имени файла: ${ok}${pendingPhotos.length ? `, требуют привязки вручную: ${pendingPhotos.length}` : ""}`;
+    if(pendingPhotos.length) openPhotoLinker();
+    else toast(`Фото проставлено: ${ok}`);
+  });
+
+  // ---------- Ручная привязка фотографий ----------
+  function openPhotoLinker(){
+    document.getElementById("photoLinkOverlay").classList.add("show");
+    renderPhotoLinker();
+  }
+  function renderPhotoLinker(){
+    const wrap = document.getElementById("photoLinkBody");
+    document.getElementById("photoLinkCount").textContent = `Осталось привязать: ${pendingPhotos.length}`;
+    if(!pendingPhotos.length){
+      wrap.innerHTML = `<div style="padding:20px; text-align:center; color:var(--green);">Все фото привязаны</div>`;
+      return;
+    }
+    wrap.innerHTML = pendingPhotos.map((p, i)=>`
+      <div style="display:flex; gap:12px; align-items:center; padding:10px 0; border-bottom:1px solid var(--line); flex-wrap:wrap;">
+        <img src="${esc(p.path)}" style="width:64px; height:64px; object-fit:contain; border:1px solid var(--line); border-radius:8px; background:#fff;">
+        <div style="flex:1; min-width:200px;">
+          <div style="font-size:11.5px; color:var(--ink-soft); margin-bottom:4px;">${esc(p.name)}</div>
+          <input type="text" data-pl-search="${i}" placeholder="Начните вводить название или SKU..." style="width:100%;">
+          <div data-pl-hits="${i}" style="margin-top:5px;"></div>
+        </div>
+        <button class="btn secondary" style="padding:4px 10px; font-size:12px;" data-pl-skip="${i}">Пропустить</button>
+      </div>`).join("");
+
+    wrap.querySelectorAll("[data-pl-search]").forEach(inp=>{
+      inp.addEventListener("input", ()=>{
+        const idx = Number(inp.dataset.plSearch);
+        const q = inp.value.trim().toLowerCase();
+        const hits = wrap.querySelector(`[data-pl-hits="${idx}"]`);
+        if(q.length < 2){ hits.innerHTML = ""; return; }
+        const found = catalogItems.filter(it=>
+          String(it.printName||"").toLowerCase().includes(q) ||
+          String(it.kaspiName||"").toLowerCase().includes(q) ||
+          String(it.article||"").toLowerCase().includes(q)).slice(0, 5);
+        hits.innerHTML = found.length
+          ? found.map(it=>`<button class="btn secondary" style="padding:3px 9px; font-size:11.5px; margin:0 5px 5px 0;"
+              data-pl-pick="${idx}" data-pl-item="${esc(it.id)}">${esc(it.printName || it.kaspiName || it.article)}${it.photo ? " (уже с фото)" : ""}</button>`).join("")
+          : `<span style="font-size:11.5px; color:var(--ink-soft);">Ничего не найдено</span>`;
+        hits.querySelectorAll("[data-pl-pick]").forEach(b=>b.addEventListener("click", async ()=>{
+          const photo = pendingPhotos[Number(b.dataset.plPick)];
+          try{
+            await api("/catalog/" + b.dataset.plItem, {method:"PUT", body: JSON.stringify({photo: photo.path})});
+            pendingPhotos.splice(Number(b.dataset.plPick), 1);
+            await loadCatalog();
+            renderPhotoLinker();
+            toast("Фото привязано");
+          }catch(e){ toast("Не получилось: " + e.message); }
+        }));
+      });
+    });
+    wrap.querySelectorAll("[data-pl-skip]").forEach(b=>b.addEventListener("click", ()=>{
+      pendingPhotos.splice(Number(b.dataset.plSkip), 1);
+      renderPhotoLinker();
+    }));
+  }
+  document.getElementById("photoLinkClose").addEventListener("click", ()=>{
+    document.getElementById("photoLinkOverlay").classList.remove("show");
+    loadCatalog();
   });
 
   let editingCatalogId = null;
@@ -2148,20 +2256,29 @@
   // Генератор PDF на сервере понимает только JPEG и PNG. Фото, сохранённое с
   // сайта, часто оказывается webp — на экране оно видно, а в PDF молча не
   // попадало. Поэтому такие файлы переводим в JPEG прямо здесь, до отправки.
+  const PHOTO_MAX_SIDE = 1400; // для карточки товара и PDF этого с запасом
   async function normalizeCatalogPhoto(file){
-    if(file.type === "image/jpeg" || file.type === "image/png") return file;
     if(typeof createImageBitmap !== "function") return file;
     try{
       const bitmap = await createImageBitmap(file);
+      const scale = Math.min(1, PHOTO_MAX_SIDE / Math.max(bitmap.width, bitmap.height));
+      const needResize = scale < 1;
+      const needConvert = file.type !== "image/jpeg" && file.type !== "image/png";
+      // Фото с телефона — это 4–8 МБ и 4000 пикселей по стороне. В карточке и в
+      // PDF такое не нужно: уменьшаем, иначе списки будут открываться секундами.
+      if(!needResize && !needConvert) return file;
       const canvas = document.createElement("canvas");
-      canvas.width = bitmap.width; canvas.height = bitmap.height;
-      canvas.getContext("2d").drawImage(bitmap, 0, 0);
-      const blob = await new Promise(res=>canvas.toBlob(res, "image/jpeg", 0.92));
-      if(!blob) return file;
+      canvas.width = Math.round(bitmap.width * scale);
+      canvas.height = Math.round(bitmap.height * scale);
+      const ctx = canvas.getContext("2d");
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise(res=>canvas.toBlob(res, "image/jpeg", 0.86));
+      if(!blob || blob.size >= file.size * 1.1) return file;
       const name = (file.name || "photo").replace(/\.[^.]+$/, "") + ".jpg";
       return new File([blob], name, { type: "image/jpeg" });
     }catch(err){
-      console.warn("Не получилось перевести фото в JPEG, отправляю как есть:", err);
+      console.warn("Не получилось обработать фото, отправляю как есть:", err);
       return file;
     }
   }
@@ -6883,6 +7000,32 @@
     }catch(e){ box.innerHTML = `<span style="color:var(--red);">${esc(e.message)}</span>`; }
   });
   document.getElementById("backupClose").addEventListener("click", ()=>document.getElementById("backupOverlay").classList.remove("show"));
+
+  document.getElementById("btnRestore").addEventListener("click", ()=>document.getElementById("restoreInput").click());
+  document.getElementById("restoreInput").addEventListener("change", async (e)=>{
+    const file = e.target.files[0];
+    e.target.value = "";
+    if(!file) return;
+    if(!confirm(`Заменить все данные на те, что в файле «${file.name}»?\n\nТекущие заказы, товары и зарплата будут заменены. Отменить это будет нельзя.`)) return;
+
+    const status = document.getElementById("restoreStatus");
+    const btn = document.getElementById("btnRestore");
+    btn.disabled = true;
+    status.innerHTML = "Загружаю файл и проверяю базу...";
+    try{
+      const fd = new FormData();
+      fd.append("file", file);
+      const resp = await fetch("/api/backup/restore", {method:"POST", body:fd, credentials:"same-origin"});
+      const data = await resp.json();
+      if(!resp.ok) throw new Error(data.message || "сервер ответил " + resp.status);
+      status.innerHTML = `<span style="color:var(--green);">Готово: заказов ${data.orders}, товаров ${data.items}.
+        Сервис перезапускается — подождите полминуты и обновите страницу (Ctrl+F5).</span>`;
+      // После перезапуска сессия слетит: возвращаем на вход
+      setTimeout(()=>location.reload(), 25000);
+    }catch(err){
+      status.innerHTML = `<span style="color:var(--red);">${esc(err.message)}</span>`;
+    }finally{ btn.disabled = false; }
+  });
 
   // ---------- Смена пароля ----------
   let passwordForced = false;
