@@ -89,11 +89,12 @@ router.post("/", (req, res) => {
   const receiptNumber = nextReceiptNumber();
   db.prepare(`INSERT INTO orders
     (id, source, receipt_number, article, name, qty, note, photo, receive_status, order_date,
-     buy_price_cny, buy_price_kzt, delivery_price, sale_price, category, status, created_at, updated_at)
-    VALUES (?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'preorder', ?, ?)`)
+     buy_price_cny, buy_price_kzt, delivery_price, sale_price, category, shop, status, created_at, updated_at)
+    VALUES (?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'preorder', ?, ?)`)
     .run(id, receiptNumber, b.article || "", b.name || "", b.qty || 0, b.note || "", b.photo || null,
          b.receiveStatus || b.status || "new", b.orderDate || now.slice(0,10),
-         b.buyPriceCny || 0, b.buyPriceKzt || 0, b.deliveryPrice || 0, b.salePrice || 0, b.category || "", now, now);
+         b.buyPriceCny || 0, b.buyPriceKzt || 0, b.deliveryPrice || 0, b.salePrice || 0, b.category || "",
+         b.shop || null, now, now);
   logAudit({ user: req.session.username, action: "create_order", orderId: id, newValue: b.name || b.article });
   const row = db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
   res.json(rowToOrder(row));
@@ -175,7 +176,8 @@ router.put("/:id", (req, res) => {
     receiveStatus: "receive_status", orderDate: "order_date",
     buyPriceCny: "buy_price_cny", buyPriceKzt: "buy_price_kzt", deliveryPrice: "delivery_price",
     salePrice: "sale_price", category: "category", actualQty: "actual_qty",
-    claimNote: "claim_note", claimResolved: "claim_resolved", printed: "printed"
+    claimNote: "claim_note", claimResolved: "claim_resolved", printed: "printed",
+    shop: "shop"
   };
   for (const [jsKey, col] of Object.entries(map)) {
     if (Object.prototype.hasOwnProperty.call(b, jsKey)) {
