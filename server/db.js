@@ -409,6 +409,26 @@ CREATE TABLE IF NOT EXISTS payout_deductions (
   comment TEXT
 );
 
+-- Доска задач: простые поручения сотрудникам — купить, сделать, съездить.
+-- Намеренно отдельно от «Производства»: там работа по заказам и деньги,
+-- здесь — бытовые дела, за которые зарплата не начисляется.
+CREATE TABLE IF NOT EXISTS tasks (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT,
+  kind TEXT DEFAULT 'other',       -- buy (купить) | make (сделать) | other
+  status TEXT DEFAULT 'todo',      -- todo | doing | done
+  priority TEXT DEFAULT 'normal',  -- low | normal | high
+  employee_id TEXT,                -- кому поручено
+  due_date TEXT,
+  created_by TEXT,
+  created_at TEXT,
+  updated_at TEXT,
+  done_at TEXT,
+  done_by TEXT,
+  is_archived INTEGER DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT
@@ -442,6 +462,8 @@ CREATE INDEX IF NOT EXISTS idx_payroll_production ON payroll_entries(production_
 CREATE INDEX IF NOT EXISTS idx_payroll_payout ON payroll_entries(payout_id);
 CREATE INDEX IF NOT EXISTS idx_payouts_employee ON payouts(employee_id);
 CREATE INDEX IF NOT EXISTS idx_payout_deductions ON payout_deductions(payout_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status, is_archived);
+CREATE INDEX IF NOT EXISTS idx_tasks_employee ON tasks(employee_id);
 `;
 
 export function ensureSchema() {
