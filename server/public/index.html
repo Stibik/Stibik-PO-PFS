@@ -108,6 +108,12 @@
   #toast{position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:var(--navy); color:#fff; padding:10px 18px; border-radius:4px; opacity:0; transition:opacity .2s; z-index:100;}
   #toast.show{opacity:1;}
 
+  .info-bar{background:#F0F6FF; border:1px solid #CFE0F5; border-radius:10px; padding:9px 12px; margin-bottom:14px; font-size:12.5px;}
+  .info-btn{width:20px; height:20px; border-radius:50%; border:none; background:#2563EB; color:#fff; font-weight:700; font-size:12px; cursor:pointer; margin-right:8px; line-height:1;}
+  .info-title{font-weight:600; cursor:pointer;}
+  .info-toggle{margin-left:10px; color:#2563EB; cursor:pointer; font-size:12px;}
+  .info-body{margin-top:8px; line-height:1.65; color:#374151;}
+
   .tbl-wrap{ overflow-x:auto; -webkit-overflow-scrolling:touch; border-radius:8px; }
   .tbl-wrap table{ min-width:640px; }
 
@@ -711,13 +717,31 @@
       </div>
     </section>
     <section id="tab-salary" style="display:none">
-      <div style="text-align:center; padding:60px 20px; color:var(--ink-soft);">
-        <div style="font-size:16px; margin-bottom:8px; color:var(--ink);">Раздел «Зарплата» — в разработке</div>
-        <div style="font-size:13px; max-width:420px; margin:0 auto;">Будет считаться на основе справочника (себестоимость, производство) — подключим, как только настроим сам справочник</div>
+      <div class="toolbar">
+        <button class="btn secondary" id="btnSalaryEmployees">Сотрудники</button>
+        <button class="btn secondary" id="btnSalaryHistory">История выплат</button>
+        <span style="margin-left:auto; font-size:12.5px; color:var(--ink-soft);">Расценки берутся из Справочника</span>
+      </div>
+      <div id="salaryCards" style="display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-bottom:16px;"></div>
+      <div class="panel" style="padding:0; overflow:hidden;">
+        <div style="padding:12px 16px; border-bottom:1px solid var(--line);"><b style="font-size:14px;">Сотрудники</b></div>
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr>
+              <th>Сотрудник</th>
+              <th class="num">Отложено</th>
+              <th class="num">К выплате</th>
+              <th class="num">Выдано всего</th>
+              <th></th>
+            </tr></thead>
+            <tbody id="salaryBody"></tbody>
+          </table>
+        </div>
       </div>
     </section>
     <section id="tab-production" style="display:none">
       <div class="toolbar">
+        <button class="btn amber" id="btnStockProduction">+ Сделать на запас</button>
         <label style="font-size:12.5px;"><input type="checkbox" id="prodShowResolved"> Показывать решённые</label>
         <button class="btn secondary" id="btnManageEmployees" style="margin-left:auto;">Сотрудники</button>
       </div>
@@ -1113,6 +1137,90 @@
   </div>
 </div>
 
+<div class="overlay" id="payEntriesOverlay">
+  <div class="modal" style="max-width:820px;">
+    <h3 id="payEntriesTitle">Начисления</h3>
+    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+      <div class="pill-row" id="payEntriesFilters"></div>
+    </div>
+    <div id="payEntriesBody" style="max-height:55vh; overflow:auto;"></div>
+    <div class="modal-actions">
+      <div></div>
+      <button class="btn secondary" id="payEntriesClose">Закрыть</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="payoutOverlay">
+  <div class="modal" style="max-width:760px;">
+    <h3 id="payoutTitle">Выплата</h3>
+    <div style="font-size:12.5px; color:var(--ink-soft); margin-bottom:10px;">
+      В выплату попадают только принятые работы. Непринятые остаются ждать — их можно принять в «Производстве» или в списке начислений.
+    </div>
+    <div id="payoutEntries" style="max-height:34vh; overflow:auto; border-bottom:1px solid var(--line); padding-bottom:8px;"></div>
+
+    <div style="margin-top:12px;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <b style="font-size:13px;">Вычеты</b>
+        <button class="btn secondary" id="payoutAddDeduction" style="padding:5px 11px; font-size:12px;">+ Добавить вычет</button>
+      </div>
+      <div id="payoutDeductions" style="margin-top:6px;"></div>
+    </div>
+
+    <div style="margin-top:12px; border-top:1px solid var(--line); padding-top:10px; text-align:right; font-size:13px;">
+      <div>Начислено к выплате: <b id="payoutAccrued">0</b> ₸</div>
+      <div>Вычеты: <b id="payoutDeductTotal">0</b> ₸</div>
+      <div style="font-size:19px; margin-top:4px;">К выдаче: <b id="payoutAmount">0</b> ₸</div>
+    </div>
+    <div class="full" style="margin-top:10px;">
+      <label style="font-size:11px; color:var(--ink-soft);">Комментарий к выплате</label>
+      <input type="text" id="payoutComment" style="width:100%;">
+    </div>
+    <div class="error" id="payoutError"></div>
+    <div class="modal-actions">
+      <div></div>
+      <div><button class="btn secondary" id="payoutCancel">Отмена</button> <button class="btn amber" id="payoutSave">Выплатить</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="payHistoryOverlay">
+  <div class="modal" style="max-width:760px;">
+    <h3>История выплат</h3>
+    <div id="payHistoryBody" style="max-height:60vh; overflow:auto;"></div>
+    <div class="modal-actions">
+      <div></div>
+      <button class="btn secondary" id="payHistoryClose">Закрыть</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="stockProdOverlay">
+  <div class="modal" style="max-width:520px;">
+    <h3>Сделать на запас</h3>
+    <div style="font-size:12.5px; color:var(--ink-soft); margin-bottom:12px;">
+      Изделие встанет на склад без привязки к заказу. Начисление создастся сразу,
+      но останется отложенным — заплатите, когда сами решите.
+    </div>
+    <div class="grid2">
+      <div class="full"><label>Товар из Справочника *</label>
+        <input type="text" id="spSearch" placeholder="Название или артикул..." style="width:100%;">
+        <div id="spHits" style="margin-top:6px;"></div>
+        <div id="spChosen" style="margin-top:6px; font-size:13px;"></div>
+      </div>
+      <div><label>Исполнитель *</label><select id="spEmployee" style="width:100%;"></select></div>
+      <div><label>Количество *</label><input type="number" min="1" step="1" id="spQty" value="1" style="width:100%;"></div>
+      <div class="full"><label>Комментарий</label><input type="text" id="spComment" style="width:100%;"></div>
+    </div>
+    <div id="spPreview" style="margin-top:10px; font-size:13px;"></div>
+    <div class="error" id="spError"></div>
+    <div class="modal-actions">
+      <div></div>
+      <div><button class="btn secondary" id="spCancel">Отмена</button> <button class="btn amber" id="spSave">Создать</button></div>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -1147,6 +1255,7 @@
   function showApp(){
     document.getElementById("loginScreen").style.display = "none";
     document.getElementById("app").style.display = "";
+    initSectionInfo();
   }
 
   document.getElementById("btnLogin").addEventListener("click", async ()=>{
@@ -3370,17 +3479,427 @@
     loadChina();
   });
 
+  // ================= Зарплата =================
+  // Деньги считает сервер: расценка берётся из Справочника и фиксируется в
+  // начислении. Здесь только показываем и отправляем действия.
+  const PAY_STATUS = {
+    pending:  { label:"Отложено",  color:"#B45309", bg:"#FEF3C7" },
+    payable:  { label:"К выплате", color:"#166534", bg:"#DCFCE7" },
+    paid:     { label:"Выплачено", color:"#4B5563", bg:"#F3F4F6" },
+    cancelled:{ label:"Отменено",  color:"#6B7280", bg:"#F3F4F6" }
+  };
+  let salarySummary = null;
+  let payEntriesEmployee = null;
+  let payEntriesFilter = "";
+  let payoutEmployee = null, payoutEntries = [], payoutDeductions = [];
+  let spItem = null;
+
+  function payBadge(status){
+    const s = PAY_STATUS[status] || PAY_STATUS.pending;
+    return `<span class="cn-badge" style="color:${s.color}; background:${s.bg}; padding:3px 10px; border-radius:20px; font-size:11.5px; font-weight:600;">${s.label}</span>`;
+  }
+
+  async function loadSalary(){
+    const body = document.getElementById("salaryBody");
+    body.innerHTML = `<tr><td colspan="5" style="padding:20px; text-align:center; color:var(--ink-soft);">Загрузка...</td></tr>`;
+    try{
+      salarySummary = await api("/payroll/summary");
+    }catch(e){
+      body.innerHTML = `<tr><td colspan="5" style="padding:20px; color:var(--red);">Ошибка загрузки: ${esc(e.message)}</td></tr>`;
+      return;
+    }
+    const t = salarySummary.totals;
+    const card = (color, big, lbl, extra) => `
+      <div class="panel" style="border-left:4px solid ${color}; margin:0;">
+        <div style="font-size:11px; text-transform:uppercase; color:var(--ink-soft);">${lbl}</div>
+        <div style="font-family:var(--serif); font-size:24px;">${money(big)} ₸</div>
+        <div style="font-size:11.5px; color:var(--ink-soft); margin-top:4px;">${extra}</div>
+      </div>`;
+    document.getElementById("salaryCards").innerHTML =
+      card("var(--amber)", t.pendingSum, "Отложено", "Работы сделаны, но ещё не приняты") +
+      card("var(--green)", t.payableSum, "К выплате", "Принятые работы, ждут выплаты") +
+      card("var(--navy)", t.payoutsSum, "Выдано на руки", "Всего выплачено после вычетов");
+
+    if(!salarySummary.employees.length){
+      body.innerHTML = `<tr><td colspan="5" style="padding:24px; text-align:center; color:var(--ink-soft);">
+        Сотрудников пока нет. Нажмите «Сотрудники» и добавьте — тогда их можно будет назначать в «Производстве».</td></tr>`;
+      return;
+    }
+    body.innerHTML = salarySummary.employees.map(e=>`
+      <tr>
+        <td><b>${esc(e.name)}</b></td>
+        <td class="num">${e.pendingSum ? `${money(e.pendingSum)} ₸<div style="font-size:11px; color:var(--ink-soft);">${e.pendingCount} раб.${e.pendingStockSum ? ` · на запас ${money(e.pendingStockSum)} ₸` : ""}</div>` : "—"}</td>
+        <td class="num">${e.payableSum ? `<b style="color:var(--green);">${money(e.payableSum)} ₸</b><div style="font-size:11px; color:var(--ink-soft);">${e.payableCount} раб.</div>` : "—"}</td>
+        <td class="num">${e.payoutsSum ? money(e.payoutsSum) + " ₸" : "—"}</td>
+        <td style="white-space:nowrap;">
+          <button class="btn secondary" style="padding:4px 10px; font-size:12px;" data-entries="${esc(e.employeeId)}">Начисления</button>
+          <button class="btn amber" style="padding:4px 10px; font-size:12px; ${e.payableSum ? "" : "opacity:.5;"}" data-payout="${esc(e.employeeId)}">Выплатить</button>
+        </td>
+      </tr>`).join("");
+
+    body.querySelectorAll("[data-entries]").forEach(b=>b.addEventListener("click", ()=>openPayEntries(b.dataset.entries)));
+    body.querySelectorAll("[data-payout]").forEach(b=>b.addEventListener("click", ()=>openPayout(b.dataset.payout)));
+  }
+
+  // ---------- Начисления сотрудника ----------
+  async function openPayEntries(employeeId){
+    payEntriesEmployee = employeeId;
+    payEntriesFilter = "";
+    document.getElementById("payEntriesOverlay").classList.add("show");
+    await renderPayEntries();
+  }
+  async function renderPayEntries(){
+    const emp = (salarySummary?.employees || []).find(e=>e.employeeId === payEntriesEmployee);
+    document.getElementById("payEntriesTitle").textContent = "Начисления — " + (emp ? emp.name : "");
+    const wrap = document.getElementById("payEntriesBody");
+    wrap.innerHTML = `<div style="padding:14px; color:var(--ink-soft);">Загрузка...</div>`;
+    document.getElementById("payEntriesFilters").innerHTML = [
+      { k:"", l:"Все" }, { k:"pending", l:"Отложено" }, { k:"payable", l:"К выплате" }, { k:"paid", l:"Выплачено" }
+    ].map(f=>`<button class="pill ${payEntriesFilter===f.k?"active":""}" data-f="${f.k}">${f.l}</button>`).join("");
+    document.getElementById("payEntriesFilters").querySelectorAll("[data-f]").forEach(b=>
+      b.addEventListener("click", ()=>{ payEntriesFilter = b.dataset.f; renderPayEntries(); }));
+
+    let rows;
+    try{
+      rows = await api(`/payroll/entries?employeeId=${encodeURIComponent(payEntriesEmployee)}` + (payEntriesFilter ? `&status=${payEntriesFilter}` : ""));
+    }catch(e){ wrap.innerHTML = `<div style="padding:14px; color:var(--red);">${esc(e.message)}</div>`; return; }
+
+    if(!rows.length){ wrap.innerHTML = `<div style="padding:18px; text-align:center; color:var(--ink-soft);">Начислений нет</div>`; return; }
+    wrap.innerHTML = `<table style="width:100%;"><thead><tr>
+        <th>Работа</th><th>Откуда</th><th class="num">Кол-во</th><th class="num">Расценка</th><th class="num">Сумма</th><th>Статус</th><th></th>
+      </tr></thead><tbody>
+      ${rows.map(e=>`<tr>
+        <td>${esc(e.productName || e.article || "—")}<div style="font-size:11px; color:var(--ink-soft);">${esc((e.createdAt||"").slice(0,10))}${e.comment ? " · " + esc(e.comment) : ""}</div></td>
+        <td style="font-size:12px;">${e.kind === "stock" ? "на запас" : (e.shop ? esc(e.shop) : "заказ")}</td>
+        <td class="num">${money(e.qty)}</td>
+        <td class="num">${e.needsRate ? `<span style="color:var(--red); font-size:11.5px;">не задана</span>` : money(e.rate)}</td>
+        <td class="num"><b>${money(e.amount)} ₸</b></td>
+        <td>${payBadge(e.status)}</td>
+        <td style="white-space:nowrap;">
+          ${e.status === "pending" ? `<button class="btn amber" style="padding:3px 9px; font-size:11.5px;" data-accept="${esc(e.id)}">Работа принята</button>` : ""}
+          ${e.status !== "paid" && e.status !== "cancelled" ? `<button class="btn secondary" style="padding:3px 9px; font-size:11.5px;" data-cancel="${esc(e.id)}">✕</button>` : ""}
+        </td>
+      </tr>`).join("")}</tbody></table>`;
+
+    wrap.querySelectorAll("[data-accept]").forEach(b=>b.addEventListener("click", ()=>acceptPayEntry(b.dataset.accept, renderPayEntries)));
+    wrap.querySelectorAll("[data-cancel]").forEach(b=>b.addEventListener("click", async ()=>{
+      if(!confirm("Отменить это начисление? Работа останется в производстве, но денег за неё не будет.")) return;
+      try{ await api(`/payroll/entries/${b.dataset.cancel}/cancel`, {method:"POST", body: JSON.stringify({})}); renderPayEntries(); loadSalary(); }
+      catch(e){ toast("Не получилось: " + e.message); }
+    }));
+  }
+
+  async function acceptPayEntry(id, after){
+    try{
+      const r = await api(`/payroll/entries/${id}/accept`, { method:"POST" });
+      toast(`Принято: ${money(r.amount)} ₸ к выплате`);
+      if(after) await after();
+      loadSalary();
+    }catch(e){ toast(e.message); }
+  }
+  document.getElementById("payEntriesClose").addEventListener("click", ()=>document.getElementById("payEntriesOverlay").classList.remove("show"));
+
+  // ---------- Выплата ----------
+  async function openPayout(employeeId){
+    payoutEmployee = employeeId;
+    payoutDeductions = [];
+    document.getElementById("payoutComment").value = "";
+    document.getElementById("payoutError").textContent = "";
+    const emp = (salarySummary?.employees || []).find(e=>e.employeeId === employeeId);
+    document.getElementById("payoutTitle").textContent = "Выплата — " + (emp ? emp.name : "");
+    try{
+      payoutEntries = await api(`/payroll/entries?employeeId=${encodeURIComponent(employeeId)}&status=payable`);
+    }catch(e){ toast("Не загрузилось: " + e.message); return; }
+    if(!payoutEntries.length){
+      toast("У сотрудника нет принятых работ. Примите работу в «Производстве» или в списке начислений.");
+      return;
+    }
+    payoutEntries.forEach(e=>e.__checked = true);
+    renderPayoutEntries();
+    renderPayoutDeductions();
+    document.getElementById("payoutOverlay").classList.add("show");
+  }
+  function renderPayoutEntries(){
+    document.getElementById("payoutEntries").innerHTML = payoutEntries.map((e,i)=>`
+      <label style="display:flex; align-items:center; gap:10px; padding:6px 0; border-bottom:1px solid var(--line); cursor:pointer;">
+        <input type="checkbox" data-pe="${i}" ${e.__checked ? "checked" : ""}>
+        <span style="flex:1;">${esc(e.productName || e.article || "—")}
+          <span style="color:var(--ink-soft); font-size:11.5px;">· ${money(e.qty)} × ${money(e.rate)}${e.kind === "stock" ? " · на запас" : (e.shop ? " · " + esc(e.shop) : "")}</span>
+        </span>
+        <b style="white-space:nowrap;">${money(e.amount)} ₸</b>
+      </label>`).join("");
+    document.querySelectorAll("[data-pe]").forEach(cb=>cb.addEventListener("change", ()=>{
+      payoutEntries[Number(cb.dataset.pe)].__checked = cb.checked;
+      updatePayoutTotals();
+    }));
+    updatePayoutTotals();
+  }
+  function renderPayoutDeductions(){
+    const wrap = document.getElementById("payoutDeductions");
+    wrap.innerHTML = payoutDeductions.length ? payoutDeductions.map((d,i)=>`
+      <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
+        <select data-dk="${i}" style="width:130px;">
+          ${["аванс","брак","материал","прочее"].map(k=>`<option ${d.kind===k?"selected":""}>${k}</option>`).join("")}
+        </select>
+        <input type="number" min="0" step="1" data-da="${i}" value="${d.amount || ""}" placeholder="Сумма" style="width:110px;">
+        <input type="text" data-dc="${i}" value="${esc(d.comment||"")}" placeholder="Комментарий" style="flex:1;">
+        <button class="btn danger" style="padding:4px 9px; font-size:12px;" data-dd="${i}">✕</button>
+      </div>`).join("")
+      : `<div style="font-size:12.5px; color:var(--ink-soft);">Вычетов нет — вся сумма пойдёт на руки</div>`;
+    wrap.querySelectorAll("[data-dk]").forEach(el=>el.addEventListener("change", ()=>{ payoutDeductions[Number(el.dataset.dk)].kind = el.value; }));
+    wrap.querySelectorAll("[data-da]").forEach(el=>el.addEventListener("input", ()=>{ payoutDeductions[Number(el.dataset.da)].amount = parseFloat(el.value) || 0; updatePayoutTotals(); }));
+    wrap.querySelectorAll("[data-dc]").forEach(el=>el.addEventListener("input", ()=>{ payoutDeductions[Number(el.dataset.dc)].comment = el.value; }));
+    wrap.querySelectorAll("[data-dd]").forEach(el=>el.addEventListener("click", ()=>{ payoutDeductions.splice(Number(el.dataset.dd),1); renderPayoutDeductions(); updatePayoutTotals(); }));
+  }
+  function updatePayoutTotals(){
+    const accrued = payoutEntries.filter(e=>e.__checked).reduce((s,e)=>s + e.amount, 0);
+    const ded = payoutDeductions.reduce((s,d)=>s + (Number(d.amount)||0), 0);
+    document.getElementById("payoutAccrued").textContent = money(accrued);
+    document.getElementById("payoutDeductTotal").textContent = money(ded);
+    document.getElementById("payoutAmount").textContent = money(accrued - ded);
+    document.getElementById("payoutAmount").style.color = accrued - ded < 0 ? "var(--red)" : "";
+  }
+  document.getElementById("payoutAddDeduction").addEventListener("click", ()=>{
+    payoutDeductions.push({ kind:"аванс", amount:0, comment:"" });
+    renderPayoutDeductions();
+  });
+  document.getElementById("payoutCancel").addEventListener("click", ()=>document.getElementById("payoutOverlay").classList.remove("show"));
+  document.getElementById("payoutSave").addEventListener("click", async ()=>{
+    const chosen = payoutEntries.filter(e=>e.__checked);
+    if(!chosen.length){ document.getElementById("payoutError").textContent = "Отметьте хотя бы одну работу"; return; }
+    try{
+      const r = await api("/payroll/payouts", { method:"POST", body: JSON.stringify({
+        employeeId: payoutEmployee,
+        entryIds: chosen.map(e=>e.id),
+        deductions: payoutDeductions.filter(d=>(Number(d.amount)||0) > 0),
+        comment: document.getElementById("payoutComment").value
+      })});
+      document.getElementById("payoutOverlay").classList.remove("show");
+      toast(`Выплачено ${money(r.amount)} ₸ (начислено ${money(r.accrued)}, вычеты ${money(r.deductionsTotal)})`);
+      loadSalary();
+    }catch(e){ document.getElementById("payoutError").textContent = e.message; }
+  });
+
+  // ---------- История выплат ----------
+  document.getElementById("btnSalaryHistory").addEventListener("click", async ()=>{
+    document.getElementById("payHistoryOverlay").classList.add("show");
+    const wrap = document.getElementById("payHistoryBody");
+    wrap.innerHTML = `<div style="padding:14px; color:var(--ink-soft);">Загрузка...</div>`;
+    try{
+      const rows = await api("/payroll/payouts");
+      wrap.innerHTML = rows.length ? `<table style="width:100%;"><thead><tr>
+          <th>№</th><th>Дата</th><th>Сотрудник</th><th class="num">Начислено</th><th class="num">Вычеты</th><th class="num">На руки</th><th></th>
+        </tr></thead><tbody>${rows.map(p=>`<tr>
+          <td>${p.number}</td>
+          <td class="mono" style="font-size:12px;">${esc((p.createdAt||"").slice(0,10))}</td>
+          <td>${esc(p.employeeName)}</td>
+          <td class="num">${money(p.accrued)}</td>
+          <td class="num">${p.deductionsTotal ? money(p.deductionsTotal) : "—"}</td>
+          <td class="num"><b>${money(p.amount)} ₸</b></td>
+          <td><button class="btn secondary" style="padding:3px 9px; font-size:11.5px;" data-po="${esc(p.id)}">Детали</button></td>
+        </tr>`).join("")}</tbody></table>`
+        : `<div style="padding:18px; text-align:center; color:var(--ink-soft);">Выплат ещё не было</div>`;
+      wrap.querySelectorAll("[data-po]").forEach(b=>b.addEventListener("click", async ()=>{
+        const d = await api("/payroll/payouts/" + b.dataset.po);
+        wrap.innerHTML = `<button class="btn secondary" style="padding:4px 10px; font-size:12px; margin-bottom:10px;" id="payBack">← Назад</button>
+          <div style="font-size:13px;"><b>Выплата №${d.number}</b> · ${esc(d.employeeName)} · ${esc((d.createdAt||"").slice(0,10))} · провёл ${esc(d.createdBy||"")}</div>
+          <div style="margin-top:10px;"><b style="font-size:13px;">Работы</b>
+            ${d.entries.map(e=>`<div style="display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid var(--line); font-size:12.5px;">
+              <span>${esc(e.productName || e.article)} · ${money(e.qty)} × ${money(e.rate)}</span><b>${money(e.amount)} ₸</b></div>`).join("")}</div>
+          ${d.deductions.length ? `<div style="margin-top:10px;"><b style="font-size:13px;">Вычеты</b>
+            ${d.deductions.map(x=>`<div style="display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid var(--line); font-size:12.5px;">
+              <span>${esc(x.kind)}${x.comment ? " · " + esc(x.comment) : ""}</span><b style="color:var(--red);">−${money(x.amount)} ₸</b></div>`).join("")}</div>` : ""}
+          <div style="text-align:right; margin-top:10px; font-size:16px;">На руки: <b>${money(d.amount)} ₸</b></div>`;
+        document.getElementById("payBack").addEventListener("click", ()=>document.getElementById("btnSalaryHistory").click());
+      }));
+    }catch(e){ wrap.innerHTML = `<div style="padding:14px; color:var(--red);">${esc(e.message)}</div>`; }
+  });
+  document.getElementById("payHistoryClose").addEventListener("click", ()=>document.getElementById("payHistoryOverlay").classList.remove("show"));
+  document.getElementById("btnSalaryEmployees").addEventListener("click", async ()=>{
+    await renderEmployeesManagePanel();
+    document.getElementById("employeesOverlay").classList.add("show");
+  });
+
+  // ---------- Работа на запас ----------
+  async function openStockProduction(){
+    spItem = null;
+    document.getElementById("spSearch").value = "";
+    document.getElementById("spHits").innerHTML = "";
+    document.getElementById("spChosen").innerHTML = "";
+    document.getElementById("spPreview").innerHTML = "";
+    document.getElementById("spError").textContent = "";
+    document.getElementById("spQty").value = "1";
+    if(!employeesList.length){ try{ employeesList = await api("/employees"); }catch(e){} }
+    document.getElementById("spEmployee").innerHTML = `<option value="">— выберите —</option>` +
+      employeesList.map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join("");
+    document.getElementById("stockProdOverlay").classList.add("show");
+  }
+  document.getElementById("spSearch").addEventListener("input", async (e)=>{
+    const q = e.target.value.trim().toLowerCase();
+    const hits = document.getElementById("spHits");
+    if(q.length < 2){ hits.innerHTML = ""; return; }
+    if(!catalogItems.length){ try{ catalogItems = await api("/catalog"); }catch(err){} }
+    const found = catalogItems.filter(it=>
+      (it.printName||"").toLowerCase().includes(q) ||
+      (it.kaspiName||"").toLowerCase().includes(q) ||
+      (it.article||"").toLowerCase().includes(q)).slice(0, 6);
+    hits.innerHTML = found.length
+      ? found.map(it=>`<button class="btn secondary" style="padding:4px 10px; font-size:12px; margin:0 6px 6px 0;" data-sp="${esc(it.id)}">${esc(it.printName || it.kaspiName || it.article)}${it.laborRate ? "" : " ⚠"}</button>`).join("")
+      : `<span style="font-size:12px; color:var(--ink-soft);">Не найдено в Справочнике</span>`;
+    hits.querySelectorAll("[data-sp]").forEach(b=>b.addEventListener("click", ()=>{
+      spItem = catalogItems.find(x=>x.id === b.dataset.sp);
+      hits.innerHTML = "";
+      document.getElementById("spSearch").value = "";
+      document.getElementById("spChosen").innerHTML = `<b>${esc(spItem.printName || spItem.kaspiName || spItem.article)}</b>
+        <span style="color:var(--ink-soft);">· ${esc(spItem.article||"")}</span>`;
+      updateSpPreview();
+    }));
+  });
+  function updateSpPreview(){
+    const box = document.getElementById("spPreview");
+    if(!spItem){ box.innerHTML = ""; return; }
+    const qty = parseFloat(document.getElementById("spQty").value) || 0;
+    if(!spItem.laborRate){
+      box.innerHTML = `<span style="color:var(--red);">У товара не заполнена «Расценка труда» в Справочнике — начислить не получится.</span>`;
+      return;
+    }
+    box.innerHTML = `К начислению: <b>${money(spItem.laborRate)} × ${money(qty)} = ${money(spItem.laborRate * qty)} ₸</b>
+      <span style="color:var(--ink-soft);">(останется отложенным, пока не примете работу)</span>`;
+  }
+  document.getElementById("spQty").addEventListener("input", updateSpPreview);
+  document.getElementById("spCancel").addEventListener("click", ()=>document.getElementById("stockProdOverlay").classList.remove("show"));
+  document.getElementById("spSave").addEventListener("click", async ()=>{
+    const err = document.getElementById("spError");
+    if(!spItem){ err.textContent = "Выберите товар из Справочника"; return; }
+    const employeeId = document.getElementById("spEmployee").value;
+    if(!employeeId){ err.textContent = "Выберите исполнителя"; return; }
+    try{
+      const r = await api("/payroll/stock-production", { method:"POST", body: JSON.stringify({
+        employeeId, itemId: spItem.id,
+        qty: parseFloat(document.getElementById("spQty").value) || 1,
+        comment: document.getElementById("spComment").value
+      })});
+      document.getElementById("stockProdOverlay").classList.remove("show");
+      toast(`На склад: ${r.entry.productName} ×${money(r.entry.qty)}, начислено ${money(r.entry.amount)} ₸ (отложено)`);
+      loadProduction();
+    }catch(e){ err.textContent = e.message; }
+  });
+
+  // ---------- Подсказки «i» в каждом разделе ----------
+  // Одна общая механика на все вкладки: кнопка с «i» рядом с содержимым,
+  // текст сворачивается и запоминается — прочитал один раз и убрал с глаз.
+  const SECTION_INFO = {
+    orders: {
+      title: "Приход — поступления товара",
+      body: `<b>Зачем:</b> учёт того, что вы закупили и что уже приехало, с закупочной ценой, доставкой и прогнозом прибыли.<br>
+        <b>Как работать:</b> «+ Новый приход» → заполняете артикул, количество, закупку и доставку → когда товар приехал, ставите статус «Пришло».<br>
+        <b>Контуры сверху:</b> «Все» — всё вместе; SA и PFS — по магазинам (нужно, чтобы у записи был указан магазин); «Китай» — отдельный контур закупок у поставщиков.<br>
+        <b>Полезное:</b> 🏷️ печатает этикетку со штрих-кодом, 📋 создаёт копию записи для повторного заказа.`
+    },
+    kaspiOrders: {
+      title: "Заказы — работа с заказами Kaspi",
+      body: `<b>Зачем:</b> здесь вы ведёте заказ от появления до отгрузки.<br>
+        <b>Как работать:</b> «Синхронизировать» тянет свежие заказы из Kaspi (это происходит и само, каждые 3 минуты, пока вкладка открыта) → «Обработка» ведёт заказ по шагам → печать накладной → «Готово к отгрузке».<br>
+        <b>Групповые действия:</b> отметьте несколько заказов галочками — снизу появится панель: печать накладных, передача в Kaspi, подтверждение предзаказов.<br>
+        <b>Важно:</b> «Передать в Kaspi» — это реальный запрос в Kaspi, не только у нас.`
+    },
+    claims: {
+      title: "Отмены и возвраты",
+      body: `<b>Зачем:</b> отдельный список проблемных заказов, чтобы они не терялись среди обычных.<br>
+        <b>Как работать:</b> «Обработать» → пишете, что произошло и что решили → ставите галочку «Закрыто», когда вопрос снят.<br>
+        <b>Про даты:</b> Kaspi не присылает точную дату отмены, поэтому показывается дата последнего изменения статуса у нас. Через 7 дней счётчик краснеет.`
+    },
+    catalog: {
+      title: "Справочник — единая карточка товара",
+      body: `<b>Зачем:</b> один товар — одна карточка. Отсюда данные берут и Прайс, и Зарплата, и Производство.<br>
+        <b>Как работать:</b> «Импорт из Kaspi» подтягивает SKU, названия и цены → дальше руками заполняете то, чего в Kaspi нет: название для печати, группу, материал, диаметр, высоту, фото, розницу и <b>расценку труда</b>.<br>
+        <b>Быстро для многих товаров:</b> «Экспорт в Excel» → заполняете в таблице → «Загрузить заполненный файл».<br>
+        <b>Учтите:</b> расценка труда отсюда — единственный источник сумм в Зарплате. Не заполнена — начислить не получится.`
+    },
+    price: {
+      title: "Прайс — сборка прайс-листа для клиента",
+      body: `<b>Как работать по шагам:</b> выбираете компанию → отмечаете товары галочками в таблице → «Предпросмотр» смотрит PDF → «Скачать PDF».<br>
+        <b>Слева:</b> дерево категорий для быстрого перехода и настройки того, что показывать в PDF.<br>
+        <b>Справа:</b> карточка товара с крупной ценой — удобно, когда говорите с клиентом по телефону, там же «Скопировать цену».<br>
+        <b>Сохранение:</b> выбор хранится на сервере, поэтому продолжить можно с любого компьютера. «Сохранить прайс» фиксирует цены на сегодня — такой документ не изменится задним числом.`
+    },
+    salary: {
+      title: "Зарплата — сдельный расчёт по работам",
+      body: `<b>Откуда берутся деньги:</b> расценка труда из Справочника × количество из заказа. Сумма фиксируется в момент начисления, поэтому изменение расценки завтра не перепишет уже принятые работы.<br>
+        <b>Три состояния работы:</b> «Отложено» — сделана, но вы её ещё не приняли; «К выплате» — приняли, ждёт выплаты; «Выплачено» — вошла в выплату.<br>
+        <b>Как работать:</b> в «Производстве» назначаете исполнителя → когда работа сделана и проверена, жмёте «Работа принята» → здесь по сотруднику «Выплатить», добавляете вычеты (аванс, брак, материал) → видите сумму на руки.<br>
+        <b>На запас:</b> работа лежит в «Отложено» столько, сколько нужно — платите, когда сами решите.`
+    },
+    production: {
+      title: "Производство — что и кому делать",
+      body: `<b>Зачем:</b> каждый заказ с SA, PFS или ручной УД попадает сюда автоматически, чтобы решить, откуда взять товар.<br>
+        <b>Три решения:</b> «Списать с остатков» — товар уже есть на складе; «Назначить исполнителя» — делаем, и человеку начисляется зарплата; «Перекрыть возвратом» — берём из вернувшегося заказа.<br>
+        <b>После изготовления:</b> проверили работу — «Работа принята», сумма уходит в Зарплату к выплате.<br>
+        <b>На запас:</b> кнопка «Сделать на запас» — изделие встаёт на склад, начисление создаётся, но платить сразу не обязаны.`
+    },
+    kaspi: {
+      title: "Kaspi: настройки",
+      body: `<b>Токены:</b> берутся в кабинете продавца Kaspi, раздел API. Без токена магазин не синхронизируется.<br>
+        <b>Дата начала:</b> Kaspi отдаёт заказы максимум за 14 дней — это ограничение самого Kaspi, не приложения.<br>
+        <b>Нумерация:</b> внутренний короткий номер заказа, который видят сотрудники. У каждого магазина свой счётчик, можно продолжить с нужного числа.`
+    },
+    audit: {
+      title: "Журнал действий",
+      body: `<b>Зачем:</b> кто, что и когда поменял. Сюда пишутся смены статусов, печать документов, правки справочника, начисления и выплаты.<br>
+        <b>Когда пригодится:</b> когда нужно понять, откуда взялась цифра или кто изменил заказ.`
+    },
+    users: {
+      title: "Пользователи",
+      body: `<b>Две роли:</b> «Админ» видит всё, включая Журнал, Пользователей и удаление; «Склад» работает с заказами и приходом.<br>
+        <b>Совет:</b> заведите каждому свой логин — тогда в Журнале и в зарплате будет видно, кто что сделал, а черновики прайса не будут перемешиваться.`
+    }
+  };
+
+  function initSectionInfo(){
+    Object.entries(SECTION_INFO).forEach(([tab, info])=>{
+      const section = document.getElementById("tab-" + tab);
+      if(!section || section.querySelector(".info-bar")) return;
+      const open = localStorage.getItem("infoOpen:" + tab) === "1";
+      const bar = document.createElement("div");
+      bar.className = "info-bar";
+      bar.innerHTML = `
+        <button class="info-btn" title="Как работает этот раздел">i</button>
+        <span class="info-title">${esc(info.title)}</span>
+        <span class="info-toggle">${open ? "скрыть" : "как это работает"}</span>
+        <div class="info-body" style="display:${open ? "block" : "none"};">${info.body}</div>`;
+      const trigger = ()=>{
+        const body = bar.querySelector(".info-body");
+        const shown = body.style.display !== "none";
+        body.style.display = shown ? "none" : "block";
+        bar.querySelector(".info-toggle").textContent = shown ? "как это работает" : "скрыть";
+        localStorage.setItem("infoOpen:" + tab, shown ? "0" : "1");
+      };
+      bar.querySelector(".info-btn").addEventListener("click", trigger);
+      bar.querySelector(".info-toggle").addEventListener("click", trigger);
+      bar.querySelector(".info-title").addEventListener("click", trigger);
+      section.insertBefore(bar, section.firstChild);
+    });
+  }
+
   // ---------- Производство ----------
   // Каждый новый заказ уже создаёт запись автоматически (на сервере, при
   // синхронизации). Здесь — только интерфейс принятия решения по ней.
   let productionItems = [];
   let employeesList = [];
+  let payrollByProduction = {};
 
   async function loadProduction(){
     try{
       const showResolved = document.getElementById("prodShowResolved").checked;
       productionItems = await api("/production" + (showResolved ? "" : "?resolved=false"));
       employeesList = await api("/employees");
+      // Начисления показываем прямо здесь, чтобы не бегать в «Зарплату»
+      // проверять, ушли ли деньги за эту работу
+      payrollByProduction = {};
+      try{
+        const entries = await api("/payroll/entries");
+        entries.forEach(e=>{ if(e.productionId) payrollByProduction[e.productionId] = e; });
+      }catch(e){ /* модуль зарплаты ещё не залит — производство должно работать и без него */ }
       renderProduction();
     }catch(e){
       document.getElementById("prodList").innerHTML = `<div style="color:var(--red);padding:20px;">Ошибка загрузки: ${esc(e.message)}</div>`;
@@ -3437,9 +3956,9 @@
           <button class="btn secondary prod-action-return" data-prod-id="${p.id}" style="text-align:left; padding:8px 12px;">↩️ Перекрыть возвратом</button>
         </div>
         ` : (p.decision==="assigned" ? `
-        <div style="margin-top:8px; font-size:12.5px; display:flex; align-items:center; gap:8px;">
-          <span>Исполнитель: ${esc((employeesList.find(e=>e.id===p.employeeId)||{}).name || "—")}</span>
-          <label style="margin-left:auto;"><input type="checkbox" class="prod-paid-check" data-prod-id="${p.id}" ${p.paid?'checked':''}> Оплачено</label>
+        <div style="margin-top:8px; font-size:12.5px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+          <span>Исполнитель: <b>${esc((employeesList.find(e=>e.id===p.employeeId)||{}).name || "—")}</b></span>
+          ${renderProdPayroll(p)}
         </div>` : "")}
       </div>`;
     }).join("");
@@ -3472,6 +3991,18 @@
         resolveProduction(btn.dataset.prodId, "assigned", { employeeId: select.value });
       });
     });
+    list.querySelectorAll(".prod-accept").forEach(b=>{
+      b.addEventListener("click", ()=>acceptPayEntry(b.dataset.entryId, loadProduction));
+    });
+    list.querySelectorAll(".prod-accrue").forEach(b=>{
+      b.addEventListener("click", async ()=>{
+        try{
+          const r = await api("/payroll/from-production/" + b.dataset.prodId, {method:"POST"});
+          toast(r.needsRate === false || r.amount ? `Начислено ${money(r.amount)} ₸` : "Начисление создано, но расценка не задана");
+          loadProduction();
+        }catch(e){ toast("Не получилось: " + e.message); }
+      });
+    });
     list.querySelectorAll(".prod-paid-check").forEach(cb=>{
       cb.addEventListener("change", async ()=>{
         try{
@@ -3482,10 +4013,31 @@
     });
   }
 
+  // Что с деньгами по этой работе: сколько начислено и на каком шаге
+  function renderProdPayroll(p){
+    const e = payrollByProduction[p.id];
+    if(!e) return `<span style="color:var(--ink-soft);">начисление не создано</span>
+      <button class="btn secondary prod-accrue" data-prod-id="${p.id}" style="margin-left:auto; padding:4px 10px; font-size:12px;">Начислить зарплату</button>`;
+    if(e.needsRate) return `<span style="color:var(--red);">Не задана расценка труда в Справочнике — начислить нельзя</span>`;
+    const s = PAY_STATUS[e.status] || PAY_STATUS.pending;
+    return `<span style="color:${s.color}; background:${s.bg}; padding:2px 9px; border-radius:20px; font-weight:600;">${s.label}</span>
+      <span>${money(e.amount)} ₸ <span style="color:var(--ink-soft);">(${money(e.qty)} × ${money(e.rate)})</span></span>
+      ${e.status === "pending" ? `<button class="btn amber prod-accept" data-entry-id="${esc(e.id)}" style="margin-left:auto; padding:4px 12px; font-size:12px;">Работа принята</button>` : ""}`;
+  }
+
   async function resolveProduction(prodId, decision, extra){
     try{
       await api("/production/"+prodId+"/resolve", {method:"POST", body:JSON.stringify({decision, ...(extra||{})})});
-      toast("Решение сохранено");
+      // Назначили исполнителя — сразу заводим начисление, чтобы работа не
+      // потерялась. К выплате оно встанет только после «Работа принята».
+      if(decision === "assigned"){
+        try{
+          const r = await api("/payroll/from-production/" + prodId, {method:"POST"});
+          toast(r.needsRate
+            ? "Исполнитель назначен, но расценка труда не заполнена в Справочнике"
+            : `Исполнитель назначен, начислено ${money(r.amount)} ₸ (ждёт приёмки)`);
+        }catch(e){ toast("Исполнитель назначен, но начисление не создалось: " + e.message); }
+      } else toast("Решение сохранено");
       await loadProduction();
     }catch(e){
       toast("Ошибка: "+(e.message==="no_stock" ? "на складе не нашлось подходящего товара" : e.message));
@@ -3493,6 +4045,7 @@
   }
 
   // ---------- Управление сотрудниками ----------
+  document.getElementById("btnStockProduction").addEventListener("click", openStockProduction);
   document.getElementById("btnManageEmployees").addEventListener("click", async ()=>{
     await renderEmployeesManagePanel();
     document.getElementById("employeesOverlay").classList.add("show");
@@ -3541,6 +4094,7 @@
       if(b.dataset.tab === "catalog") loadCatalog();
       if(b.dataset.tab === "price") { loadPriceCompanies().catch(()=>{}).then(loadPriceTab); }
       if(b.dataset.tab === "production") loadProduction();
+      if(b.dataset.tab === "salary") loadSalary();
       if(b.dataset.tab === "kaspiOrders") renderKaspiOrders();
       if(b.dataset.tab === "claims") { if(!kaspiOrders.length) renderKaspiOrders().then(renderClaims); else renderClaims(); }
       if(b.dataset.tab === "kaspi") { loadKaspiSettings(); loadOrderNumbering(); }
