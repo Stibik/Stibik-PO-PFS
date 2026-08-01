@@ -1866,13 +1866,18 @@
       if(key==="shop") return `<span class="o2-shop-badge">${esc(o.shop||"")}</span>`;
       if(key==="name") return esc(o.productName||"—");
       if(key==="courier"){
-        if(!o.courierHandoverDate) return "—";
-        const dueDate = new Date(o.courierHandoverDate);
+        // ВАЖНО: раньше тут стоял courierHandoverDate (это дата ДОСТАВКИ КЛИЕНТУ,
+        // другое поле!). По скриншоту кабинета Kaspi подтверждено: то, что
+        // реально нужно видеть здесь — courierTransmissionPlanningDate (срок,
+        // до которого САМИМ нужно отвезти в пункт приёма, с точным временем).
+        const deadline = o.courierTransmissionPlanningDate;
+        if(!deadline) return "—";
+        const dueDayStart = new Date(deadline); dueDayStart.setHours(0,0,0,0);
         const todayStart = new Date(); todayStart.setHours(0,0,0,0);
-        const isUrgent = dueDate <= todayStart && !["completed","cancelled","cancelledDelivery","returns"].includes(o.stage);
+        const isUrgent = dueDayStart <= todayStart && !["completed","cancelled","cancelledDelivery","returns"].includes(o.stage);
         return isUrgent
-          ? `<span class="o2-urgent"><svg class="o2-icon" style="width:14px;height:14px;" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> ${fmtDate(o.courierHandoverDate)}</span>`
-          : fmtDate(o.courierHandoverDate);
+          ? `<span class="o2-urgent"><svg class="o2-icon" style="width:14px;height:14px;" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> ${fmtDateTime(deadline)}</span>`
+          : fmtDateTime(deadline);
       }
       if(key==="price") return o.totalPrice ? esc(o.totalPrice)+" ₸" : "—";
       if(key==="status"){
@@ -2708,6 +2713,15 @@
     if(!d) return "—";
     const m = String(d).match(/^(\d{4})-(\d{2})-(\d{2})/);
     return m ? `${m[3]}.${m[2]}.${m[1]}` : d;
+  }
+  // Для срока передачи курьеру важно и время (у Kaspi это "до 20:00", не просто день) —
+  // отдельная функция, показывает дату и часы:минуты.
+  function fmtDateTime(d){
+    if(!d) return "—";
+    const dt = new Date(d);
+    if(isNaN(dt)) return fmtDate(d);
+    const pad = n => String(n).padStart(2,"0");
+    return `${fmtDate(d)} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
   }
   // Kaspi не присылает дату отмены — считаем от updatedAt (после правки на
   // сервере это теперь дата, когда статус реально последний раз поменялся,
