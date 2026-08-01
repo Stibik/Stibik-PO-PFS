@@ -40,12 +40,19 @@ router.post("/login", async (req, res) => {
   }
 
   loginAttempts.delete(username);
+  // Фиксируем вход: если учётку кто-то использует не тот, это будет видно
+  db.prepare("UPDATE users SET last_login_at = ?, last_login_ip = ? WHERE id = ?")
+    .run(new Date().toISOString(), String(req.ip || "").slice(0, 60), user.id);
   req.session.userId = user.id;
   req.session.username = user.username;
   req.session.role = user.role;
   req.session.permissions = permissionsOf(user);
   logAudit({ user: user.username, action: "login", ip: req.ip });
-  res.json({ ok: true, username: user.username, role: user.role, permissions: req.session.permissions });
+  res.json({
+    ok: true, username: user.username, role: user.role,
+    permissions: req.session.permissions,
+    mustChangePassword: user.must_change_password === 1
+  });
 });
 
 router.post("/logout", (req, res) => {
@@ -67,7 +74,8 @@ router.get("/me", requireAuth, (req, res) => {
     username: user.username, role: user.role,
     roleLabel: ROLE_LABELS[user.role] || user.role,
     permissions: req.session.permissions,
-    employeeId: user.employee_id || null
+    employeeId: user.employee_id || null,
+    mustChangePassword: user.must_change_password === 1
   });
 });
 
@@ -80,7 +88,8 @@ router.post("/change-password", requireAuth, async (req, res) => {
   if (!user || !bcrypt.compareSync(oldPassword, user.password_hash)) {
     return res.status(401).json({ error: "wrong_old_password" });
   }
-  db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(bcrypt.hashSync(newPassword, 10), user.id);
+  db.prepare("UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?")
+    .run(bcrypt.hashSync(newPassword, 10), user.id);
   logAudit({ user: user.username, action: "change_password" });
   res.json({ ok: true });
 });
@@ -104,6 +113,9 @@ router.get("/users", requireAdmin, (req, res) => {
       employeeId: u.employee_id, employeeName: emp ? emp.name : "",
       isActive: u.is_active !== 0,
       permissions: permissionsOf(full),
+      mustChangePassword: full.must_change_password === 1,
+      lastLoginAt: full.last_login_at,
+      lastLoginIp: full.last_login_ip,
       created_at: u.created_at
     };
   }));
@@ -120,8 +132,10 @@ router.post("/users", requireAdmin, (req, res) => {
     : ROLE_PRESETS[finalRole];
   const id = "u_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   try {
-    db.prepare(`INSERT INTO users (id, username, password_hash, role, permissions, employee_id, is_active, created_at)
-                VALUES (?,?,?,?,?,?,1,?)`)
+    // must_change_password = 1: пароль, который вы придумали, временный —
+    // при первом входе человек обязан задать свой
+    db.prepare(`INSERT INTO users (id, username, password_hash, role, permissions, employee_id, is_active, must_change_password, created_at)
+                VALUES (?,?,?,?,?,?,1,1,?)`)
       .run(id, username, bcrypt.hashSync(password, 10), finalRole, JSON.stringify(perms),
            employeeId || null, new Date().toISOString());
   } catch (e) {
@@ -151,7 +165,9 @@ router.put("/users/:id", requireAdmin, (req, res) => {
   if (b.employeeId !== undefined) { updates.push("employee_id = ?"); params.push(b.employeeId || null); }
   if (b.password) {
     if (String(b.password).length < 4) return res.status(400).json({ error: "invalid_input", message: "Пароль — от 4 символов" });
-    updates.push("password_hash = ?"); params.push(bcrypt.hashSync(b.password, 10));
+    // Сброшенный админом пароль тоже временный
+    updates.push("password_hash = ?", "must_change_password = 1");
+    params.push(bcrypt.hashSync(b.password, 10));
   }
   if (!updates.length) return res.json({ ok: true });
   params.push(user.id);
