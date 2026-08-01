@@ -94,6 +94,77 @@ router.post("/import", (req, res) => {
   res.json({ added, updated, skipped });
 });
 
+// Наполнение Справочника из заказов Kaspi — по обоим магазинам сразу.
+// Каталога товаров Kaspi в API не отдаёт, зато в заказах есть артикул и
+// название каждой позиции: этого достаточно, чтобы товар появился в
+// Справочнике сам, без выгрузки Excel. Ручные поля (название для печати,
+// цены, расценка труда) НИКОГДА не перезаписываются.
+router.post("/sync-from-orders", (req, res) => {
+  const rows = db.prepare("SELECT * FROM orders WHERE source = 'kaspi' OR kaspi_code LIKE 'УД-%'").all();
+  const now = new Date().toISOString();
+  let added = 0, updated = 0, skipped = 0;
+  const shopsByArticle = new Map();
+
+  for (const o of rows) {
+    // Артикул: сначала из позиций заказа (там он настоящий, от Kaspi),
+    // потом — из самого заказа, как у ручных УД
+    let article = String(o.article || "").trim();
+    let name = String(o.product_name || o.name || "").trim();
+    let price = Number(o.total_price) || 0;
+    try {
+      const entries = o.entries_raw ? JSON.parse(o.entries_raw) : null;
+      const attr = entries?.data?.[0]?.attributes;
+      if (attr?.offer?.code) article = String(attr.offer.code).trim();
+      if (attr?.offer?.name) name = String(attr.offer.name).trim();
+      if (attr?.basePrice) price = Number(attr.basePrice) || price;
+    } catch (e) { /* сырых данных нет или битые — работаем по колонкам заказа */ }
+
+    if (!article) { skipped++; continue; }
+    if (o.shop) {
+      if (!shopsByArticle.has(article)) shopsByArticle.set(article, new Set());
+      shopsByArticle.get(article).add(o.shop);
+    }
+
+    const existing = db.prepare("SELECT * FROM price_items WHERE article = ?").get(article);
+    if (existing) {
+      // Обновляем только справочные kaspi_* поля, ручное не трогаем
+      db.prepare("UPDATE price_items SET kaspi_name = ?, kaspi_price = ?, kaspi_synced_at = ? WHERE id = ?")
+        .run(name || existing.kaspi_name, price || existing.kaspi_price, now, existing.id);
+      updated++;
+    } else {
+      db.prepare(`INSERT INTO price_items (id, article, name, type, retail, cost, kaspi_name, kaspi_price, kaspi_synced_at, created_at)
+                  VALUES (?, ?, '', '', 0, NULL, ?, ?, ?, ?)`)
+        .run(uid(), article, name, price, now, now);
+      added++;
+    }
+  }
+
+  logAudit({ user: req.session.username, action: "catalog_sync_orders", comment: `+${added} ~${updated}` });
+  res.json({
+    added, updated, skipped,
+    shops: Array.from(new Set(rows.map(o => o.shop).filter(Boolean)))
+  });
+});
+
+// Ручное добавление товара — для того, чего в Kaspi ещё нет
+router.post("/", (req, res) => {
+  const b = req.body || {};
+  const article = String(b.article || "").trim();
+  if (!article) return res.status(400).json({ error: "article_required", message: "Укажите артикул — по нему товар связывается с заказами" });
+  const exists = db.prepare("SELECT id FROM price_items WHERE article = ?").get(article);
+  if (exists) return res.status(400).json({ error: "duplicate", message: `Товар с артикулом ${article} уже есть в Справочнике` });
+
+  const id = uid();
+  const now = new Date().toISOString();
+  db.prepare(`INSERT INTO price_items (id, article, name, type, subgroup, material, retail, cost, photo, created_at)
+              VALUES (?,?,?,?,?,?,?,?,?,?)`)
+    .run(id, article, String(b.printName || "").trim(), String(b.category || "").trim(),
+         String(b.subgroup || "").trim(), String(b.material || "").trim(),
+         Number(b.retailPrice) || 0, null, b.photo || null, now);
+  logAudit({ user: req.session.username, action: "catalog_create", comment: `${article} — ${b.printName || ""}` });
+  res.json(rowToCatalogItem(db.prepare("SELECT * FROM price_items WHERE id = ?").get(id)));
+});
+
 // Точечное обновление ручных полей: название для печати, категория,
 // себестоимость, розница. Через тот же маршрут, что уже был у "Прайса"
 // (price.js), эта запись не трогается — правим напрямую здесь.
