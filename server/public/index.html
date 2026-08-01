@@ -14,12 +14,38 @@
   }
   *{box-sizing:border-box;}
   body{margin:0; background:var(--paper); color:var(--ink); font-family:var(--sans);}
-  header.top{background:var(--navy); color:#fff; padding:16px 26px; display:flex; justify-content:space-between; align-items:center; border-bottom:4px solid var(--amber);}
-  header.top h1{font-family:var(--serif); font-weight:400; font-size:22px; margin:0;}
-  nav.tabs{display:flex; gap:6px; background:var(--navy-light); padding:10px 26px;}
-  nav.tabs button{background:transparent; border:none; color:#C7CEDD; padding:9px 18px; cursor:pointer; font-size:13.5px; border-radius:20px; transition:background .15s, color .15s;}
-  nav.tabs button:hover{background:rgba(255,255,255,0.08); color:#fff;}
-  nav.tabs button.active{color:#1E2A44; background:var(--amber); font-weight:600;}
+  /* Шапка приложения — светлая, как в остальных разделах.
+     Тёмно-синяя была из первой версии и уже выбивалась из общего вида. */
+  header.top{background:#fff; color:var(--ink); padding:12px 26px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #E5E7EB; gap:16px; flex-wrap:wrap;}
+  .hdr-left{display:flex; align-items:center; gap:16px; min-width:0;}
+  .hdr-logo{font-family:-apple-system,"Segoe UI",Arial,sans-serif; font-weight:800; font-size:22px; letter-spacing:-.03em; color:#0F172A; position:relative; padding-right:7px;}
+  .hdr-logo::after{content:""; position:absolute; right:0; top:3px; width:6px; height:6px; border-radius:2px; background:var(--amber);}
+  .hdr-divider{width:1px; height:26px; background:#E5E7EB;}
+  header.top h1{font-family:inherit; font-weight:600; font-size:17px; margin:0; color:#0F172A; white-space:nowrap;}
+  .hdr-sub{font-size:12.5px; color:#6B7280; white-space:nowrap;}
+  .hdr-right{display:flex; align-items:center; gap:14px;}
+  .hdr-status{display:flex; align-items:center; gap:7px; font-size:12.5px; color:#6B7280; white-space:nowrap;}
+  .hdr-dot{width:8px; height:8px; border-radius:50%; background:#16A34A; flex-shrink:0;}
+  .hdr-dot.stale{background:var(--amber);}
+  .hdr-bell{position:relative; background:none; border:none; cursor:pointer; padding:6px; border-radius:9px; color:#374151; font-size:17px; line-height:1;}
+  .hdr-bell:hover{background:#F3F4F6;}
+  .hdr-bell .hdr-badge{position:absolute; top:0; right:0; min-width:16px; height:16px; border-radius:9px; background:var(--amber); color:#fff; font-size:10.5px; font-weight:700; display:flex; align-items:center; justify-content:center; padding:0 4px;}
+  .hdr-user{display:flex; align-items:center; gap:9px; cursor:pointer; padding:4px 8px; border-radius:10px;}
+  .hdr-user:hover{background:#F3F4F6;}
+  .hdr-avatar{width:34px; height:34px; border-radius:50%; background:var(--navy); color:#fff; display:flex; align-items:center; justify-content:center; font-size:12.5px; font-weight:700; flex-shrink:0;}
+  .hdr-name{font-size:13px; font-weight:600; line-height:1.2;}
+  .hdr-role{font-size:11.5px; color:#6B7280; line-height:1.2;}
+  .hdr-menu{position:absolute; right:18px; top:60px; background:#fff; border:1px solid #E5E7EB; border-radius:12px; box-shadow:0 8px 24px rgba(15,23,42,0.12); min-width:230px; padding:8px; z-index:60; display:none;}
+  .hdr-menu.show{display:block;}
+  .hdr-menu button{display:block; width:100%; text-align:left; padding:9px 11px; border:none; background:none; border-radius:8px; font-size:13px; cursor:pointer; color:var(--ink);}
+  .hdr-menu button:hover{background:#F3F4F6;}
+  .hdr-menu .hdr-menu-title{font-size:11px; text-transform:uppercase; color:#9CA3AF; padding:6px 11px 4px;}
+  .hdr-menu .empty{font-size:12.5px; color:#6B7280; padding:6px 11px 10px;}
+
+  nav.tabs{display:flex; gap:2px; background:#fff; padding:0 26px; border-bottom:1px solid #E5E7EB;}
+  nav.tabs button{background:transparent; border:none; border-bottom:2px solid transparent; color:#4B5563; padding:13px 14px; cursor:pointer; font-size:13.5px; border-radius:0; transition:color .15s, border-color .15s;}
+  nav.tabs button:hover{color:#0F172A;}
+  nav.tabs button.active{color:#0F172A; border-bottom-color:var(--amber); font-weight:600;}
   main{padding:22px 26px 60px; max-width:1300px; margin:0 auto;}
   .toolbar{display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:14px;}
   .btn{padding:8px 16px; border-radius:8px; border:1px solid var(--navy); background:var(--navy); color:#fff; font-size:13px; cursor:pointer; transition:filter .15s, transform .08s;}
@@ -86,10 +112,12 @@
   .tbl-wrap table{ min-width:640px; }
 
   @media (max-width: 720px){
-    header.top{ padding:12px 14px; flex-wrap:wrap; gap:8px; }
-    header.top h1{ font-size:17px; }
-    nav.tabs{ padding:8px 10px; overflow-x:auto; -webkit-overflow-scrolling:touch; flex-wrap:nowrap; }
-    nav.tabs button{ white-space:nowrap; padding:8px 13px; font-size:12.5px; flex:none; }
+    header.top{ padding:10px 14px; gap:8px; }
+    header.top h1{ font-size:15px; }
+    .hdr-sub, .hdr-status span, .hdr-name, .hdr-role{ display:none; }
+    .hdr-divider{ display:none; }
+    nav.tabs{ padding:0 10px; overflow-x:auto; -webkit-overflow-scrolling:touch; flex-wrap:nowrap; }
+    nav.tabs button{ white-space:nowrap; padding:11px 11px; font-size:12.5px; flex:none; }
     main{ padding:14px 12px 40px; }
     .toolbar{ gap:6px; }
     .btn{ padding:8px 12px; font-size:12.5px; }
@@ -260,10 +288,31 @@
 
 <div id="app" style="display:none">
   <header class="top">
-    <h1>Учёт заказов — онлайн</h1>
-    <div style="display:flex; align-items:center; gap:14px;">
-      <span id="whoami" style="font-size:12.5px; color:#AEB9CF;"></span>
-      <button class="btn secondary" id="btnLogout" style="padding:5px 12px; font-size:12px;">Выйти</button>
+    <div class="hdr-left">
+      <div class="hdr-logo">PFS</div>
+      <div class="hdr-divider"></div>
+      <h1>Учёт заказов</h1>
+      <span class="hdr-sub">Управление бизнесом</span>
+    </div>
+    <div class="hdr-right">
+      <div class="hdr-status" id="hdrStatus"><span class="hdr-dot"></span><span>Данные обновлены</span></div>
+      <button class="hdr-bell" id="hdrBell" title="Требует внимания">🔔<span class="hdr-badge" id="hdrBadge" style="display:none;">0</span></button>
+      <div class="hdr-user" id="hdrUserBtn">
+        <div class="hdr-avatar" id="hdrAvatar">—</div>
+        <div>
+          <div class="hdr-name" id="whoami"></div>
+          <div class="hdr-role" id="hdrRole"></div>
+        </div>
+        <span style="color:#9CA3AF; font-size:11px;">▾</span>
+      </div>
+    </div>
+    <div class="hdr-menu" id="hdrUserMenu">
+      <div class="hdr-menu-title">Аккаунт</div>
+      <button id="btnLogout">Выйти</button>
+    </div>
+    <div class="hdr-menu" id="hdrBellMenu" style="right:100px;">
+      <div class="hdr-menu-title">Требует внимания</div>
+      <div id="hdrBellBody"></div>
     </div>
   </header>
   <nav class="tabs">
@@ -1106,7 +1155,7 @@
     try{
       const data = await api("/auth/login", {method:"POST", body: JSON.stringify({username, password})});
       myRole = data.role;
-      document.getElementById("whoami").textContent = data.username + (data.role==='admin'?' (админ)':' (склад)');
+      setCurrentUser(data.username, data.role);
       applyRoleUI();
       showApp();
       await loadAll();
@@ -3524,6 +3573,7 @@
       console.error(e);
     }
 
+    updateHeaderAlerts();
     try{
       const shops = await api("/kaspi/shops");
       cnShopNames = shops;
@@ -4734,6 +4784,7 @@
       }
       lastSyncTime = new Date();
       updateLastSyncIndicator();
+      updateHeaderStatus();
       await renderKaspiOrders();
       return data;
     }catch(e){
@@ -5190,6 +5241,85 @@
 
   // (старый обработчик кнопки синхронизации удалён — теперь используется btnSyncKaspi2 во вкладке «Заказы»)
 
+  // ---------- Шапка: пользователь, состояние данных, уведомления ----------
+  function setCurrentUser(username, role){
+    document.getElementById("whoami").textContent = username || "";
+    document.getElementById("hdrRole").textContent = role === "admin" ? "Администратор" : "Склад";
+    document.getElementById("hdrAvatar").textContent = (username || "?").slice(0, 2).toUpperCase();
+  }
+
+  function toggleHdrMenu(id){
+    ["hdrUserMenu","hdrBellMenu"].forEach(m=>{
+      const el = document.getElementById(m);
+      if(m === id) el.classList.toggle("show"); else el.classList.remove("show");
+    });
+  }
+  document.getElementById("hdrUserBtn").addEventListener("click", (e)=>{ e.stopPropagation(); toggleHdrMenu("hdrUserMenu"); });
+  document.getElementById("hdrBell").addEventListener("click", (e)=>{ e.stopPropagation(); toggleHdrMenu("hdrBellMenu"); });
+  document.addEventListener("click", ()=>{
+    document.querySelectorAll(".hdr-menu.show").forEach(el=>el.classList.remove("show"));
+  });
+
+  // Индикатор в шапке привязан к реальной последней синхронизации, а не просто
+  // «зелёная точка для красоты»: если давно не обновлялось — станет жёлтым
+  function updateHeaderStatus(){
+    const box = document.getElementById("hdrStatus");
+    if(!box) return;
+    const dot = box.querySelector(".hdr-dot");
+    const label = box.querySelector("span:last-child");
+    if(!lastSyncTime){ dot.classList.remove("stale"); label.textContent = "Данные загружены"; return; }
+    const sec = Math.floor((Date.now() - lastSyncTime.getTime())/1000);
+    label.textContent = sec < 60 ? "Данные обновлены сейчас"
+      : sec < 3600 ? `Обновлено ${Math.floor(sec/60)} мин назад`
+      : `Обновлено ${Math.floor(sec/3600)} ч назад`;
+    dot.classList.toggle("stale", sec > (AUTO_SYNC_INTERVAL_MS/1000) * 2);
+  }
+  setInterval(updateHeaderStatus, 5000);
+
+  // Колокольчик показывает только то, что реально требует действия.
+  // Пусто — значит пусто, а не «ноль уведомлений для вида».
+  async function updateHeaderAlerts(){
+    const alerts = [];
+    const problems = orders.filter(o=>o.receiveStatus === "problem").length;
+    if(problems) alerts.push({ text:`Проблемных поступлений: ${problems}`, go:()=>{
+      document.querySelector('.tab-btn[data-tab="orders"]').click();
+      document.getElementById("ordersFilterStatus").value = "problem";
+      ordersFilterStatus = "problem";
+      renderOrders(false);
+    }});
+    try{
+      const stats = await api("/china-purchases/stats");
+      if(stats.counts.overdue) alerts.push({ text:`Просроченных закупок из Китая: ${stats.counts.overdue}`, go:()=>{
+        cnContour = "china";
+        localStorage.setItem("prihodContour", "china");
+        document.querySelector('.tab-btn[data-tab="orders"]').click();
+        cnQuick = "overdue";
+        applyContour();
+      }});
+      const inv = await api("/china-stock/inventory/current");
+      if(inv.exists) alerts.push({ text:`Идёт инвентаризация №${inv.number}: посчитано ${inv.counted} из ${inv.total}`, go:()=>{
+        cnContour = "china";
+        document.querySelector('.tab-btn[data-tab="orders"]').click();
+        applyContour();
+        setTimeout(()=>document.getElementById("cnBtnInventory").click(), 300);
+      }});
+    }catch(e){ /* контур Китая ещё не залит на сервер — не повод ломать шапку */ }
+
+    const badge = document.getElementById("hdrBadge");
+    badge.style.display = alerts.length ? "flex" : "none";
+    badge.textContent = alerts.length;
+    const body = document.getElementById("hdrBellBody");
+    body.innerHTML = alerts.length
+      ? alerts.map((a,i)=>`<button data-alert="${i}">${esc(a.text)}</button>`).join("")
+      : `<div class="empty">Всё в порядке — ничего не требует внимания</div>`;
+    body.querySelectorAll("[data-alert]").forEach(b=>{
+      b.addEventListener("click", ()=>{
+        document.querySelectorAll(".hdr-menu.show").forEach(el=>el.classList.remove("show"));
+        alerts[Number(b.dataset.alert)].go();
+      });
+    });
+  }
+
   // ---------- Роли: скрываем админ-разделы для склада ----------
   function applyRoleUI(){
     document.querySelectorAll(".admin-only").forEach(el=>{
@@ -5246,7 +5376,7 @@
     try{
       const me = await api("/auth/me");
       myRole = me.role;
-      document.getElementById("whoami").textContent = me.username + (me.role==='admin'?' (админ)':' (склад)');
+      setCurrentUser(me.username, me.role);
       applyRoleUI();
       showApp();
       await loadAll();
