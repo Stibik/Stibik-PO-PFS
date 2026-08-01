@@ -111,24 +111,53 @@ router.post("/manual-order", (req, res) => {
   const n = parseInt(getMeta("next_manual_order_number") || "1", 10);
   setMeta("next_manual_order_number", n + 1);
   const udCode = `УД-${n}`;
+  const SHOP_TAG = "УД"; // фиксированно, не из формы — чтобы не путалось с реальными магазинами PFS/SA
 
   const id = uid();
   const now = new Date().toISOString();
   db.prepare(`INSERT INTO orders
     (id, source, kaspi_code, display_number, shop, status, product_name, article, qty, total_price, note, created_at, updated_at)
     VALUES (?, 'manual', ?, ?, ?, 'preorder', ?, ?, ?, ?, ?, ?, ?)`)
-    .run(id, udCode, n, b.shop || "Прямая продажа", b.name, b.article || "",
+    .run(id, udCode, n, SHOP_TAG, b.name, b.article || "",
          b.qty || 1, b.totalPrice || 0, b.note || "", now, now);
 
   const prodId = uid();
   db.prepare(`INSERT INTO production (id, order_id, article, product_name, quantity, shop, stage, created_at)
               VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`)
-    .run(prodId, id, b.article || "", b.name, b.qty || 1, b.shop || "Прямая продажа", now);
+    .run(prodId, id, b.article || "", b.name, b.qty || 1, SHOP_TAG, now);
 
   logAudit({ user: req.session.username, action: "create_manual_order", orderId: id, newValue: `${udCode}: ${b.name}` });
 
   const row = db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
   res.json(rowToOrder(row));
+});
+
+// Редактирование ручного заказа (не Kaspi!) — только для source='manual',
+// у настоящих заказов Kaspi это не имеет смысла, там источник правды — сам Kaspi
+router.put("/:id/manual-order", (req, res) => {
+  const row = db.prepare("SELECT * FROM orders WHERE id = ?").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  if (row.source !== "manual") return res.status(400).json({ error: "not_manual", message: "Редактировать так можно только заказы, созданные вручную" });
+  const b = req.body || {};
+  const now = new Date().toISOString();
+  db.prepare(`UPDATE orders SET product_name=?, article=?, qty=?, total_price=?, note=?, updated_at=? WHERE id=?`)
+    .run(b.name ?? row.product_name, b.article ?? row.article, b.qty ?? row.qty,
+         b.totalPrice ?? row.total_price, b.note ?? row.note, now, req.params.id);
+  logAudit({ user: req.session.username, action: "edit_manual_order", orderId: req.params.id });
+  const updated = db.prepare("SELECT * FROM orders WHERE id = ?").get(req.params.id);
+  res.json(rowToOrder(updated));
+});
+
+// Удаление ручного заказа (не Kaspi!) — тоже только для source='manual'.
+// Заодно убираем связанную запись в Производстве, чтобы не осталась "висеть" сиротой.
+router.delete("/:id/manual-order", (req, res) => {
+  const row = db.prepare("SELECT * FROM orders WHERE id = ?").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  if (row.source !== "manual") return res.status(400).json({ error: "not_manual", message: "Удалить так можно только заказы, созданные вручную" });
+  db.prepare("DELETE FROM production WHERE order_id = ?").run(req.params.id);
+  db.prepare("DELETE FROM orders WHERE id = ?").run(req.params.id);
+  logAudit({ user: req.session.username, action: "delete_manual_order", orderId: req.params.id, oldValue: row.kaspi_code });
+  res.json({ ok: true });
 });
 
 router.put("/:id", (req, res) => {
