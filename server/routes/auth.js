@@ -43,6 +43,11 @@ router.post("/login", async (req, res) => {
   // Фиксируем вход: если учётку кто-то использует не тот, это будет видно
   db.prepare("UPDATE users SET last_login_at = ?, last_login_ip = ? WHERE id = ?")
     .run(new Date().toISOString(), String(req.ip || "").slice(0, 60), user.id);
+  // «Запомнить меня»: на своём телефоне держим вход 30 дней, на чужом или общем
+  // компьютере — только сутки, чтобы чужая сессия не висела неделю
+  if (req.session.cookie) {
+    req.session.cookie.maxAge = req.body?.remember ? 1000 * 60 * 60 * 24 * 30 : 1000 * 60 * 60 * 24;
+  }
   req.session.userId = user.id;
   req.session.username = user.username;
   req.session.role = user.role;
