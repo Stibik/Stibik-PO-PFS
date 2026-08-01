@@ -362,6 +362,53 @@ CREATE TABLE IF NOT EXISTS china_purchase_history (
   created_at TEXT
 );
 
+-- ---------- Зарплата: начисления, вычеты, выплаты ----------
+-- Расценка НЕ дублируется: она берётся из price_items.labor_rate в момент
+-- начисления и фиксируется в строке — чтобы потом изменение расценки в
+-- Справочнике не переписало задним числом уже принятые работы.
+CREATE TABLE IF NOT EXISTS payroll_entries (
+  id TEXT PRIMARY KEY,
+  employee_id TEXT,
+  production_id TEXT,              -- если работа выросла из заказа
+  order_id TEXT,
+  warehouse_stock_id TEXT,         -- если делали на запас, на склад
+  shop TEXT,                       -- SA / PFS / УД — откуда пришла работа
+  article TEXT,
+  product_name TEXT,
+  qty REAL DEFAULT 1,
+  rate REAL DEFAULT 0,             -- расценка за штуку на момент начисления
+  amount REAL DEFAULT 0,           -- rate * qty, считает сервер
+  kind TEXT DEFAULT 'order',       -- order | stock
+  status TEXT DEFAULT 'pending',   -- pending (ещё не принято) | payable (к выплате) | paid | cancelled
+  comment TEXT,
+  accepted_at TEXT,
+  accepted_by TEXT,
+  paid_at TEXT,
+  payout_id TEXT,
+  created_by TEXT,
+  created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS payouts (
+  id TEXT PRIMARY KEY,
+  number INTEGER,
+  employee_id TEXT,
+  accrued REAL DEFAULT 0,          -- сумма принятых работ, вошедших в выплату
+  deductions_total REAL DEFAULT 0,
+  amount REAL DEFAULT 0,           -- к выдаче на руки
+  comment TEXT,
+  created_by TEXT,
+  created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS payout_deductions (
+  id TEXT PRIMARY KEY,
+  payout_id TEXT,
+  kind TEXT,                       -- аванс / брак / материал / прочее
+  amount REAL DEFAULT 0,
+  comment TEXT
+);
+
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT
@@ -390,6 +437,11 @@ CREATE INDEX IF NOT EXISTS idx_china_stock_barcode ON china_stock(barcode);
 CREATE INDEX IF NOT EXISTS idx_china_stock_order ON china_stock(purchase_order_id);
 CREATE INDEX IF NOT EXISTS idx_china_stock_moves_stock ON china_stock_moves(stock_id);
 CREATE INDEX IF NOT EXISTS idx_china_inv_items ON china_inventory_items(inventory_id);
+CREATE INDEX IF NOT EXISTS idx_payroll_employee ON payroll_entries(employee_id, status);
+CREATE INDEX IF NOT EXISTS idx_payroll_production ON payroll_entries(production_id);
+CREATE INDEX IF NOT EXISTS idx_payroll_payout ON payroll_entries(payout_id);
+CREATE INDEX IF NOT EXISTS idx_payouts_employee ON payouts(employee_id);
+CREATE INDEX IF NOT EXISTS idx_payout_deductions ON payout_deductions(payout_id);
 `;
 
 export function ensureSchema() {
