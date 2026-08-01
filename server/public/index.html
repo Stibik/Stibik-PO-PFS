@@ -203,7 +203,7 @@
   .o2-menu-wrap{position:relative;}
   .o2-menu-btn{width:32px; height:32px; border-radius:8px; border:1px solid transparent; background:transparent; color:var(--o2-ink-soft); cursor:pointer; display:flex; align-items:center; justify-content:center;}
   .o2-menu-btn:hover{background:var(--o2-gray-bg); color:var(--o2-ink);}
-  .o2-menu-dropdown{position:absolute; right:0; top:36px; background:#fff; border:1px solid var(--o2-border); border-radius:10px; box-shadow:0 8px 24px rgba(15,23,42,0.12); min-width:180px; z-index:30; padding:6px; display:none;}
+  .o2-menu-dropdown{position:fixed; background:#fff; border:1px solid var(--o2-border); border-radius:10px; box-shadow:0 8px 24px rgba(15,23,42,0.12); min-width:180px; z-index:1000; padding:6px; display:none;}
   .o2-menu-dropdown.show{display:block;}
   .o2-menu-dropdown button{display:flex; align-items:center; gap:9px; width:100%; text-align:left; padding:8px 10px; border:none; background:none; border-radius:7px; font-size:13px; color:var(--o2-ink); cursor:pointer;}
   .o2-menu-dropdown button:hover{background:var(--o2-gray-bg);}
@@ -2007,25 +2007,9 @@
         <td data-label=""><input type="checkbox" class="o2-check kaspi-order-select" data-id="${o.id}" ${selectedKaspiOrderIds.has(o.id)?'checked':''}></td>
         ${cols.map(c=>`<td class="${c.key==='photo'?'o2-td-photo':''}" data-label="${esc(c.label)}">${cellFor(o,c.key)}</td>`).join("")}
         <td data-label="" style="text-align:right;">
-          <div class="o2-menu-wrap">
-            <button class="o2-menu-btn" onclick="window.__toggleRowMenu(event,'${o.id}')">
-              <svg class="o2-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
-            </button>
-            <div class="o2-menu-dropdown" id="rowMenu-${o.id}">
-              <button onclick="window.__openWorkflow('${o.id}')">
-                <svg class="o2-icon" style="width:15px;height:15px;" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4Z"/></svg>
-                Обработка
-              </button>
-              <button onclick="window.__openKaspiDetail('${o.id}')">
-                <svg class="o2-icon" style="width:15px;height:15px;" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-                Детали
-              </button>
-              ${o.status==="label_printed" ? `<button onclick="window.__quickAdvance('${o.id}')">
-                <svg class="o2-icon" style="width:15px;height:15px;" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>
-                Готово к отгрузке
-              </button>` : ""}
-            </div>
-          </div>
+          <button class="o2-menu-btn" onclick="window.__toggleRowMenu(event,'${o.id}')">
+            <svg class="o2-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+          </button>
         </td>
       </tr>`).join("") || `<tr><td colspan="${cols.length+2}" style="text-align:center;color:var(--o2-ink-soft);padding:30px;">Нет заказов на этой стадии</td></tr>`;
 
@@ -2316,14 +2300,55 @@
   // Меню на три точки в строке таблицы — открывает одно, закрывает остальные
   window.__toggleRowMenu = function(evt, id){
     evt.stopPropagation();
-    const target = document.getElementById("rowMenu-"+id);
-    const wasOpen = target.classList.contains("show");
-    document.querySelectorAll(".o2-menu-dropdown.show").forEach(el=>el.classList.remove("show"));
-    if(!wasOpen) target.classList.add("show");
+    let target = document.getElementById("sharedRowMenu");
+    if(!target){
+      target = document.createElement("div");
+      target.className = "o2-menu-dropdown";
+      target.id = "sharedRowMenu";
+      document.body.appendChild(target);
+    }
+    const wasOpenForThisRow = target.classList.contains("show") && target.dataset.orderId === id;
+    target.classList.remove("show");
+    if(wasOpenForThisRow) return;
+
+    const o = kaspiOrders.find(x=>x.id===id);
+    if(!o) return;
+    target.dataset.orderId = id;
+    target.innerHTML = `
+      <button onclick="window.__openWorkflow('${id}')">
+        <svg class="o2-icon" style="width:15px;height:15px;" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4Z"/></svg>
+        Обработка
+      </button>
+      <button onclick="window.__openKaspiDetail('${id}')">
+        <svg class="o2-icon" style="width:15px;height:15px;" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+        Детали
+      </button>
+      ${o.status==="label_printed" ? `<button onclick="window.__quickAdvance('${id}')">
+        <svg class="o2-icon" style="width:15px;height:15px;" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>
+        Готово к отгрузке
+      </button>` : ""}
+    `;
+
+    // Позиция считается от самой кнопки, независимо от прокрутки таблицы —
+    // меню живёт в <body>, переполнение (overflow) таблицы его не обрезает.
+    const btn = evt.currentTarget.getBoundingClientRect();
+    const menuWidth = 200;
+    let left = btn.right - menuWidth;
+    if(left < 8) left = 8;
+    let top = btn.bottom + 4;
+    const estimatedMenuHeight = target.children.length * 38 + 12;
+    if(top + estimatedMenuHeight > window.innerHeight - 8) top = btn.top - estimatedMenuHeight - 4;
+    target.style.left = left + "px";
+    target.style.top = top + "px";
+    target.classList.add("show");
   };
   document.addEventListener("click", ()=>{
     document.querySelectorAll(".o2-menu-dropdown.show").forEach(el=>el.classList.remove("show"));
   });
+  // При прокрутке страницы открытое меню "отклеилось" бы от кнопки — проще закрыть
+  window.addEventListener("scroll", ()=>{
+    document.querySelectorAll(".o2-menu-dropdown.show").forEach(el=>el.classList.remove("show"));
+  }, true);
 
   window.__openWorkflow = async function(id){
     const order = await api("/orders/"+id);
