@@ -459,6 +459,8 @@
             </div>
           </div>
           <div class="full"><label>Название для печати</label><input id="ci_printName" type="text" placeholder="Как будет видно клиенту"></div>
+          <div><label>Порядок внутри группы (для прайса)</label><input id="ci_sortOrder" type="number" step="1" value="0"></div>
+          <div style="display:flex;align-items:flex-end;padding-bottom:8px;"><label style="margin:0;"><input type="checkbox" id="ci_showInPrice" checked> Показывать в прайсе</label></div>
           <div><label>Группа</label><input id="ci_category" type="text" placeholder="напр. Манекены для борьбы и ММА"></div>
           <div><label>Подраздел</label><input id="ci_subgroup" type="text" placeholder="напр. 1-ноги, ПВХ"></div>
           <div><label>Материал</label><input id="ci_material" type="text"></div>
@@ -483,6 +485,16 @@
     </div>
 
     <section id="tab-price" style="display:none">
+      <div class="panel" style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+        <div style="flex:1; min-width:240px;">
+          <label style="display:block; font-size:12px; color:var(--ink-soft); margin-bottom:4px;">Компания для прайса *</label>
+          <select id="priceCompanySelect" style="width:100%; max-width:360px; padding:8px 10px;">
+            <option value="">— выберите компанию —</option>
+          </select>
+        </div>
+        <span id="priceCompanyHint" style="font-size:12.5px; color:var(--red);">Выберите компанию</span>
+        <button class="btn secondary" id="btnManageCompanies" style="padding:7px 12px;" title="Справочник компаний">⚙ Компании</button>
+      </div>
       <div class="toolbar">
         <button class="btn amber" id="btnPrintPrice">🖨️ Печать / Сохранить как PDF</button>
         <label style="font-size:12.5px; margin-left:8px;"><input type="checkbox" id="priceOnlyReady" checked> Только с заполненным названием и ценой</label>
@@ -595,6 +607,46 @@
     <div class="modal-actions">
       <button class="btn danger" id="orderDeleteBtn" style="display:none">Удалить</button>
       <div><button class="btn secondary" id="orderCancelBtn">Отмена</button> <button class="btn amber" id="orderSaveBtn">Сохранить</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="companiesOverlay">
+  <div class="modal" style="max-width:720px;">
+    <h3>Компании (реквизиты для прайса)</h3>
+    <div id="companiesListWrap" style="margin-bottom:16px;"></div>
+    <div style="border-top:1px solid var(--line); padding-top:14px;">
+      <div id="companyFormTitle" style="font-weight:600; margin-bottom:10px;">Новая компания</div>
+      <div class="grid2">
+        <div class="full">
+          <label>Логотип</label>
+          <div style="display:flex; gap:12px; align-items:center;">
+            <img id="co_logo_preview" style="width:60px;height:60px;object-fit:contain;border-radius:6px;border:1px solid var(--line); display:none; background:#fff;">
+            <div id="co_logo_empty" style="width:60px;height:60px;border-radius:6px;border:1px dashed var(--line);display:flex;align-items:center;justify-content:center;color:var(--ink-soft);font-size:11px;">Нет</div>
+            <input type="file" id="co_logo_input" accept="image/*" style="display:none">
+            <button class="btn secondary" type="button" id="co_logo_btn" style="padding:6px 12px;font-size:12px;">Загрузить</button>
+          </div>
+        </div>
+        <div><label>Краткое название *</label><input id="co_shortName" type="text" placeholder="напр. ИП SportAsia"></div>
+        <div><label>Полное юр. наименование</label><input id="co_fullName" type="text"></div>
+        <div><label>ИИН/БИН</label><input id="co_bin" type="text"></div>
+        <div><label>Телефон</label><input id="co_phone" type="text"></div>
+        <div class="full"><label>Юридический адрес</label><input id="co_address" type="text"></div>
+        <div><label>Банк</label><input id="co_bankName" type="text"></div>
+        <div><label>БИК</label><input id="co_bik" type="text"></div>
+        <div><label>IBAN/счёт</label><input id="co_iban" type="text"></div>
+        <div><label>КБе</label><input id="co_kbe" type="text"></div>
+        <div><label>Email</label><input id="co_email" type="text"></div>
+        <div><label>Сайт</label><input id="co_website" type="text"></div>
+        <div><label>Контактное лицо</label><input id="co_contactPerson" type="text"></div>
+        <div class="full"><label>Доп. текст для PDF (необязательно)</label><input id="co_extraText" type="text"></div>
+        <div class="full"><label><input type="checkbox" id="co_isDefault"> Компания по умолчанию</label></div>
+      </div>
+      <div class="error" id="companyFormError"></div>
+      <div class="modal-actions">
+        <button class="btn secondary" id="companyFormResetBtn" style="display:none;">Отменить редактирование</button>
+        <div><button class="btn secondary" id="companiesCloseBtn">Закрыть</button> <button class="btn amber" id="companyFormSaveBtn">Сохранить</button></div>
+      </div>
     </div>
   </div>
 </div>
@@ -1216,6 +1268,8 @@
     document.getElementById("catalogItemKaspiInfo").innerHTML = kaspiBits.join(" · ") || "Данных от Kaspi нет — товар добавлен вручную";
 
     document.getElementById("ci_printName").value = it.printName || "";
+    document.getElementById("ci_sortOrder").value = it.sortOrder || 0;
+    document.getElementById("ci_showInPrice").checked = it.showInPrice !== false; // по умолчанию true, если явно не false
     document.getElementById("ci_category").value = it.category || "";
     document.getElementById("ci_subgroup").value = it.subgroup || "";
     document.getElementById("ci_material").value = it.material || "";
@@ -1277,6 +1331,8 @@
     const body = {
       photo: currentCatalogPhoto,
       printName: document.getElementById("ci_printName").value.trim(),
+      sortOrder: parseFloat(document.getElementById("ci_sortOrder").value) || 0,
+      showInPrice: document.getElementById("ci_showInPrice").checked,
       category: document.getElementById("ci_category").value.trim(),
       subgroup: document.getElementById("ci_subgroup").value.trim(),
       material: document.getElementById("ci_material").value.trim(),
@@ -1327,6 +1383,162 @@
     }
   }
   document.getElementById("priceOnlyReady").addEventListener("change", renderPricePreview);
+
+  // ---------- Компании для прайса ----------
+  let allCompanies = [];
+  let editingCompanyId = null;
+
+  async function loadPriceCompanies(){
+    allCompanies = await api("/companies");
+    const sel = document.getElementById("priceCompanySelect");
+    const prevValue = sel.value || localStorage.getItem("lastPriceCompanyId") || "";
+    sel.innerHTML = `<option value="">— выберите компанию —</option>` +
+      allCompanies.map(c=>`<option value="${c.id}">${esc(c.shortName)}</option>`).join("");
+    if(prevValue && allCompanies.some(c=>c.id===prevValue)) sel.value = prevValue;
+    else { const def = allCompanies.find(c=>c.isDefault); if(def) sel.value = def.id; }
+    updatePriceCompanyHint();
+  }
+  function updatePriceCompanyHint(){
+    const sel = document.getElementById("priceCompanySelect");
+    const hint = document.getElementById("priceCompanyHint");
+    const chosen = !!sel.value;
+    hint.style.display = chosen ? "none" : "inline";
+    if(chosen) localStorage.setItem("lastPriceCompanyId", sel.value);
+    // Пока это условие только про наличие компании — сама генерация PDF
+    // с её реквизитами подключается отдельным шагом.
+    document.getElementById("btnPrintPrice").disabled = !chosen;
+    document.getElementById("btnPrintPrice").style.opacity = chosen ? "1" : "0.5";
+  }
+  document.getElementById("priceCompanySelect").addEventListener("change", updatePriceCompanyHint);
+
+  document.getElementById("btnManageCompanies").addEventListener("click", ()=>{
+    openCompaniesModal();
+  });
+  document.getElementById("companiesCloseBtn").addEventListener("click", ()=>{
+    document.getElementById("companiesOverlay").classList.remove("show");
+    loadPriceCompanies(); // подхватить изменения в выпадающем списке сразу
+  });
+
+  async function openCompaniesModal(){
+    resetCompanyForm();
+    await renderCompaniesList();
+    document.getElementById("companiesOverlay").classList.add("show");
+  }
+  async function renderCompaniesList(){
+    const rows = await api("/companies?all=1");
+    allCompanies = rows;
+    const wrap = document.getElementById("companiesListWrap");
+    if(!rows.length){ wrap.innerHTML = `<div style="color:var(--ink-soft);font-size:13px;">Компаний пока нет — добавьте первую ниже.</div>`; return; }
+    wrap.innerHTML = rows.map(c=>`
+      <div style="display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--line); ${c.isActive?'':'opacity:0.5;'}">
+        ${c.logo ? `<img src="${esc(c.logo)}" style="width:32px;height:32px;object-fit:contain;border-radius:4px;border:1px solid var(--line);">` : `<div style="width:32px;height:32px;"></div>`}
+        <div style="flex:1;">
+          <div style="font-size:13.5px;font-weight:600;">${esc(c.shortName)} ${c.isDefault?'<span style="color:var(--amber);font-size:11px;">★ по умолчанию</span>':''}</div>
+          <div style="font-size:11.5px;color:var(--ink-soft);">${esc(c.fullName||"")}</div>
+        </div>
+        <button class="btn secondary" style="padding:4px 10px;font-size:12px;" onclick="window.__editCompany('${c.id}')">Изменить</button>
+        <button class="btn secondary" style="padding:4px 10px;font-size:12px;" onclick="window.__toggleCompanyActive('${c.id}')">${c.isActive?'Отключить':'Включить'}</button>
+      </div>
+    `).join("");
+  }
+  function resetCompanyForm(){
+    editingCompanyId = null;
+    document.getElementById("companyFormTitle").textContent = "Новая компания";
+    document.getElementById("companyFormResetBtn").style.display = "none";
+    document.getElementById("companyFormSaveBtn").textContent = "Сохранить";
+    ["shortName","fullName","bin","address","bankName","bik","iban","kbe","phone","email","website","contactPerson","extraText"]
+      .forEach(k=>document.getElementById("co_"+k).value = "");
+    document.getElementById("co_isDefault").checked = false;
+    document.getElementById("co_logo_preview").style.display = "none";
+    document.getElementById("co_logo_empty").style.display = "flex";
+    document.getElementById("co_logo_preview").dataset.path = "";
+    document.getElementById("companyFormError").textContent = "";
+  }
+  window.__editCompany = function(id){
+    const c = allCompanies.find(x=>x.id===id);
+    if(!c) return;
+    editingCompanyId = id;
+    document.getElementById("companyFormTitle").textContent = "Изменить: "+c.shortName;
+    document.getElementById("companyFormResetBtn").style.display = "inline-block";
+    document.getElementById("companyFormSaveBtn").textContent = "Сохранить изменения";
+    document.getElementById("co_shortName").value = c.shortName || "";
+    document.getElementById("co_fullName").value = c.fullName || "";
+    document.getElementById("co_bin").value = c.bin || "";
+    document.getElementById("co_address").value = c.address || "";
+    document.getElementById("co_bankName").value = c.bankName || "";
+    document.getElementById("co_bik").value = c.bik || "";
+    document.getElementById("co_iban").value = c.iban || "";
+    document.getElementById("co_kbe").value = c.kbe || "";
+    document.getElementById("co_phone").value = c.phone || "";
+    document.getElementById("co_email").value = c.email || "";
+    document.getElementById("co_website").value = c.website || "";
+    document.getElementById("co_contactPerson").value = c.contactPerson || "";
+    document.getElementById("co_extraText").value = c.extraText || "";
+    document.getElementById("co_isDefault").checked = !!c.isDefault;
+    if(c.logo){
+      document.getElementById("co_logo_preview").src = c.logo;
+      document.getElementById("co_logo_preview").dataset.path = c.logo;
+      document.getElementById("co_logo_preview").style.display = "block";
+      document.getElementById("co_logo_empty").style.display = "none";
+    } else {
+      document.getElementById("co_logo_preview").style.display = "none";
+      document.getElementById("co_logo_empty").style.display = "flex";
+      document.getElementById("co_logo_preview").dataset.path = "";
+    }
+    document.getElementById("companyFormError").textContent = "";
+  };
+  window.__toggleCompanyActive = async function(id){
+    await api("/companies/"+id+"/toggle-active", {method:"POST"});
+    await renderCompaniesList();
+  };
+  document.getElementById("companyFormResetBtn").addEventListener("click", resetCompanyForm);
+  document.getElementById("co_logo_btn").addEventListener("click", ()=>document.getElementById("co_logo_input").click());
+  document.getElementById("co_logo_input").addEventListener("change", async (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    const fd = new FormData();
+    fd.append("file", file);
+    try{
+      const res = await fetch("/api/upload", {method:"POST", body:fd});
+      const data = await res.json();
+      document.getElementById("co_logo_preview").src = data.path;
+      document.getElementById("co_logo_preview").dataset.path = data.path;
+      document.getElementById("co_logo_preview").style.display = "block";
+      document.getElementById("co_logo_empty").style.display = "none";
+    }catch(err){
+      toast("Не получилось загрузить логотип");
+    }
+  });
+  document.getElementById("companyFormSaveBtn").addEventListener("click", async ()=>{
+    const shortName = document.getElementById("co_shortName").value.trim();
+    if(!shortName){ document.getElementById("companyFormError").textContent = "Укажите краткое название"; return; }
+    const body = {
+      shortName,
+      fullName: document.getElementById("co_fullName").value.trim(),
+      bin: document.getElementById("co_bin").value.trim(),
+      address: document.getElementById("co_address").value.trim(),
+      bankName: document.getElementById("co_bankName").value.trim(),
+      bik: document.getElementById("co_bik").value.trim(),
+      iban: document.getElementById("co_iban").value.trim(),
+      kbe: document.getElementById("co_kbe").value.trim(),
+      phone: document.getElementById("co_phone").value.trim(),
+      email: document.getElementById("co_email").value.trim(),
+      website: document.getElementById("co_website").value.trim(),
+      contactPerson: document.getElementById("co_contactPerson").value.trim(),
+      extraText: document.getElementById("co_extraText").value.trim(),
+      logo: document.getElementById("co_logo_preview").dataset.path || null,
+      isDefault: document.getElementById("co_isDefault").checked
+    };
+    try{
+      if(editingCompanyId) await api("/companies/"+editingCompanyId, {method:"PUT", body:JSON.stringify(body)});
+      else await api("/companies", {method:"POST", body:JSON.stringify(body)});
+      toast(editingCompanyId ? "Компания обновлена" : "Компания добавлена");
+      resetCompanyForm();
+      await renderCompaniesList();
+    }catch(e){
+      document.getElementById("companyFormError").textContent = e.message;
+    }
+  });
 
   function renderPricePreview(){
     const onlyReady = document.getElementById("priceOnlyReady").checked;
@@ -1567,7 +1779,7 @@
       b.classList.add("active");
       ["orders","kaspiOrders","claims","price","catalog","salary","production","kaspi","audit","users"].forEach(t=> document.getElementById("tab-"+t).style.display = (t===b.dataset.tab)?"":"none");
       if(b.dataset.tab === "catalog") loadCatalog();
-      if(b.dataset.tab === "price") loadPricePreview();
+      if(b.dataset.tab === "price") { loadPricePreview(); loadPriceCompanies(); }
       if(b.dataset.tab === "production") loadProduction();
       if(b.dataset.tab === "kaspiOrders") renderKaspiOrders();
       if(b.dataset.tab === "claims") { if(!kaspiOrders.length) renderKaspiOrders().then(renderClaims); else renderClaims(); }
