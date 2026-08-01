@@ -628,6 +628,8 @@
         <button class="btn amber" id="btnSyncCatalog">🔄 Синхронизировать из заказов Kaspi</button>
         <button class="btn secondary" id="btnAddCatalogItem">+ Добавить товар</button>
         <button class="btn secondary" id="btnBulkPhotos">🖼️ Загрузить фото пачкой</button>
+        <button class="btn secondary" id="btnPhotoStatus" title="Куда сохраняются фото и всё ли с ними в порядке">🔍 Проверить фото</button>
+        <button class="btn secondary" id="btnKaspiToRetail">💰 Цены Kaspi → в розницу</button>
         <input type="file" id="bulkPhotosInput" accept="image/*" multiple style="display:none">
         <button class="btn secondary" id="btnImportCatalog">Импорт из Kaspi (Excel)</button>
         <input type="file" id="importCatalogInput" accept=".xlsx,.xls" style="display:none">
@@ -655,7 +657,9 @@
     <!-- CATALOG ITEM MODAL -->
     <div class="overlay" id="catalogItemOverlay">
       <div class="modal" style="max-width:640px;">
-        <h3>Карточка товара</h3>
+        <h3>Карточка товара <span id="ci_skuTitle" style="font-family:var(--mono); font-size:14px; color:var(--ink-soft); font-weight:400;"></span>
+          <button class="btn secondary" id="ci_copySku" style="padding:2px 9px; font-size:11.5px; vertical-align:middle;">копировать SKU</button>
+        </h3>
         <div id="catalogItemKaspiInfo" style="font-size:12.5px; color:var(--ink-soft); background:#F7F4EC; border-radius:6px; padding:10px 12px; margin-bottom:14px;"></div>
         <div class="grid2">
           <div class="full">
@@ -2057,6 +2061,30 @@
   });
   document.getElementById("catalogShowArchived").addEventListener("change", loadCatalog);
 
+  document.getElementById("btnKaspiToRetail").addEventListener("click", async ()=>{
+    if(!confirm("Перенести цены с Kaspi в розницу?\n\nЗаполнятся только пустые — то, что вы проставили руками, не изменится.")) return;
+    try{
+      const r = await api("/catalog/kaspi-price-to-retail", {method:"POST", body: JSON.stringify({onlyEmpty:true})});
+      await loadCatalog();
+      toast(`Цены перенесены: ${r.updated}${r.skipped ? `, пропущено уже заполненных: ${r.skipped}` : ""}`);
+    }catch(e){ toast("Не получилось: " + e.message); }
+  });
+
+  document.getElementById("btnPhotoStatus").addEventListener("click", async ()=>{
+    try{
+      const s = await api("/catalog/photos-status");
+      const lines = [
+        `Папка: ${s.dir}`,
+        `Существует: ${s.exists ? "да" : "НЕТ"} · запись: ${s.writable ? "разрешена" : "ЗАПРЕЩЕНА"}`,
+        `Файлов: ${s.files} (${s.sizeMb} МБ)`,
+        s.brokenLinks ? `⚠️ Товаров со ссылкой на пропавшее фото: ${s.brokenLinks}` : "Битых ссылок нет",
+        s.onPersistentDisk ? "✅ Постоянный диск — фото не пропадут" : "⚠️ Временный диск: при перезапуске сервера фото сотрутся",
+        s.error ? "Ошибка: " + s.error : ""
+      ].filter(Boolean);
+      alert("Состояние фотографий\n\n" + lines.join("\n"));
+    }catch(e){ toast("Не получилось проверить: " + e.message); }
+  });
+
   // Синхронизация из заказов: каталог товаров Kaspi через API не отдаёт, зато
   // в заказах обоих магазинов есть артикул и название каждой позиции
   document.getElementById("btnSyncCatalog").addEventListener("click", async ()=>{
@@ -2116,6 +2144,7 @@
 
     const info = document.getElementById("catalogImportInfo");
     let ok = 0;
+    const failures = [];
     pendingPhotos = [];
     info.textContent = `Обрабатываю фото: 0 из ${files.length}...`;
 
@@ -2132,7 +2161,10 @@
         const fd = new FormData();
         fd.append("photo", normalized);
         const resp = await fetch("/api/upload", {method:"POST", body:fd, credentials:"same-origin"});
-        if(!resp.ok) throw new Error("не удалось загрузить файл");
+        if(!resp.ok){
+          const err = await resp.json().catch(()=>({}));
+          throw new Error(err.message || `сервер ответил ${resp.status}`);
+        }
         const data = await resp.json();
         if(item){
           await api("/catalog/" + item.id, {method:"PUT", body: JSON.stringify({photo: data.path})});
@@ -2143,12 +2175,15 @@
         }
       }catch(err){
         console.warn("Фото не загрузилось:", file.name, err);
+        failures.push(`${file.name}: ${err.message}`);
       }
       info.textContent = `Обрабатываю фото: ${i+1} из ${files.length}...`;
     }
 
     await loadCatalog();
-    info.textContent = `Привязано по имени файла: ${ok}${pendingPhotos.length ? `, требуют привязки вручную: ${pendingPhotos.length}` : ""}`;
+    info.textContent = `Привязано по имени файла: ${ok}${pendingPhotos.length ? `, требуют привязки вручную: ${pendingPhotos.length}` : ""}`
+      + (failures.length ? `. НЕ ЗАГРУЗИЛОСЬ ${failures.length}: ${failures[0]}` : "");
+    if(failures.length) toast(`Не загрузилось файлов: ${failures.length}. Нажмите «Проверить фото»`);
     if(pendingPhotos.length) openPhotoLinker();
     else toast(`Фото проставлено: ${ok}`);
   });
@@ -2220,6 +2255,12 @@
     if(!it) return;
     editingCatalogId = id;
 
+    document.getElementById("ci_skuTitle").textContent = it.article ? "· SKU " + it.article : "";
+    document.getElementById("ci_copySku").style.display = it.article ? "" : "none";
+    document.getElementById("ci_copySku").onclick = async ()=>{
+      try{ await navigator.clipboard.writeText(it.article); toast("SKU скопирован: " + it.article); }
+      catch(e){ toast("Не удалось скопировать"); }
+    };
     const kaspiBits = [];
     kaspiBits.push(`SKU: <span class="mono">${esc(it.article)}</span>`);
     if(it.kaspiName) kaspiBits.push(`С Kaspi: «${esc(it.kaspiName)}» за ${money(it.kaspiPrice)} ₸`);
@@ -2298,11 +2339,14 @@
     fd.append("photo", file);
     try{
       const resp = await fetch("/api/upload", {method:"POST", body:fd, credentials:"same-origin"});
-      if(!resp.ok) throw new Error("upload_failed");
+      if(!resp.ok){
+        const t = await resp.json().catch(()=>({}));
+        throw new Error(t.message || `сервер ответил ${resp.status}`);
+      }
       const data = await resp.json();
       currentCatalogPhoto = data.path;
       updateCatalogPhotoPreview();
-    }catch(err){ toast("Не удалось загрузить фото"); }
+    }catch(err){ toast("Фото не загрузилось: " + err.message); }
   });
   function updateCatalogPhotoPreview(){
     const img = document.getElementById("ci_photo_preview");
