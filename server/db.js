@@ -237,6 +237,131 @@ CREATE TABLE IF NOT EXISTS price_list_items (
   snapshot TEXT                    -- JSON товара на момент сохранения (только для kind='saved')
 );
 
+-- ---------- Контур «Китай»: контроль закупок у поставщиков ----------
+-- Это НЕ продажи: сюда не заходят Kaspi-заказы, зарплата, производство и маржа.
+-- Отдельные таблицы, потому что у закупки другая жизнь (заказ -> отправка ->
+-- путь -> получение) и свои количества: заказано / отправлено / получено.
+CREATE TABLE IF NOT EXISTS suppliers (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  contact TEXT,
+  phone TEXT,                      -- телефон или мессенджер
+  link TEXT,
+  comment TEXT,
+  is_active INTEGER DEFAULT 1,
+  created_at TEXT,
+  updated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS china_purchase_orders (
+  id TEXT PRIMARY KEY,
+  number INTEGER,                  -- внутренний номер закупки
+  supplier_id TEXT,
+  supplier_order_no TEXT,          -- номер заказа у поставщика
+  channel TEXT,                    -- площадка/канал закупки
+  order_date TEXT,
+  plan_ship_date TEXT,
+  fact_ship_date TEXT,
+  plan_arrive_date TEXT,
+  fact_receive_date TEXT,
+  status TEXT DEFAULT 'ordered',   -- ordered / ready / transit / received / cancelled
+  currency TEXT DEFAULT 'CNY',
+  rate REAL,                       -- курс к тенге на момент закупки
+  total_amount REAL DEFAULT 0,     -- считается на сервере по позициям
+  track_no TEXT,                   -- трек-номер или номер карго
+  link TEXT,
+  comment TEXT,
+  attachment TEXT,
+  created_by TEXT,
+  created_at TEXT,
+  updated_at TEXT,
+  is_archived INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS china_purchase_order_items (
+  id TEXT PRIMARY KEY,
+  purchase_order_id TEXT,
+  item_id TEXT,                    -- ссылка на price_items, если товар уже в Справочнике
+  article TEXT,
+  name TEXT,
+  photo TEXT,
+  category TEXT,
+  qty_ordered REAL DEFAULT 0,
+  qty_shipped REAL DEFAULT 0,
+  qty_received REAL DEFAULT 0,
+  unit_price REAL DEFAULT 0,
+  total_price REAL DEFAULT 0,      -- считается на сервере
+  comment TEXT,
+  sort_order INTEGER DEFAULT 0
+);
+
+-- Склад контура «Китай»: полностью отдельный от основного склада и Справочника.
+-- Сюда попадает то, что физически приехало и разложено по ячейкам.
+CREATE TABLE IF NOT EXISTS china_stock (
+  id TEXT PRIMARY KEY,
+  purchase_order_id TEXT,          -- из какой закупки приехало
+  purchase_item_id TEXT,
+  article TEXT,                    -- артикул поставщика (может повторяться у разных)
+  name TEXT,
+  photo TEXT,
+  category TEXT,
+  barcode TEXT UNIQUE,             -- НАШ внутренний код, печатается на этикетке
+  cell TEXT,                       -- ячейка хранения, напр. A-01-03
+  qty REAL DEFAULT 0,
+  unit_price REAL DEFAULT 0,
+  comment TEXT,
+  created_by TEXT,
+  created_at TEXT,
+  updated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS china_stock_moves (
+  id TEXT PRIMARY KEY,
+  stock_id TEXT,
+  kind TEXT,                       -- receive / move / adjust / write_off / inventory
+  qty_before REAL,
+  qty_after REAL,
+  cell_before TEXT,
+  cell_after TEXT,
+  comment TEXT,
+  user TEXT,
+  created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS china_inventory (
+  id TEXT PRIMARY KEY,
+  number INTEGER,
+  status TEXT DEFAULT 'open',      -- open / done / cancelled
+  cell_filter TEXT,                -- если считали только одну ячейку
+  started_at TEXT,
+  finished_at TEXT,
+  user TEXT,
+  comment TEXT
+);
+
+CREATE TABLE IF NOT EXISTS china_inventory_items (
+  id TEXT PRIMARY KEY,
+  inventory_id TEXT,
+  stock_id TEXT,
+  barcode TEXT,
+  article TEXT,
+  name TEXT,
+  cell TEXT,
+  expected_qty REAL DEFAULT 0,     -- сколько числилось на момент старта
+  counted_qty REAL,                -- сколько насчитали руками (null = ещё не считали)
+  updated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS china_purchase_history (
+  id TEXT PRIMARY KEY,
+  purchase_order_id TEXT,
+  from_status TEXT,
+  to_status TEXT,
+  user TEXT,
+  comment TEXT,
+  created_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT
@@ -255,6 +380,16 @@ CREATE INDEX IF NOT EXISTS idx_print_log_order ON print_log(order_id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_order ON audit_log(order_id);
 CREATE INDEX IF NOT EXISTS idx_price_list_items_list ON price_list_items(price_list_id);
 CREATE INDEX IF NOT EXISTS idx_price_lists_owner ON price_lists(owner, kind);
+CREATE INDEX IF NOT EXISTS idx_china_po_status ON china_purchase_orders(status, is_archived);
+CREATE INDEX IF NOT EXISTS idx_china_po_supplier ON china_purchase_orders(supplier_id);
+CREATE INDEX IF NOT EXISTS idx_china_po_dates ON china_purchase_orders(order_date, plan_arrive_date);
+CREATE INDEX IF NOT EXISTS idx_china_po_items_order ON china_purchase_order_items(purchase_order_id);
+CREATE INDEX IF NOT EXISTS idx_china_history_order ON china_purchase_history(purchase_order_id);
+CREATE INDEX IF NOT EXISTS idx_china_stock_cell ON china_stock(cell);
+CREATE INDEX IF NOT EXISTS idx_china_stock_barcode ON china_stock(barcode);
+CREATE INDEX IF NOT EXISTS idx_china_stock_order ON china_stock(purchase_order_id);
+CREATE INDEX IF NOT EXISTS idx_china_stock_moves_stock ON china_stock_moves(stock_id);
+CREATE INDEX IF NOT EXISTS idx_china_inv_items ON china_inventory_items(inventory_id);
 `;
 
 export function ensureSchema() {
