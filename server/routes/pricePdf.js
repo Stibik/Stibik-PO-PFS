@@ -307,9 +307,59 @@ function contentDisposition(companyShortName) {
   return `attachment; filename="${asciiName}"; filename*=UTF-8''${utf8Name}`;
 }
 
+// Сборка сохранённого прайса по снимку (таблицы price_lists / price_list_items)
+function loadFromSnapshot(body) {
+  const row = db.prepare("SELECT * FROM price_lists WHERE id = ? AND kind = 'saved'").get(body.priceListId);
+  if (!row) return { error: "price_list_not_found" };
+
+  let company = null;
+  try { company = JSON.parse(row.company_snapshot || "null"); } catch (e) {}
+  if (!company) {
+    // Снимка нет (прайс сохранён очень старой версией) — берём текущие реквизиты
+    const c = db.prepare("SELECT * FROM companies WHERE id = ?").get(row.company_id);
+    if (!c) return { error: "company_not_found" };
+    company = {
+      shortName: c.short_name, fullName: c.full_name, bin: c.bin, address: c.address,
+      bankName: c.bank_name, bik: c.bik, iban: c.iban, kbe: c.kbe,
+      phone: c.phone, email: c.email, website: c.website, logo: c.logo, extraText: c.extra_text
+    };
+  }
+
+  const rows = db.prepare("SELECT * FROM price_list_items WHERE price_list_id = ? ORDER BY sort_order").all(row.id);
+  const items = [];
+  for (const r of rows) {
+    let snap = null;
+    try { snap = JSON.parse(r.snapshot || "null"); } catch (e) {}
+    if (snap) { items.push(snap); continue; }
+    // Позиция без снимка — подтягиваем текущие данные, чтобы товар не пропал
+    const live = db.prepare("SELECT * FROM price_items WHERE id = ?").get(r.item_id);
+    if (live) items.push({
+      printName: live.name, article: live.article, category: live.type, subgroup: live.subgroup,
+      material: live.material, height: live.height, diameter: live.diameter, weight: live.weight,
+      retailPrice: live.retail, photo: live.photo, sortOrder: live.sort_order || 0
+    });
+  }
+  if (!items.length) return { error: "no_items" };
+
+  const settings = Object.assign({
+    showPhoto: true, showArticle: true, showMaterial: true, showSizes: true,
+    showWeight: true, showRequisites: true, showExtraText: true, onlyWithPrice: true
+  }, (() => { try { return JSON.parse(row.settings || "{}"); } catch (e) { return {}; } })(), body.settings || {});
+
+  let finalItems = items;
+  if (settings.onlyWithPrice) finalItems = finalItems.filter(it => it.retailPrice != null && it.retailPrice !== "");
+
+  return { company, items: finalItems, settings, priceName: row.name || "" };
+}
+
 // Общая подготовка данных из БД по списку id — используется и для скачивания,
 // и для предпросмотра, чтобы они гарантированно не расходились
 function loadPdfInputs(body) {
+  // Сохранённый прайс собираем из снимка: цены и реквизиты берутся такими,
+  // какими были на момент сохранения, — иначе уже отданный клиенту документ
+  // менялся бы задним числом после правки Справочника
+  if (body.priceListId) return loadFromSnapshot(body);
+
   const company = db.prepare("SELECT * FROM companies WHERE id = ?").get(body.companyId);
   if (!company) return { error: "company_not_found" };
   const ids = Array.isArray(body.itemIds) ? body.itemIds : [];
@@ -347,6 +397,7 @@ function loadPdfInputs(body) {
 
 function sendPdf(req, res, mode) {
   const inputs = loadPdfInputs(req.body || {});
+  if (inputs.error === "price_list_not_found") return res.status(404).json({ error: "price_list_not_found", message: "Сохранённый прайс не найден — возможно, его удалили" });
   if (inputs.error === "company_not_found") return res.status(400).json({ error: "company_not_found", message: "Компания не найдена" });
   if (inputs.error === "no_items") return res.status(400).json({ error: "no_items", message: "Не выбрано ни одного товара" });
   if (!inputs.items.length) return res.status(400).json({ error: "no_items", message: "После настройки «только товары с ценой» не осталось ни одного товара" });
