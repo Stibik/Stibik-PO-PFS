@@ -17,7 +17,17 @@ router.use(requireAuth);
 const PAGE_MARGIN = 40;
 const PAGE_W = 595.28; // A4 pt (портрет)
 const PAGE_H = 841.89;
-const CONTENT_BOTTOM = PAGE_H - PAGE_MARGIN - 30;
+const FOOTER_H = 40;                          // место под колонтитул внизу страницы
+const CONTENT_BOTTOM = PAGE_H - PAGE_MARGIN - FOOTER_H;
+
+// Колонки таблицы товаров. Ширины подобраны так, чтобы длинное название
+// переносилось внутри своей колонки и не наезжало на характеристики и цену.
+const COL = {
+  photoX: PAGE_MARGIN,            photoW: 40,
+  nameX:  PAGE_MARGIN + 50,       nameW: 195,
+  specX:  PAGE_MARGIN + 255,      specW: 140,
+  priceX: PAGE_W - PAGE_MARGIN - 120, priceW: 120
+};
 
 function fmtPrice(n) {
   if (n == null || n === "") return "";
@@ -25,7 +35,7 @@ function fmtPrice(n) {
 }
 
 // Путь вида "/uploads/xxx.jpg" → реальный файл на диске.
-// Если путь уже абсолютный (внешний URL) или файла нет — вернёт null, а не упадёт.
+// Если путь внешний или файла нет — вернёт null, а не упадёт.
 function resolveLocalUpload(webPath) {
   if (!webPath || typeof webPath !== "string") return null;
   if (!webPath.startsWith("/uploads/")) return null;
@@ -33,6 +43,9 @@ function resolveLocalUpload(webPath) {
   return fs.existsSync(full) ? full : null;
 }
 
+// Группировка по ТЗ: Категория → Диаметр → Материал → Высота → Название.
+// Категория и диаметр склеены в один заголовок группы («ГРУШИ · Ø 35 СМ»),
+// материал выводится отдельной плашкой внутри группы.
 function groupItems(items) {
   const byCategory = new Map();
   for (const it of items) {
@@ -48,7 +61,6 @@ function groupItems(items) {
       if (!byDiameter.has(dKey)) byDiameter.set(dKey, []);
       byDiameter.get(dKey).push(it);
     }
-    const diamGroups = [];
     for (const [dKey, dItems] of byDiameter) {
       const byMaterial = new Map();
       for (const it of dItems) {
@@ -56,50 +68,79 @@ function groupItems(items) {
         if (!byMaterial.has(mKey)) byMaterial.set(mKey, []);
         byMaterial.get(mKey).push(it);
       }
-      const matGroups = [];
       for (const [mKey, mItems] of byMaterial) {
-        mItems.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0) || (a.printName || "").localeCompare(b.printName || ""));
-        matGroups.push({ material: mKey === "__nomat__" ? null : mKey, items: mItems });
+        mItems.sort((a, b) =>
+          (a.sortOrder || 0) - (b.sortOrder || 0) ||
+          (Number(a.height) || 0) - (Number(b.height) || 0) ||
+          (a.printName || "").localeCompare(b.printName || "", "ru"));
+        result.push({
+          title: dKey === "__nodiam__" ? cat.toUpperCase() : `${cat.toUpperCase()} · ${dKey.toUpperCase()}`,
+          material: mKey === "__nomat__" ? null : mKey,
+          items: mItems
+        });
       }
-      diamGroups.push({ diameter: dKey === "__nodiam__" ? null : dKey, materials: matGroups });
     }
-    result.push({ category: cat, diameters: diamGroups });
   }
   return result;
 }
 
 // Основная сборка документа — используется и для скачивания, и для предпросмотра,
 // чтобы они гарантированно не расходились (требование ТЗ).
-function buildPdfDocument({ company, items, settings }) {
+function buildPdfDocument({ company, items, settings, priceName }) {
   const doc = new PDFDocument({ size: "A4", margin: PAGE_MARGIN, bufferPages: true });
   doc.registerFont("F", FONT_REGULAR);
   doc.registerFont("FB", FONT_BOLD);
   doc.font("F");
 
-  const rowH = 54;
-  const groupHeaderH = 26;
-  const subHeaderH = 20;
+  const rowH = 50;
+  const groupHeaderH = 40;
 
-  function ensureSpace(neededHeight, isGroupStart) {
-    const minNeeded = isGroupStart ? neededHeight + rowH : neededHeight;
-    if (doc.y + minNeeded > CONTENT_BOTTOM) doc.addPage();
+  // Шапка таблицы повторяется на каждой новой странице (требование ТЗ 7.2)
+  function drawTableHeader() {
+    const y = doc.y;
+    doc.fontSize(7.5).fillColor("#6B7280").font("FB");
+    if (settings.showPhoto) doc.text("ФОТО", COL.photoX, y, { width: COL.photoW });
+    doc.text("МОДЕЛЬ", COL.nameX, y, { width: COL.nameW });
+    doc.text("ХАРАКТЕРИСТИКИ", COL.specX, y, { width: COL.specW });
+    doc.text("ЦЕНА", COL.priceX, y, { width: COL.priceW, align: "right" });
+    doc.font("F");
+    doc.y = y + 11;
+    doc.moveTo(PAGE_MARGIN, doc.y).lineTo(PAGE_W - PAGE_MARGIN, doc.y).lineWidth(0.8).strokeColor("#CBD5E1").stroke();
+    doc.y += 8;
   }
 
+  function newPage() {
+    doc.addPage();
+    doc.y = PAGE_MARGIN;
+    drawTableHeader();
+  }
+
+  // Заголовок группы не должен остаться внизу страницы один: для него требуем
+  // место сразу и под сам заголовок, и хотя бы под одну строку товара.
+  function ensureSpace(neededHeight, isGroupStart) {
+    const minNeeded = isGroupStart ? neededHeight + rowH : neededHeight;
+    if (doc.y + minNeeded > CONTENT_BOTTOM) newPage();
+  }
+
+  // ---------- Шапка документа ----------
   const logoPath = resolveLocalUpload(company.logo);
   if (logoPath) {
-    try { doc.image(logoPath, PAGE_MARGIN, PAGE_MARGIN, { fit: [90, 50] }); } catch (e) {}
+    try { doc.image(logoPath, PAGE_MARGIN, PAGE_MARGIN, { fit: [90, 46] }); } catch (e) {}
   }
   doc.fontSize(9).fillColor("#6B7280")
      .text(`Сформировано: ${new Date().toLocaleDateString("ru-RU")}`, PAGE_MARGIN, PAGE_MARGIN, { align: "right", width: PAGE_W - 2 * PAGE_MARGIN })
      .text("Цены указаны в тенге", { align: "right", width: PAGE_W - 2 * PAGE_MARGIN });
 
-  doc.moveDown(2);
-  doc.fontSize(22).fillColor("#172554").font("FB").text("ПРАЙС-ЛИСТ", PAGE_MARGIN);
+  doc.y = PAGE_MARGIN + 50;
+  doc.fontSize(24).fillColor("#172554").font("FB").text("ПРАЙС-ЛИСТ", PAGE_MARGIN, doc.y);
   doc.font("F");
+  if (priceName) {
+    doc.fontSize(13).fillColor("#374151").text(priceName, PAGE_MARGIN, doc.y + 2, { width: PAGE_W - 2 * PAGE_MARGIN });
+  }
 
   if (settings.showRequisites) {
-    doc.moveDown(0.3);
-    doc.fontSize(10).fillColor("#374151");
+    doc.moveDown(0.5);
+    doc.fontSize(9.5).fillColor("#374151");
     const reqLines = [
       company.fullName,
       company.bin ? `БИН/ИИН: ${company.bin}` : null,
@@ -109,78 +150,83 @@ function buildPdfDocument({ company, items, settings }) {
       company.kbe ? `КБе: ${company.kbe}` : null,
       [company.phone, company.email, company.website].filter(Boolean).join(" · ") || null
     ].filter(Boolean);
-    reqLines.forEach(line => doc.text(line, { width: PAGE_W - 2 * PAGE_MARGIN }));
+    reqLines.forEach(line => doc.text(line, PAGE_MARGIN, doc.y, { width: PAGE_W - 2 * PAGE_MARGIN }));
     if (settings.showExtraText && company.extraText) {
-      doc.moveDown(0.3).fontSize(9).fillColor("#6B7280").text(company.extraText, { width: PAGE_W - 2 * PAGE_MARGIN });
+      doc.moveDown(0.3).fontSize(9).fillColor("#6B7280").text(company.extraText, PAGE_MARGIN, doc.y, { width: PAGE_W - 2 * PAGE_MARGIN });
     }
   }
 
   doc.moveDown(0.8);
   doc.moveTo(PAGE_MARGIN, doc.y).lineTo(PAGE_W - PAGE_MARGIN, doc.y).lineWidth(2).strokeColor("#172554").stroke();
-  doc.moveDown(0.6);
+  doc.y += 14;
 
-  const groups = groupItems(items);
-  for (const catGroup of groups) {
+  drawTableHeader();
+
+  // ---------- Товары ----------
+  for (const group of groupItems(items)) {
     ensureSpace(groupHeaderH, true);
-    doc.fontSize(13).fillColor("#172554").font("FB").text(catGroup.category.toUpperCase(), PAGE_MARGIN);
+    doc.fontSize(12).fillColor("#172554").font("FB").text(group.title, PAGE_MARGIN, doc.y, { width: PAGE_W - 2 * PAGE_MARGIN });
     doc.font("F");
-    doc.moveDown(0.3);
+    doc.y += 4;
 
-    for (const diamGroup of catGroup.diameters) {
-      if (diamGroup.diameter) {
-        ensureSpace(subHeaderH, true);
-        doc.fontSize(11).fillColor("#374151").font("FB").text(diamGroup.diameter, PAGE_MARGIN);
-        doc.font("F");
-        doc.moveDown(0.2);
-      }
-      for (const matGroup of diamGroup.materials) {
-        if (matGroup.material) {
-          ensureSpace(subHeaderH, true);
-          const badgeY = doc.y;
-          doc.roundedRect(PAGE_MARGIN, badgeY, 70, 16, 3).fillAndStroke("#FEF3C7", "#F59E0B");
-          doc.fontSize(9).fillColor("#92400E").text(matGroup.material, PAGE_MARGIN, badgeY + 4, { width: 70, align: "center" });
-          doc.y = badgeY + 16 + 6;
-        }
-        for (const it of matGroup.items) {
-          ensureSpace(rowH, false);
-          const rowTop = doc.y;
-          if (settings.showPhoto) {
-            const photoPath = resolveLocalUpload(it.photo);
-            if (photoPath) { try { doc.image(photoPath, PAGE_MARGIN, rowTop, { fit: [40, 40] }); } catch (e) {} }
-          }
-          const textX = PAGE_MARGIN + 50;
-          const textW = PAGE_W - 2 * PAGE_MARGIN - 50 - 110;
-          doc.fontSize(11).fillColor("#0F172A").font("FB").text(it.printName || "—", textX, rowTop, { width: textW });
-          doc.font("F").fontSize(8.5).fillColor("#6B7280");
-          const bits = [];
-          if (settings.showArticle && it.article) bits.push(`Арт. ${it.article}`);
-          if (settings.showMaterial && it.material) bits.push(it.material);
-          if (settings.showSizes && it.height) bits.push(`Высота ${it.height} см`);
-          if (settings.showWeight && it.weight) bits.push(`Вес ${it.weight} кг`);
-          if (bits.length) doc.text(bits.join(" · "), textX, doc.y, { width: textW });
-
-          doc.fontSize(14).fillColor("#0F172A").font("FB")
-             .text(fmtPrice(it.retailPrice), PAGE_MARGIN + PAGE_W - 2 * PAGE_MARGIN - 110, rowTop + 8, { width: 110, align: "right" });
-          doc.font("F");
-
-          const newY = Math.max(doc.y, rowTop + 44);
-          doc.y = newY;
-          doc.moveTo(PAGE_MARGIN, doc.y + 4).lineTo(PAGE_W - PAGE_MARGIN, doc.y + 4).lineWidth(0.5).strokeColor("#E5E7EB").stroke();
-          doc.y += 10;
-        }
-      }
+    if (group.material) {
+      const badgeY = doc.y;
+      const badgeW = Math.max(46, doc.widthOfString(group.material) + 16);
+      doc.roundedRect(PAGE_MARGIN, badgeY, badgeW, 16, 4).fillAndStroke("#FEF3C7", "#F59E0B");
+      doc.fontSize(9).fillColor("#92400E").text(group.material, PAGE_MARGIN, badgeY + 4, { width: badgeW, align: "center" });
+      doc.y = badgeY + 22;
     }
-    doc.moveDown(0.4);
+
+    for (const it of group.items) {
+      ensureSpace(rowH, false);
+      const rowTop = doc.y;
+
+      if (settings.showPhoto) {
+        const photoPath = resolveLocalUpload(it.photo);
+        // fit сохраняет пропорции — фото не растягивается (требование ТЗ 3)
+        if (photoPath) { try { doc.image(photoPath, COL.photoX, rowTop, { fit: [COL.photoW, 44] }); } catch (e) {} }
+      }
+
+      doc.fontSize(11).fillColor("#0F172A").font("FB")
+         .text(it.printName || "—", COL.nameX, rowTop, { width: COL.nameW });
+      const afterName = doc.y;
+      if (settings.showArticle && it.article) {
+        doc.font("F").fontSize(8.5).fillColor("#6B7280")
+           .text(`Арт. ${it.article}`, COL.nameX, afterName + 1, { width: COL.nameW });
+      }
+
+      const bits = [];
+      if (settings.showMaterial && it.material) bits.push(it.material);
+      if (settings.showSizes && it.height) bits.push(`Высота ${it.height} см`);
+      if (settings.showWeight && it.weight) bits.push(`Вес ${it.weight} кг`);
+      doc.font("F").fontSize(9).fillColor("#475569")
+         .text(bits.length ? bits.join(" · ") : "—", COL.specX, rowTop + 3, { width: COL.specW });
+
+      doc.fontSize(14).fillColor("#0F172A").font("FB")
+         .text(fmtPrice(it.retailPrice) || "—", COL.priceX, rowTop + 2, { width: COL.priceW, align: "right" });
+      doc.font("F");
+
+      // Низ строки — по самой длинной из колонок, чтобы ничего не наложилось
+      doc.y = Math.max(doc.y, rowTop + (settings.showPhoto ? 46 : 34));
+      doc.moveTo(PAGE_MARGIN, doc.y + 4).lineTo(PAGE_W - PAGE_MARGIN, doc.y + 4).lineWidth(0.5).strokeColor("#E5E7EB").stroke();
+      doc.y += 12;
+    }
+    doc.y += 6;
   }
 
+  // ---------- Колонтитулы ----------
   const pageCount = doc.bufferedPageRange().count;
   for (let i = 0; i < pageCount; i++) {
     doc.switchToPage(i);
+    const footY = PAGE_H - PAGE_MARGIN - 24;
+    doc.moveTo(PAGE_MARGIN, footY - 8).lineTo(PAGE_W - PAGE_MARGIN, footY - 8).lineWidth(0.8).strokeColor("#172554").stroke();
+    doc.font("F").fontSize(8).fillColor("#6B7280")
+       .text("В прайс включены только выбранные товары", PAGE_MARGIN, footY, { width: PAGE_W - 2 * PAGE_MARGIN - 120 });
     doc.fontSize(8).fillColor("#9CA3AF")
-       .text(`Страница ${i + 1} из ${pageCount}`, PAGE_MARGIN, PAGE_H - PAGE_MARGIN - 10, { width: PAGE_W - 2 * PAGE_MARGIN, align: "center" });
+       .text(`Страница ${i + 1} из ${pageCount}`, PAGE_W - PAGE_MARGIN - 120, footY, { width: 120, align: "right" });
     if (i === pageCount - 1) {
       doc.fontSize(7.5).fillColor("#9CA3AF")
-         .text("Характеристики и цены сформированы автоматически из справочника", PAGE_MARGIN, PAGE_H - PAGE_MARGIN - 22, { width: PAGE_W - 2 * PAGE_MARGIN, align: "center" });
+         .text("Характеристики и цены сформированы автоматически из справочника", PAGE_MARGIN, footY + 11, { width: PAGE_W - 2 * PAGE_MARGIN - 120 });
     }
   }
 
@@ -195,18 +241,17 @@ function transliterate(s) {
 // Имя файла для заголовка Content-Disposition.
 // ВАЖНО: в сам заголовок нельзя класть кириллицу — Node роняет ответ с
 // ERR_INVALID_CHAR (проверено). Поэтому: латиницей — в filename (запасной
-// вариант для старых браузеров), кириллицей — в filename* по RFC 5987
-// (percent-encoding, тоже чистый ASCII). Современные браузеры возьмут второе
-// и сохранят файл с нормальным русским названием.
+// вариант), кириллицей — в filename* по RFC 5987 (percent-encoding, ASCII).
+// Современные браузеры возьмут второе и сохранят файл с русским названием.
 function contentDisposition(companyShortName) {
   const date = new Date().toISOString().slice(0, 10);
   const asciiName = `Price_${transliterate(companyShortName || "company") || "company"}_${date}.pdf`;
-  const utf8Name = encodeURIComponent(`Прайс ${companyShortName || ""} ${date}.pdf`.replace(/\s+/g, " ").trim());
+  const utf8Name = encodeURIComponent(`Прайс_${companyShortName || ""}_${date}.pdf`.replace(/\s+/g, " ").trim());
   return `attachment; filename="${asciiName}"; filename*=UTF-8''${utf8Name}`;
 }
 
 // Общая подготовка данных из БД по списку id — используется и для скачивания,
-// и для предпросмотра, чтобы гарантированно не расходились
+// и для предпросмотра, чтобы они гарантированно не расходились
 function loadPdfInputs(body) {
   const company = db.prepare("SELECT * FROM companies WHERE id = ?").get(body.companyId);
   if (!company) return { error: "company_not_found" };
@@ -235,46 +280,37 @@ function loadPdfInputs(body) {
     phone: company.phone, email: company.email, website: company.website, logo: company.logo,
     extraText: company.extra_text
   };
-  return { company: companyObj, items: finalItems, settings };
+
+  // Название прайса — свободный текст от пользователя, режем длину и убираем
+  // переводы строк, чтобы не поехала вёрстка шапки
+  const priceName = String(body.priceName || "").replace(/[\r\n\t]+/g, " ").trim().slice(0, 120);
+
+  return { company: companyObj, items: finalItems, settings, priceName };
+}
+
+function sendPdf(req, res, mode) {
+  const inputs = loadPdfInputs(req.body || {});
+  if (inputs.error === "company_not_found") return res.status(400).json({ error: "company_not_found", message: "Компания не найдена" });
+  if (inputs.error === "no_items") return res.status(400).json({ error: "no_items", message: "Не выбрано ни одного товара" });
+  if (!inputs.items.length) return res.status(400).json({ error: "no_items", message: "После настройки «только товары с ценой» не осталось ни одного товара" });
+
+  try {
+    const doc = buildPdfDocument(inputs);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", mode === "preview" ? "inline" : contentDisposition(inputs.company.shortName));
+    doc.pipe(res);
+    doc.end();
+  } catch (e) {
+    console.error(`[price-pdf:${mode}] Ошибка генерации:`, e);
+    res.status(500).json({ error: "pdf_generation_failed", message: "Не получилось собрать PDF: " + e.message });
+  }
 }
 
 // Скачивание готового PDF-файла
-router.post("/generate-pdf", (req, res) => {
-  const inputs = loadPdfInputs(req.body || {});
-  if (inputs.error === "company_not_found") return res.status(400).json({ error: "company_not_found", message: "Компания не найдена" });
-  if (inputs.error === "no_items") return res.status(400).json({ error: "no_items", message: "Не выбрано ни одного товара" });
-  if (!inputs.items.length) return res.status(400).json({ error: "no_items", message: "После фильтра «только с ценой» не осталось ни одного товара" });
-
-  try {
-    const doc = buildPdfDocument(inputs);
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", contentDisposition(inputs.company.shortName));
-    doc.pipe(res);
-    doc.end();
-  } catch (e) {
-    console.error("[price-pdf] Ошибка генерации:", e);
-    res.status(500).json({ error: "pdf_generation_failed", message: "Не получилось собрать PDF: " + e.message });
-  }
-});
+router.post("/generate-pdf", (req, res) => sendPdf(req, res, "download"));
 
 // Предпросмотр — тот же самый документ, но отдаётся inline (открывается в
-// браузере, не скачивается) — по требованию ТЗ "предпросмотр = точная копия PDF"
-router.post("/preview-pdf", (req, res) => {
-  const inputs = loadPdfInputs(req.body || {});
-  if (inputs.error === "company_not_found") return res.status(400).json({ error: "company_not_found", message: "Компания не найдена" });
-  if (inputs.error === "no_items") return res.status(400).json({ error: "no_items", message: "Не выбрано ни одного товара" });
-  if (!inputs.items.length) return res.status(400).json({ error: "no_items", message: "После фильтра «только с ценой» не осталось ни одного товара" });
-
-  try {
-    const doc = buildPdfDocument(inputs);
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", "inline");
-    doc.pipe(res);
-    doc.end();
-  } catch (e) {
-    console.error("[price-pdf-preview] Ошибка генерации:", e);
-    res.status(500).json({ error: "pdf_generation_failed", message: "Не получилось собрать предпросмотр: " + e.message });
-  }
-});
+// браузере, не скачивается) — по требованию ТЗ «предпросмотр = точная копия PDF»
+router.post("/preview-pdf", (req, res) => sendPdf(req, res, "preview"));
 
 export default router;
