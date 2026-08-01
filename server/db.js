@@ -539,6 +539,10 @@ export function ensureSchema() {
   safeAddColumn("payroll_entries", "reported_at TEXT");
   safeAddColumn("payroll_entries", "reported_by TEXT");
 
+  // Позицию можно убрать в архив: не удаляем (на неё ссылаются заказы и
+  // начисления), но из списков и прайса она уходит
+  safeAddColumn("price_items", "is_archived INTEGER DEFAULT 0");
+
   safeAddColumn("price_items", "labor_rate REAL");     // РАСЦЕНКА ТРУДА — ставка за 1 шт, читает раздел "Зарплата"
   safeAddColumn("price_items", "material_cost REAL");  // Затраты на материал
   safeAddColumn("price_items", "misc_cost REAL");      // Прочие затраты
@@ -562,6 +566,11 @@ export function ensureSchema() {
   safeAddColumn("production", "archived_at TEXT");
   safeAddColumn("production", "quantity INTEGER DEFAULT 1");
   safeAddColumn("production", "shop TEXT");
+  // Менеджер решает, что уходит забивщикам: пока заказ не «опубликован»,
+  // в мониторе его не видно — иначе там висело бы всё подряд
+  safeAddColumn("production", "published INTEGER DEFAULT 0");
+  safeAddColumn("production", "published_at TEXT");
+  safeAddColumn("production", "published_by TEXT");
 
   // ── Богаче поля для "Остатков" ──
   safeAddColumn("warehouse_stock", "location TEXT");   // место хранения (свободный текст)
