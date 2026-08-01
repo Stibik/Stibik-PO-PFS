@@ -307,6 +307,7 @@
         <span style="font-size:12.5px; color:var(--ink-soft);">Контур:</span>
         <div class="pill-row" id="cnContourSwitch"></div>
         <span id="cnContourHint" style="font-size:12px; color:var(--ink-soft);"></span>
+        <div id="cnContourInfo" style="display:none; width:100%; background:#EAF2FB; border:1px solid #B9D3EE; border-radius:8px; padding:10px 12px; font-size:12.5px; line-height:1.55;"></div>
       </div>
 
       <div id="cn-screen" style="display:none;">
@@ -359,6 +360,10 @@
         <button class="btn secondary" id="btnImportOrders">Импорт из Excel</button>
         <button class="btn secondary" id="btnExportOrders">Экспорт в Excel</button>
         <button class="btn danger" id="btnBulkDeleteOrders" style="display:none;"></button>
+        <span id="bulkShopWrap" style="display:none; align-items:center; gap:6px;">
+          <select id="bulkShopSelect" style="padding:7px 10px;"></select>
+          <button class="btn secondary" id="btnBulkAssignShop">Присвоить магазин</button>
+        </span>
         <input type="file" id="importOrdersInput" accept=".xlsx,.xls" style="display:none">
       </div>
       <div id="ordersStats" style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:14px;"></div>
@@ -2558,11 +2563,41 @@
       : (cnContour === "all" ? "Поступления по всем магазинам" : "");
   }
 
+  // Подсказка объясняет ровно то, что человек видит перед собой: почему в SA/PFS
+  // пусто и что с этим делать. Без неё пустой экран выглядит как поломка.
+  function renderContourInfo(){
+    const box = document.getElementById("cnContourInfo");
+    if(!box) return;
+    if(cnContour === "china"){
+      box.style.display = "";
+      box.innerHTML = `<b>ℹ️ Контур «Китай» — только контроль закупок у поставщиков.</b><br>
+        Это не продажи: сюда не попадают заказы Kaspi, зарплата, производство и маржа, а товар лежит на отдельном складе с своими ячейками и штрих-кодами.<br>
+        Порядок работы: <b>Поставщики</b> → <b>+ Новая закупка</b> → по факту отгрузки «Отметить отправку» → по приезду «Отметить получение» → <b>Оприходовать</b> с ячейкой → печать этикеток → при необходимости <b>Инвентаризация</b>.`;
+      return;
+    }
+    const noShop = orders.filter(o=>!o.shop).length;
+    if(cnContour === "all"){
+      box.style.display = noShop ? "" : "none";
+      if(noShop) box.innerHTML = `<b>ℹ️ Записей без магазина: ${noShop}</b> — они видны только здесь, во «Все».<br>
+        Раньше поле «Магазин» у прихода не сохранялось, поэтому вкладки SA и PFS пока пустые. Чтобы разделить:
+        отметьте записи галочками слева, выберите магазин в списке рядом с кнопками сверху и нажмите <b>«Присвоить магазин»</b>.
+        У новых записей магазин указывается прямо в форме прихода.`;
+      return;
+    }
+    const shopName = cnContour.slice(5);
+    const inShop = orders.filter(o=>o.shop === shopName).length;
+    box.style.display = inShop ? "none" : "";
+    if(!inShop) box.innerHTML = `<b>ℹ️ В контуре «${esc(shopName)}» пока нет ни одной записи.</b><br>
+      Это не ошибка: у ${noShop} поступлений магазин не заполнен — раньше приложение его не сохраняло.<br>
+      Что сделать: перейдите в контур <b>«Все»</b>, отметьте галочками записи этого магазина, выберите «${esc(shopName)}» в списке сверху и нажмите <b>«Присвоить магазин»</b>. После этого они появятся здесь.`;
+  }
+
   function applyContour(){
     const isChina = cnContour === "china";
     document.getElementById("prihodClassic").style.display = isChina ? "none" : "";
     document.getElementById("cn-screen").style.display = isChina ? "" : "none";
     renderContourSwitch();
+    renderContourInfo();
     if(isChina) loadChina();
     else renderOrders(false);
   }
@@ -4997,6 +5032,7 @@
       });
     });
     updateBulkDeleteBtn();
+    renderContourInfo();
   }
 
   // ---------- Управление категориями (отдельное окно, без prompt) ----------
@@ -5037,7 +5073,32 @@
     if(!btn) return;
     btn.style.display = selectedOrderIds.size ? "" : "none";
     btn.textContent = `🗑️ Удалить выбранное (${selectedOrderIds.size})`;
+    const wrap = document.getElementById("bulkShopWrap");
+    if(wrap){
+      wrap.style.display = selectedOrderIds.size ? "inline-flex" : "none";
+      const sel = document.getElementById("bulkShopSelect");
+      const prev = sel.value;
+      sel.innerHTML = `<option value="">— выберите магазин —</option>` +
+        cnShopNames.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join("");
+      sel.value = prev;
+      document.getElementById("btnBulkAssignShop").textContent = `Присвоить магазин (${selectedOrderIds.size})`;
+    }
   }
+
+  document.getElementById("btnBulkAssignShop").addEventListener("click", async ()=>{
+    const shop = document.getElementById("bulkShopSelect").value;
+    if(!shop){ toast("Сначала выберите магазин в списке слева"); return; }
+    if(!selectedOrderIds.size) return;
+    if(!confirm(`Присвоить магазин «${shop}» выбранным записям (${selectedOrderIds.size})? Данные о товаре и ценах не изменятся.`)) return;
+    let ok = 0; const errors = [];
+    for(const id of selectedOrderIds){
+      try{ await api("/orders/"+id, {method:"PUT", body: JSON.stringify({shop})}); ok++; }
+      catch(e){ errors.push(e.message); }
+    }
+    selectedOrderIds.clear();
+    await loadAll();
+    toast(errors.length ? `Присвоено: ${ok}, ошибок: ${errors.length}` : `Магазин «${shop}» присвоен записям: ${ok}`);
+  });
   // ORDER MODAL
   const orderOverlay = document.getElementById("orderOverlay");
   window.__openOrder = function(id){
