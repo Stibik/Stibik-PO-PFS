@@ -105,6 +105,37 @@ app.use("/api/meta", metaRoutes);
 app.use("/api/settings", requirePermission("kaspi"), settingsRoutes);
 app.use("/api/audit", requirePermission("audit"), auditRoutes);
 
+// Иконка приложения и манифест: чтобы во вкладке браузера был значок, а на
+// телефоне «Добавить на главный экран» давало нормальную иконку и название
+const APP_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#0F172A"/>
+  <text x="50%" y="52%" text-anchor="middle" dominant-baseline="middle"
+        font-family="Arial Black, Arial, sans-serif" font-size="190" font-weight="900" fill="#FFFFFF">PFS</text>
+  <rect x="372" y="150" width="34" height="34" rx="8" fill="#F59E0B"/>
+</svg>`;
+
+app.get("/icon.svg", (req, res) => {
+  res.setHeader("Content-Type", "image/svg+xml");
+  res.setHeader("Cache-Control", "public, max-age=86400");
+  res.send(APP_ICON);
+});
+
+app.get("/manifest.webmanifest", (req, res) => {
+  res.setHeader("Content-Type", "application/manifest+json");
+  res.json({
+    name: "PFS Control — учёт заказов",
+    short_name: "PFS Control",
+    start_url: "/",
+    display: "standalone",
+    background_color: "#0F172A",
+    theme_color: "#0F172A",
+    icons: [
+      { src: "/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
+      { src: "/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "maskable" }
+    ]
+  });
+});
+
 // Статика фронтенда
 app.use(express.static(path.join(__dirname, "public")));
 app.get("/*splat", (req, res) => {
