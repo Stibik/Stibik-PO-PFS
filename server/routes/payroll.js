@@ -70,6 +70,11 @@ router.get("/entries", (req, res) => {
   if (req.query.status) { where.push("status = ?"); params.push(req.query.status); }
   if (req.query.kind) { where.push("kind = ?"); params.push(req.query.kind); }
   if (req.query.shop) { where.push("shop = ?"); params.push(req.query.shop); }
+  if (req.query.q) {
+    where.push("(lower(article) LIKE ? OR lower(product_name) LIKE ?)");
+    const like = "%" + String(req.query.q).toLowerCase() + "%";
+    params.push(like, like);
+  }
   if (req.query.from) { where.push("created_at >= ?"); params.push(String(req.query.from)); }
   if (req.query.to) { where.push("created_at <= ?"); params.push(String(req.query.to) + "T23:59:59"); }
   if (req.query.includeCancelled !== "1") where.push("status != 'cancelled'");
@@ -164,6 +169,41 @@ router.post("/entries/:id/accept", (req, res) => {
     .run(new Date().toISOString(), req.session.username, e.id);
   logAudit({ user: req.session.username, action: "payroll_accept", comment: `${e.product_name || e.article}: ${money(e.amount)} ₸` });
   res.json(entryToJson(db.prepare("SELECT * FROM payroll_entries WHERE id = ?").get(e.id)));
+});
+
+// Разнесение работы на другого человека: сумма уже посчитана по расценке,
+// меняется только исполнитель. Оплаченное не трогаем — там деньги уже ушли.
+router.put("/entries/:id", (req, res) => {
+  const e = db.prepare("SELECT * FROM payroll_entries WHERE id = ?").get(req.params.id);
+  if (!e) return res.status(404).json({ error: "not_found" });
+  if (e.status === "paid") return res.status(400).json({ error: "already_paid", message: "Работа уже оплачена — исполнителя не поменять" });
+
+  const b = req.body || {};
+  const updates = [];
+  const params = [];
+
+  if (b.employeeId) {
+    if (!db.prepare("SELECT id FROM employees WHERE id = ?").get(b.employeeId)) {
+      return res.status(400).json({ error: "no_employee", message: "Сотрудник не найден" });
+    }
+    updates.push("employee_id = ?"); params.push(b.employeeId);
+  }
+  // Количество можно поправить (например, сделали не всё) — сумму пересчитает сервер
+  if (b.qty !== undefined) {
+    const qty = num(b.qty);
+    if (qty <= 0) return res.status(400).json({ error: "bad_qty", message: "Количество должно быть больше нуля" });
+    updates.push("qty = ?", "amount = ?");
+    params.push(qty, money(qty * num(e.rate)));
+  }
+  if (b.comment !== undefined) { updates.push("comment = ?"); params.push(str(b.comment)); }
+  if (!updates.length) return res.json(entryToJson(e));
+
+  params.push(e.id);
+  db.prepare(`UPDATE payroll_entries SET ${updates.join(", ")} WHERE id = ?`).run(...params);
+  const updated = db.prepare("SELECT * FROM payroll_entries WHERE id = ?").get(e.id);
+  logAudit({ user: req.session.username, action: "payroll_reassign",
+             comment: `${updated.product_name || updated.article}: ${money(updated.amount)} ₸` });
+  res.json(entryToJson(updated));
 });
 
 router.post("/entries/:id/cancel", (req, res) => {
