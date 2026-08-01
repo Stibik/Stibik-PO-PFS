@@ -360,6 +360,7 @@
     </div>
     <div class="hdr-right">
       <div class="hdr-status" id="hdrStatus"><span class="hdr-dot"></span><span>Данные обновлены</span></div>
+      <button class="btn amber" id="btnInstallApp" style="display:none; padding:6px 12px; font-size:12.5px;">📲 Установить</button>
       <button class="hdr-bell" id="hdrBell" title="Требует внимания">🔔<span class="hdr-badge" id="hdrBadge" style="display:none;">0</span></button>
       <div class="hdr-user" id="hdrUserBtn">
         <div class="hdr-avatar" id="hdrAvatar">—</div>
@@ -373,6 +374,7 @@
     <div class="hdr-menu" id="hdrUserMenu">
       <div class="hdr-menu-title">Аккаунт</div>
       <button id="btnChangePassword">Сменить пароль</button>
+      <button id="btnBackup" class="admin-only">💾 Резервная копия</button>
       <button id="btnLogout">Выйти</button>
     </div>
     <div class="hdr-menu" id="hdrBellMenu" style="right:100px;">
@@ -870,6 +872,7 @@
         <b id="prodBulkCount" style="font-size:13.5px;">Выбрано: 0</b>
         <select id="prodBulkEmployee" style="min-width:190px;"></select>
         <button class="btn amber" id="prodBulkAssign" style="padding:6px 12px; font-size:12.5px;">Назначить исполнителя</button>
+        <button class="btn amber" id="prodBulkPublish" style="padding:6px 12px; font-size:12.5px;">📢 Отправить забивщикам</button>
         <button class="btn secondary" id="prodBulkSpread" style="padding:6px 12px; font-size:12.5px;">🎲 Распределить поровну</button>
         <button class="btn secondary" id="prodBulkStock" style="padding:6px 12px; font-size:12.5px;">📦 Списать с остатков</button>
         <button class="btn secondary" id="prodBulkReturn" style="padding:6px 12px; font-size:12.5px;">↩️ Перекрыть возвратом</button>
@@ -1484,6 +1487,24 @@
     <div class="modal-actions">
       <div></div>
       <div><button class="btn secondary" id="pw_cancel">Отмена</button> <button class="btn amber" id="pw_save">Сменить</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="backupOverlay">
+  <div class="modal" style="max-width:520px;">
+    <h3>Резервная копия</h3>
+    <div id="backupInfo" style="font-size:13px;">Загрузка...</div>
+    <div style="font-size:12px; color:var(--ink-soft); margin-top:12px;">
+      Скачайте оба файла перед любыми работами с сервером. База — это все заказы, товары,
+      зарплата и закупки; архив — фотографии товаров.
+    </div>
+    <div class="modal-actions">
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <a class="btn amber" style="text-decoration:none; padding:8px 14px;" href="/api/backup/database">💾 Скачать базу</a>
+        <a class="btn secondary" style="text-decoration:none; padding:8px 14px;" href="/api/backup/photos">🖼️ Скачать фото</a>
+      </div>
+      <button class="btn secondary" id="backupClose">Закрыть</button>
     </div>
   </div>
 </div>
@@ -3881,6 +3902,7 @@
   let mnFree = [], mnMine = null;
 
   async function loadMonitor(){
+    startMonitorAutoRefresh();
     document.getElementById("mnList").innerHTML = `<div class="panel" style="text-align:center; color:var(--ink-soft);">Загрузка...</div>`;
     try{
       const [free, mine] = await Promise.all([api("/monitor/free"), api("/monitor/mine")]);
@@ -3899,6 +3921,13 @@
         <div style="font-family:var(--serif); font-size:20px;">${money(sum)} ₸</div>
         <div style="font-size:11px; color:var(--ink-soft);">${hint}</div>
       </div>`;
+    const hint = monitorInstallHint();
+    if(hint && !document.getElementById("mnIosHint")){
+      const div = document.createElement("div");
+      div.id = "mnIosHint";
+      div.innerHTML = hint;
+      document.getElementById("tab-monitor").insertBefore(div, document.getElementById("mnTotals"));
+    }
     document.getElementById("mnTotals").innerHTML =
       card("#2563EB", t.inWork, "У меня в работе", "ещё не сдано") +
       card("#7C3AED", t.reported, "Сдал", "ждёт подтверждения") +
@@ -3963,6 +3992,36 @@
     }));
   }
   document.getElementById("mnRefresh").addEventListener("click", loadMonitor);
+
+  // Монитор сам подтягивает новые заказы: менеджер отправил — через полминуты
+  // они у забивщика на экране, без обновления страницы
+  let mnTimer = null, mnKnownFree = null;
+  function startMonitorAutoRefresh(){
+    if(mnTimer) return;
+    mnTimer = setInterval(async ()=>{
+      if(document.getElementById("tab-monitor").style.display === "none") return;
+      try{
+        const free = await api("/monitor/free");
+        if(mnKnownFree !== null && free.length > mnKnownFree){
+          toast(`🔔 Новые заказы: ${free.length - mnKnownFree}`);
+        }
+        mnKnownFree = free.length;
+        mnFree = free;
+        renderMonitor();
+      }catch(e){ /* сеть моргнула — попробуем в следующий раз */ }
+    }, 30000);
+  }
+
+  // На iPhone кнопки установки нет — там это делается через «Поделиться»
+  function monitorInstallHint(){
+    const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    // matchMedia есть не во всех вебвью — без проверки монитор падал бы целиком
+    const standalone = (typeof window.matchMedia === "function" && window.matchMedia("(display-mode: standalone)").matches)
+      || window.navigator.standalone === true;
+    if(!isIos || standalone) return "";
+    return `<div class="panel" style="background:#F7FAFF; border-color:#CFE0F5; font-size:12.5px;">
+      📲 Чтобы работать как в приложении: нажмите «Поделиться» внизу Safari → «На экран Домой».</div>`;
+  }
 
   // ================= Доска задач =================
   // Бытовые поручения: купить, сделать, съездить. Специально отдельно от
@@ -4526,6 +4585,7 @@
       title: "Производство — что и кому делать",
       body: `<b>Зачем:</b> каждый заказ с SA, PFS или ручной УД попадает сюда автоматически, чтобы решить, откуда взять товар.<br>
         <b>Три решения:</b> «Списать с остатков» — товар уже есть на складе; «Назначить исполнителя» — делаем, и человеку начисляется зарплата; «Перекрыть возвратом» — берём из вернувшегося заказа.<br>
+        <b>Заказ забивщикам:</b> кнопка «📢 Забивщикам» отправляет позицию в их монитор — там её видят все и разбирают сами. Можно и назначить конкретному человеку, тогда монитор не нужен.<br>
         <b>Три шага, они подписаны прямо в строке:</b> шаг 1 — решить, откуда берём товар; шаг 2 — нажать «✓ Сделали», когда готово; шаг 3 — выплатить в «Зарплате».<br>
         <b>Основная швея</b> выбирается сверху один раз — дальше кнопка сразу пишет её имя, выбирать каждый раз не нужно.<br>
         <b>На запас:</b> кнопка «Сделать на запас» — изделие встаёт на склад, начисление создаётся, но платить сразу не обязаны.`
@@ -4542,7 +4602,8 @@
       body: `<b>Как работать:</b> «Свободные заказы» → <b>«Беру себе»</b> → шьёте → <b>«Готово ✓»</b>. Дальше менеджер подтверждает, и сумма идёт к выплате.<br>
         <b>Сколько заработал</b> видно сверху: в работе / сдал / подтверждено / получено.<br>
         <b>С телефона:</b> откройте сайт в браузере, меню → «Добавить на главный экран» — появится иконка, как у приложения.<br>
-        <b>Важно:</b> заказ достаётся тому, кто первый нажал «Беру себе». Чужие заказы и чужую зарплату вы не видите.`
+        <b>Важно:</b> заказ достаётся тому, кто первый нажал «Беру себе». Чужие заказы и чужую зарплату вы не видите.<br>
+        <b>Новые заказы</b> появляются сами, каждые 30 секунд — обновлять страницу не нужно.`
     },
     kaspi: {
       title: "Kaspi: настройки",
@@ -4639,8 +4700,10 @@
   // Вместо сухого статуса — прямая подсказка: на каком шаге строка и что дальше.
   // За программой сидят разные люди, каждый должен понимать без объяснений.
   function prodStepCell(p, entry){
+    if(!p.decision && p.published) return `<b style="color:#7C3AED; font-size:12px;">Шаг 1 из 3 · у забивщиков</b>
+      <div style="font-size:11.5px; color:var(--ink-soft);">ждём, кто возьмёт себе</div>`;
     if(!p.decision) return `<b style="color:var(--amber); font-size:12px;">Шаг 1 из 3</b>
-      <div style="font-size:11.5px; color:var(--ink-soft);">решить, откуда берём товар</div>`;
+      <div style="font-size:11.5px; color:var(--ink-soft);">решить, откуда берём, или отправить забивщикам</div>`;
     if(p.decision === "stock") return `<span style="color:#4B5563; font-size:12px;">Списано со склада</span>
       <div style="font-size:11px; color:var(--ink-soft);">делать ничего не нужно</div>`;
     if(p.decision === "return_offset") return `<span style="color:#7C3AED; font-size:12px;">Перекрыто возвратом</span>
@@ -4742,6 +4805,9 @@
               : "—"}</td>
           <td style="white-space:nowrap;">
             ${!p.decision ? `
+              ${p.published
+                ? `<button class="btn secondary prod-unpublish" data-prod-id="${esc(p.id)}" style="padding:4px 8px; font-size:11.5px;" title="Убрать из монитора">📢 в мониторе</button>`
+                : `<button class="btn secondary prod-publish" data-prod-id="${esc(p.id)}" style="padding:4px 8px; font-size:11.5px;" title="Отправить забивщикам">📢 Забивщикам</button>`}
               <button class="btn amber prod-quick-assign" data-prod-id="${esc(p.id)}" style="padding:4px 10px; font-size:11.5px;">${prodDefaultEmployeeName ? "Шьёт " + esc(prodDefaultEmployeeName) : "Назначить"}</button>
               <button class="btn secondary prod-action-stock" data-prod-id="${esc(p.id)}" style="padding:4px 8px; font-size:11.5px;" title="Товар уже есть на складе">📦 Со склада</button>
               <button class="btn secondary prod-action-return" data-prod-id="${esc(p.id)}" style="padding:4px 8px; font-size:11.5px;" title="Берём из вернувшегося заказа">↩️ Возврат</button>` : ""}
@@ -4765,6 +4831,20 @@
         renderProduction();
       });
     }
+    wrap.querySelectorAll(".prod-publish").forEach(b=>b.addEventListener("click", async ()=>{
+      try{
+        await api("/dispatch/publish", {method:"POST", body: JSON.stringify({ids:[b.dataset.prodId]})});
+        toast("Отправлено забивщикам — появится у них в мониторе");
+        loadProduction();
+      }catch(e){ toast("Не получилось: " + e.message); }
+    }));
+    wrap.querySelectorAll(".prod-unpublish").forEach(b=>b.addEventListener("click", async ()=>{
+      try{
+        await api("/dispatch/unpublish", {method:"POST", body: JSON.stringify({ids:[b.dataset.prodId]})});
+        toast("Убрано из монитора");
+        loadProduction();
+      }catch(e){ toast("Не получилось: " + e.message); }
+    }));
     wrap.querySelectorAll(".prod-quick-assign").forEach(b=>b.addEventListener("click", async ()=>{
       let employeeId = prodDefaultEmployeeId;
       if(!employeeId){
@@ -4903,6 +4983,16 @@
     selectedProdIds.clear();
     await loadProduction();
     toast(errors.length ? `Распределено: ${ok}, ошибок: ${errors.length}` : `Распределено поровну: ${ok}`);
+  });
+  document.getElementById("prodBulkPublish").addEventListener("click", async ()=>{
+    const ids = Array.from(selectedProdIds);
+    if(!ids.length) return;
+    try{
+      const r = await api("/dispatch/publish", {method:"POST", body: JSON.stringify({ids})});
+      selectedProdIds.clear();
+      await loadProduction();
+      toast(`Отправлено забивщикам: ${r.published}${r.skipped ? `, пропущено уже решённых: ${r.skipped}` : ""}`);
+    }catch(e){ toast("Не получилось: " + e.message); }
   });
   document.getElementById("prodBulkStock").addEventListener("click", ()=>prodBulkResolve("stock", null, "Списать с остатков"));
   document.getElementById("prodBulkReturn").addEventListener("click", ()=>prodBulkResolve("return_offset", null, "Перекрыть возвратом"));
@@ -6737,6 +6827,59 @@
       });
     });
   }
+
+  // ---------- Установка на телефон ----------
+  // Это не «настоящее» приложение из магазина, а установка сайта на экран:
+  // отдельная иконка, свой экран без адресной строки, работает так же.
+  let deferredInstall = null;
+  if("serviceWorker" in navigator){
+    navigator.serviceWorker.register("/sw.js").catch(()=>{ /* не поддерживается — не беда */ });
+  }
+  window.addEventListener("beforeinstallprompt", (e)=>{
+    e.preventDefault();
+    deferredInstall = e;
+    document.getElementById("btnInstallApp").style.display = "";
+  });
+  document.getElementById("btnInstallApp").addEventListener("click", async ()=>{
+    if(!deferredInstall) return;
+    deferredInstall.prompt();
+    const res = await deferredInstall.userChoice;
+    if(res.outcome === "accepted"){
+      document.getElementById("btnInstallApp").style.display = "none";
+      toast("Готово — иконка появилась на экране телефона");
+    }
+    deferredInstall = null;
+  });
+  window.addEventListener("appinstalled", ()=>{
+    document.getElementById("btnInstallApp").style.display = "none";
+  });
+
+  // ---------- Резервная копия ----------
+  document.getElementById("btnBackup").addEventListener("click", async ()=>{
+    document.getElementById("backupOverlay").classList.add("show");
+    const box = document.getElementById("backupInfo");
+    box.innerHTML = "Загрузка...";
+    try{
+      const i = await api("/backup/info");
+      const mb = (n)=> (n/1048576).toFixed(1) + " МБ";
+      box.innerHTML = `
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px 14px;">
+          <div>Заказы: <b>${i.counts.orders}</b></div><div>Товары: <b>${i.counts.catalog}</b></div>
+          <div>Начисления: <b>${i.counts.payroll}</b></div><div>Закупки Китай: <b>${i.counts.chinaPurchases}</b></div>
+          <div>Сотрудники: <b>${i.counts.employees}</b></div><div>Пользователи: <b>${i.counts.users}</b></div>
+        </div>
+        <div style="margin-top:10px;">База: <b>${mb(i.dbSize)}</b> · Фотографий: <b>${i.photos}</b> (${mb(i.photosSize)})</div>
+        <div style="margin-top:10px; padding:9px 11px; border-radius:8px; font-size:12.5px; ${
+          i.onPersistentDisk
+            ? "background:#DCFCE7; border:1px solid #86EFAC;"
+            : "background:#FEF3C7; border:1px solid #F59E0B;"}">
+          ${i.onPersistentDisk
+            ? "✅ Данные лежат на постоянном диске — перезапуск сервера их не сотрёт."
+            : "⚠️ Данные на временном диске: при перезапуске сервера они пропадут. Обязательно скачайте копию."}
+        </div>`;
+    }catch(e){ box.innerHTML = `<span style="color:var(--red);">${esc(e.message)}</span>`; }
+  });
+  document.getElementById("backupClose").addEventListener("click", ()=>document.getElementById("backupOverlay").classList.remove("show"));
 
   // ---------- Смена пароля ----------
   let passwordForced = false;
