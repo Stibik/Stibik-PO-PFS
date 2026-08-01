@@ -1,6 +1,6 @@
 {
   "name": "order-tracker-server",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "description": "Учёт заказов и прайса — сервер",
   "main": "server.js",
   "type": "module",
@@ -12,6 +12,7 @@
   "license": "ISC",
   "dependencies": {
     "bcryptjs": "^3.0.3",
+    "dejavu-fonts-ttf": "^2.37.3",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "express-session": "^1.19.0",
