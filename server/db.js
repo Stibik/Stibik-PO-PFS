@@ -216,6 +216,27 @@ CREATE TABLE IF NOT EXISTS companies (
   updated_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS price_lists (
+  id TEXT PRIMARY KEY,
+  name TEXT,                       -- название прайса (уходит в шапку PDF)
+  kind TEXT DEFAULT 'draft',       -- 'draft' — рабочий черновик пользователя, 'saved' — сохранённый прайс
+  owner TEXT,                      -- логин владельца черновика (у каждого пользователя свой)
+  company_id TEXT,
+  settings TEXT,                   -- JSON настроек PDF
+  company_snapshot TEXT,           -- JSON реквизитов на момент сохранения (только для kind='saved')
+  created_by TEXT,
+  created_at TEXT,
+  updated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS price_list_items (
+  id TEXT PRIMARY KEY,
+  price_list_id TEXT,
+  item_id TEXT,                    -- ссылка на товар в price_items
+  sort_order INTEGER DEFAULT 0,
+  snapshot TEXT                    -- JSON товара на момент сохранения (только для kind='saved')
+);
+
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT
@@ -232,6 +253,8 @@ CREATE INDEX IF NOT EXISTS idx_status_history_order ON status_history(order_id);
 CREATE INDEX IF NOT EXISTS idx_cargo_places_order ON cargo_places(order_id);
 CREATE INDEX IF NOT EXISTS idx_print_log_order ON print_log(order_id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_order ON audit_log(order_id);
+CREATE INDEX IF NOT EXISTS idx_price_list_items_list ON price_list_items(price_list_id);
+CREATE INDEX IF NOT EXISTS idx_price_lists_owner ON price_lists(owner, kind);
 `;
 
 export function ensureSchema() {
