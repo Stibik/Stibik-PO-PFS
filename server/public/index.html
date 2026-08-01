@@ -100,6 +100,151 @@
     .login-box{ width:calc(100vw - 40px); }
   }
 </style>
+<style>
+  /* ============================================================
+     РЕДИЗАЙН СТРАНИЦЫ "ЗАКАЗЫ" — по спецификации, стиль Linear/Stripe.
+     Всё под префиксом o2- и внутри #tab-kaspiOrders, чтобы не задеть
+     остальные вкладки (Приход, Справочник и т.д.) — у них старый стиль
+     остаётся как есть, это осознанно, не ошибка.
+     ============================================================ */
+  #tab-kaspiOrders{
+    --o2-bg:#F6F7F9; --o2-card:#FFFFFF; --o2-border:#E5E7EB;
+    --o2-navy:#172554; --o2-amber:#F59E0B;
+    --o2-ink:#0F172A; --o2-ink-soft:#6B7280;
+    --o2-purple:#7C3AED; --o2-purple-bg:#EDE9FE;
+    --o2-orange:#D97706; --o2-orange-bg:#FEF3C7;
+    --o2-blue:#2563EB; --o2-blue-bg:#DBEAFE;
+    --o2-cyan:#0891B2; --o2-cyan-bg:#CFFAFE;
+    --o2-green:#16A34A; --o2-green-bg:#DCFCE7;
+    --o2-red:#DC2626; --o2-red-bg:#FEE2E2;
+    --o2-gray:#6B7280; --o2-gray-bg:#F3F4F6;
+    font-family:'Inter',-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;
+    background:var(--o2-bg); margin:-22px -26px; padding:20px 26px 60px; color:var(--o2-ink);
+  }
+  #tab-kaspiOrders .o2-icon{width:18px; height:18px; stroke:currentColor; fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; vertical-align:-4px; flex-shrink:0;}
+  #tab-kaspiOrders .o2-card{background:var(--o2-card); border:1px solid var(--o2-border); border-radius:14px;}
+  #tab-kaspiOrders .o2-shadow{box-shadow:0 1px 3px rgba(15,23,42,0.06), 0 1px 2px rgba(15,23,42,0.04);}
+
+  /* Шапка */
+  .o2-header{display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:14px; margin-bottom:18px;}
+  .o2-header h1{font-family:inherit; font-size:22px; font-weight:700; margin:0; color:var(--o2-navy);}
+  .o2-header .o2-sub{font-size:13px; color:var(--o2-ink-soft); margin-top:2px;}
+  .o2-header-right{display:flex; align-items:center; gap:14px; flex-wrap:wrap;}
+  .o2-sync-time{display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--o2-ink-soft);}
+  .o2-toggle-wrap{display:flex; align-items:center; gap:8px; font-size:13px; color:var(--o2-ink);}
+  .o2-toggle{position:relative; width:38px; height:22px; border-radius:11px; background:var(--o2-border); cursor:pointer; transition:background .15s; border:none; padding:0; flex-shrink:0;}
+  .o2-toggle.on{background:var(--o2-navy);}
+  .o2-toggle .o2-knob{position:absolute; top:2px; left:2px; width:18px; height:18px; border-radius:50%; background:#fff; transition:transform .15s; box-shadow:0 1px 2px rgba(0,0,0,0.2);}
+  .o2-toggle.on .o2-knob{transform:translateX(16px);}
+  .o2-btn-primary{display:inline-flex; align-items:center; gap:7px; padding:9px 18px; border-radius:10px; border:none; background:var(--o2-amber); color:#fff; font-size:13.5px; font-weight:600; cursor:pointer; transition:filter .15s, transform .08s;}
+  .o2-btn-primary:hover{filter:brightness(1.06);}
+  .o2-btn-primary:active{transform:scale(.97);}
+  .o2-btn-ghost{display:inline-flex; align-items:center; gap:6px; padding:8px 14px; border-radius:10px; border:1px solid var(--o2-border); background:#fff; color:var(--o2-ink); font-size:13px; cursor:pointer; transition:all .15s;}
+  .o2-btn-ghost:hover{border-color:var(--o2-navy); color:var(--o2-navy);}
+
+  /* Карточки статистики */
+  .o2-stats{display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:16px;}
+  .o2-stat{padding:16px 18px; display:flex; align-items:center; gap:13px;}
+  .o2-stat .o2-stat-icon{width:42px; height:42px; border-radius:10px; display:flex; align-items:center; justify-content:center; flex-shrink:0;}
+  .o2-stat .o2-stat-icon .o2-icon{width:21px; height:21px;}
+  .o2-stat .o2-stat-num{font-size:23px; font-weight:700; line-height:1.15; color:var(--o2-ink);}
+  .o2-stat .o2-stat-lbl{font-size:12.5px; color:var(--o2-ink-soft);}
+
+  /* Поиск и фильтры */
+  .o2-searchbar{padding:16px 18px; margin-bottom:14px;}
+  .o2-search-row{display:flex; gap:10px; margin-bottom:14px;}
+  .o2-search-input-wrap{position:relative; flex:1;}
+  .o2-search-input-wrap .o2-icon{position:absolute; left:13px; top:50%; transform:translateY(-50%); color:var(--o2-ink-soft);}
+  .o2-search-input-wrap input{width:100%; padding:9px 12px 9px 38px; border:1px solid var(--o2-border); border-radius:10px; font-size:13.5px; font-family:inherit; background:var(--o2-bg);}
+  .o2-search-input-wrap input:focus{outline:none; border-color:var(--o2-navy); background:#fff;}
+  .o2-filters-row-label{font-size:12.5px; color:var(--o2-ink-soft); margin-bottom:8px; font-weight:500;}
+  .o2-segmented{display:inline-flex; background:var(--o2-bg); border-radius:10px; padding:3px; gap:2px;}
+  .o2-segmented button{padding:7px 14px; border:none; background:transparent; border-radius:8px; font-size:13px; color:var(--o2-ink-soft); cursor:pointer; display:flex; align-items:center; gap:6px; transition:all .15s;}
+  .o2-segmented button.active{background:var(--o2-navy); color:#fff; font-weight:600;}
+  .o2-segmented button .o2-badge-count{font-size:11px; opacity:.75;}
+  .o2-status-scroll{display:flex; gap:8px; overflow-x:auto; padding-bottom:4px; -webkit-overflow-scrolling:touch;}
+  .o2-status-scroll::-webkit-scrollbar{height:5px;}
+  .o2-status-scroll::-webkit-scrollbar-thumb{background:var(--o2-border); border-radius:3px;}
+  .o2-status-pill{flex-shrink:0; padding:7px 14px; border-radius:9px; border:1px solid transparent; background:var(--o2-gray-bg); color:var(--o2-ink); font-size:13px; cursor:pointer; white-space:nowrap; display:flex; align-items:center; gap:6px; transition:all .15s;}
+  .o2-status-pill .o2-badge-count{font-size:11px; padding:1px 6px; border-radius:8px; background:rgba(0,0,0,0.08);}
+  .o2-status-pill.active{filter:none;}
+  .o2-reset-filters{font-size:12.5px; color:var(--o2-red); background:none; border:none; cursor:pointer; display:flex; align-items:center; gap:4px; padding:6px 4px;}
+  .o2-reset-filters:hover{text-decoration:underline;}
+
+  /* Таблица */
+  .o2-table-card{overflow:hidden;}
+  .o2-table-toolbar{display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid var(--o2-border); flex-wrap:wrap; gap:10px;}
+  .o2-table-toolbar .o2-count{font-size:13.5px; font-weight:600; color:var(--o2-ink);}
+  .o2-table-scroll{overflow-x:auto; max-height:70vh; overflow-y:auto;}
+  .o2-table{width:100%; border-collapse:collapse; font-size:13px;}
+  .o2-table thead th{position:sticky; top:0; background:#fff; z-index:2; text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.02em; color:var(--o2-ink-soft); font-weight:600; padding:10px 12px; border-bottom:1px solid var(--o2-border); white-space:nowrap;}
+  .o2-table tbody td{padding:9px 12px; border-bottom:1px solid var(--o2-border); vertical-align:middle;}
+  .o2-table tbody tr{transition:background .1s;}
+  .o2-table tbody tr:hover{background:#F8FAFC;}
+  .o2-table tbody tr:last-child td{border-bottom:none;}
+  .o2-thumb{width:36px; height:36px; object-fit:cover; border-radius:8px; border:1px solid var(--o2-border); background:#F8FAFC;}
+  .o2-thumb-empty{width:36px; height:36px; border-radius:8px; border:1px dashed var(--o2-border); display:flex; align-items:center; justify-content:center; color:var(--o2-ink-soft);}
+  .o2-thumb-empty .o2-icon{width:15px; height:15px;}
+  .o2-link{color:var(--o2-navy); font-weight:600; text-decoration:none;}
+  .o2-link:hover{text-decoration:underline;}
+  .o2-mono{font-variant-numeric:tabular-nums; color:var(--o2-ink-soft); font-size:12.5px;}
+  .o2-shop-badge{display:inline-block; padding:2px 9px; border-radius:6px; font-size:11.5px; font-weight:700; background:var(--o2-gray-bg); color:var(--o2-ink);}
+  .o2-badge{display:inline-flex; align-items:center; padding:3px 10px; border-radius:20px; font-size:12px; font-weight:600; white-space:nowrap;}
+  .o2-badge.b-purple{background:var(--o2-purple-bg); color:var(--o2-purple);}
+  .o2-badge.b-orange{background:var(--o2-orange-bg); color:var(--o2-orange);}
+  .o2-badge.b-blue{background:var(--o2-blue-bg); color:var(--o2-blue);}
+  .o2-badge.b-cyan{background:var(--o2-cyan-bg); color:var(--o2-cyan);}
+  .o2-badge.b-green{background:var(--o2-green-bg); color:var(--o2-green);}
+  .o2-badge.b-red{background:var(--o2-red-bg); color:var(--o2-red);}
+  .o2-badge.b-gray{background:var(--o2-gray-bg); color:var(--o2-gray);}
+  .o2-urgent{color:var(--o2-red); font-weight:700; display:flex; align-items:center; gap:4px;}
+
+  /* Меню на три точки */
+  .o2-menu-wrap{position:relative;}
+  .o2-menu-btn{width:32px; height:32px; border-radius:8px; border:1px solid transparent; background:transparent; color:var(--o2-ink-soft); cursor:pointer; display:flex; align-items:center; justify-content:center;}
+  .o2-menu-btn:hover{background:var(--o2-gray-bg); color:var(--o2-ink);}
+  .o2-menu-dropdown{position:absolute; right:0; top:36px; background:#fff; border:1px solid var(--o2-border); border-radius:10px; box-shadow:0 8px 24px rgba(15,23,42,0.12); min-width:180px; z-index:30; padding:6px; display:none;}
+  .o2-menu-dropdown.show{display:block;}
+  .o2-menu-dropdown button{display:flex; align-items:center; gap:9px; width:100%; text-align:left; padding:8px 10px; border:none; background:none; border-radius:7px; font-size:13px; color:var(--o2-ink); cursor:pointer;}
+  .o2-menu-dropdown button:hover{background:var(--o2-gray-bg);}
+  .o2-menu-dropdown button.danger{color:var(--o2-red);}
+
+  /* Групповая панель — закреплена снизу */
+  .o2-bulk-bar{position:sticky; bottom:0; left:0; right:0; background:var(--o2-navy); color:#fff; padding:12px 18px; border-radius:12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:12px; box-shadow:0 -4px 16px rgba(15,23,42,0.15); z-index:10;}
+  .o2-bulk-bar .o2-bulk-count{font-size:13.5px; font-weight:600;}
+  .o2-bulk-btn{display:inline-flex; align-items:center; gap:6px; padding:7px 13px; border-radius:8px; border:1px solid rgba(255,255,255,0.25); background:rgba(255,255,255,0.08); color:#fff; font-size:12.5px; cursor:pointer; transition:all .15s;}
+  .o2-bulk-btn:hover:not(:disabled){background:rgba(255,255,255,0.18);}
+  .o2-bulk-btn:disabled{opacity:.35; cursor:not-allowed;}
+  .o2-bulk-clear{margin-left:auto; background:none; border:none; color:#C7CEDD; font-size:12.5px; cursor:pointer;}
+  .o2-bulk-clear:hover{color:#fff;}
+
+  input[type=checkbox].o2-check{width:16px; height:16px; accent-color:var(--o2-navy); cursor:pointer;}
+  #tab-kaspiOrders input[type=checkbox]#includeArchiveCheck{
+    appearance:none; -webkit-appearance:none; width:38px; height:22px; border-radius:11px;
+    background:var(--o2-border); position:relative; cursor:pointer; outline:none; margin:0; flex-shrink:0; transition:background .15s;
+  }
+  #tab-kaspiOrders input[type=checkbox]#includeArchiveCheck::before{
+    content:''; position:absolute; top:2px; left:2px; width:18px; height:18px; border-radius:50%;
+    background:#fff; transition:transform .15s; box-shadow:0 1px 2px rgba(0,0,0,.2);
+  }
+  #tab-kaspiOrders input[type=checkbox]#includeArchiveCheck:checked{background:var(--o2-navy);}
+  #tab-kaspiOrders input[type=checkbox]#includeArchiveCheck:checked::before{transform:translateX(16px);}
+
+  /* Мобильная версия — таблица превращается в карточки */
+  @media (max-width: 760px){
+    #tab-kaspiOrders{ margin:-14px -12px; padding:12px 12px 40px; }
+    .o2-stats{ grid-template-columns:1fr 1fr; }
+    .o2-header{ flex-direction:column; align-items:stretch; }
+    .o2-header-right{ justify-content:space-between; }
+    .o2-table thead{ display:none; }
+    .o2-table, .o2-table tbody, .o2-table tr, .o2-table td{ display:block; width:100%; }
+    .o2-table tbody tr{ border:1px solid var(--o2-border); border-radius:12px; margin-bottom:10px; padding:10px 12px; }
+    .o2-table tbody td{ border-bottom:none; padding:5px 0; display:flex; justify-content:space-between; align-items:center; gap:10px; }
+    .o2-table tbody td[data-label]::before{ content:attr(data-label); font-size:11px; text-transform:uppercase; color:var(--o2-ink-soft); font-weight:600; }
+    .o2-table tbody td.o2-td-photo{ justify-content:flex-start; }
+    .o2-table tbody td.o2-td-photo::before{ display:none; }
+  }
+</style>
 </head>
 <body>
 
@@ -185,55 +330,81 @@
       </div>
     </section>
     <section id="tab-kaspiOrders" style="display:none">
-      <div id="kaspiStatCards" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(160px,1fr)); gap:12px; margin-bottom:16px;"></div>
-
-      <div class="panel">
-        <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
-          <button class="btn amber" id="btnSyncKaspi2">Синхронизировать сейчас</button>
-          <label style="font-size:12.5px; color:var(--ink-soft);"><input type="checkbox" id="includeArchiveCheck"> включая архив</label>
-          <span id="lastSyncIndicator" style="font-size:12.5px; color:var(--ink-soft); display:flex; align-items:center; gap:5px;"></span>
-          <span id="shopList2" style="font-size:12.5px;color:var(--ink-soft); margin-left:auto;"></span>
+      <div class="o2-header">
+        <div>
+          <h1>Заказы</h1>
+          <div class="o2-sub" id="shopList2">Управление заказами Kaspi</div>
         </div>
-        <div id="kaspiResult2"></div>
-
-        <div class="panel-divider"></div>
-        <div style="position:relative; max-width:420px;">
-          <span style="position:absolute; left:12px; top:50%; transform:translateY(-50%); color:var(--ink-soft); font-size:14px;">🔍</span>
-          <input type="text" id="kaspiOrdersSearch" placeholder="Поиск по номеру, клиенту, товару..." style="width:100%; padding:9px 12px 9px 34px;">
+        <div class="o2-header-right">
+          <span id="lastSyncIndicator" class="o2-sync-time"></span>
+          <label class="o2-toggle-wrap">
+            <input type="checkbox" id="includeArchiveCheck">
+            <span>Включая архив</span>
+          </label>
+          <button class="o2-btn-primary" id="btnSyncKaspi2">
+            <svg class="o2-icon" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+            Синхронизировать
+          </button>
         </div>
-
-        <div class="panel-divider"></div>
-        <div class="panel-label">Магазин</div>
-        <div class="pill-row" id="kaspiShopFilters"></div>
-
-        <div class="panel-divider"></div>
-        <div class="panel-label">Статус</div>
-        <div class="pill-row" id="kaspiStatusFilters"></div>
       </div>
 
-      <div class="panel" style="display:flex; align-items:center; gap:10px; padding:12px 18px;">
-        <button class="btn secondary" id="btnPrintKaspiList" style="padding:7px 12px;">🖨️ Печать списка (текущий фильтр)</button>
-        <div style="position:relative; margin-left:auto;">
-          <button class="btn secondary" id="btnColSettings" style="padding:7px 12px;">⚙️ Колонки</button>
-          <div id="colSettingsPopover" style="display:none; position:absolute; top:40px; right:0; background:#fff; border:1px solid var(--line); border-radius:8px; box-shadow:0 6px 20px rgba(0,0,0,0.15); padding:12px 16px; z-index:20; min-width:220px;">
-            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="photo" checked> Фото</label>
-            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="num" checked> №</label>
-            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="code" checked> Kaspi код</label>
-            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="shop" checked> Магазин</label>
-            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="name" checked> Наименование</label>
-            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="courier" checked> Дата передачи курьеру</label>
-            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="price" checked> Сумма</label>
-            <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="status" checked> Статус</label>
-            <label style="display:block; font-size:12.5px;"><input type="checkbox" class="kcol" data-col="delivery" checked> Доставка</label>
-            <label style="display:block; font-size:12.5px; margin-top:6px;"><input type="checkbox" class="kcol" data-col="waybill" checked> Накладная</label>
+      <div class="o2-stats" id="kaspiStatCards"></div>
+
+      <div id="kaspiResult2"></div>
+
+      <div class="o2-card o2-shadow o2-searchbar">
+        <div class="o2-search-row">
+          <div class="o2-search-input-wrap">
+            <svg class="o2-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            <input type="text" id="kaspiOrdersSearch" placeholder="Поиск по номеру, клиенту или товару...">
           </div>
         </div>
+        <div class="o2-filters-row-label">Магазин</div>
+        <div class="o2-segmented" id="kaspiShopFilters" style="margin-bottom:16px;"></div>
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+          <div class="o2-filters-row-label" style="margin-bottom:0;">Статус</div>
+          <button class="o2-reset-filters" id="btnResetKaspiFilters" style="display:none;">
+            <svg class="o2-icon" style="width:13px;height:13px;" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>
+            Сбросить фильтры
+          </button>
+        </div>
+        <div class="o2-status-scroll" id="kaspiStatusFilters" style="margin-top:8px;"></div>
       </div>
-<div class="tbl-wrap">
-            <table>
-        <thead id="kaspiOrdersHead"></thead>
-        <tbody id="kaspiOrdersBody"></tbody>
-      </table>
+
+      <div class="o2-card o2-shadow o2-table-card">
+        <div class="o2-table-toolbar">
+          <span class="o2-count" id="o2OrdersCount"></span>
+          <div style="display:flex; gap:8px;">
+            <button class="o2-btn-ghost" id="btnPrintKaspiList">
+              <svg class="o2-icon" viewBox="0 0 24 24"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+              Печать
+            </button>
+            <div style="position:relative;">
+              <button class="o2-btn-ghost" id="btnColSettings">
+                <svg class="o2-icon" viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+                Колонки
+              </button>
+              <div id="colSettingsPopover" style="display:none; position:absolute; top:40px; right:0; background:#fff; border:1px solid var(--o2-border); border-radius:10px; box-shadow:0 8px 24px rgba(15,23,42,0.12); padding:12px 16px; z-index:20; min-width:220px;">
+                <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="photo" checked> Фото</label>
+                <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="num" checked> №</label>
+                <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="code" checked> Kaspi код</label>
+                <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="shop" checked> Магазин</label>
+                <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="name" checked> Наименование</label>
+                <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="courier" checked> Дата передачи курьеру</label>
+                <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="price" checked> Сумма</label>
+                <label style="display:block; font-size:12.5px; margin-bottom:6px;"><input type="checkbox" class="kcol" data-col="status" checked> Статус</label>
+                <label style="display:block; font-size:12.5px;"><input type="checkbox" class="kcol" data-col="delivery" checked> Доставка</label>
+                <label style="display:block; font-size:12.5px; margin-top:6px;"><input type="checkbox" class="kcol" data-col="waybill" checked> Накладная</label>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="o2-table-scroll">
+          <table class="o2-table">
+            <thead id="kaspiOrdersHead"></thead>
+            <tbody id="kaspiOrdersBody"></tbody>
+          </table>
+        </div>
       </div>
     </section>
     <section id="tab-claims" style="display:none">
@@ -1450,16 +1621,16 @@
   // полям (assembled, courierTransmissionDate, preOrder, state, status), не точная копия.
   // Если после проверки что-то не совпадёт по конкретному заказу — поправим на реальном примере.
   const STAGE_DEFS = [
-    {key:"cancelledDelivery", label:"Отменены при доставке", color:"#B23A2E", bg:"#F5DEDA"},
-    {key:"cancelled", label:"Отменён", color:"#B23A2E", bg:"#F5DEDA"},
-    {key:"returns",   label:"Возврат", color:"#8B5E1F", bg:"#F3E0BC"},
-    {key:"preorder",  label:"Предзаказ", color:"#6B4FA0", bg:"#EAE0F5"},
-    {key:"packing",   label:"Упаковка", color:"#C8862B", bg:"#F3E0BC"},
-    {key:"handover",  label:"Передача", color:"#2C6E8F", bg:"#DCEEF5"},
-    {key:"toDelivery",label:"Переданы на доставку", color:"#3E7D4C", bg:"#E0EEDF"},
-    {key:"completed", label:"Завершён", color:"#3E7D4C", bg:"#E0EEDF"},
-    {key:"archive",   label:"Архив", color:"#8A8F99", bg:"#EEEEEE"},
-    {key:"other",     label:"Другое", color:"#565B66", bg:"#EFEFEF"}
+    {key:"cancelledDelivery", label:"Отменены при доставке", color:"#DC2626", bg:"#FEE2E2"},
+    {key:"cancelled", label:"Отменён", color:"#DC2626", bg:"#FEE2E2"},
+    {key:"returns",   label:"Возврат", color:"#D97706", bg:"#FEF3C7"},
+    {key:"preorder",  label:"Предзаказ", color:"#7C3AED", bg:"#EDE9FE"},
+    {key:"packing",   label:"Упаковка", color:"#D97706", bg:"#FEF3C7"},
+    {key:"handover",  label:"Передача", color:"#2563EB", bg:"#DBEAFE"},
+    {key:"toDelivery",label:"На доставке", color:"#0891B2", bg:"#CFFAFE"},
+    {key:"completed", label:"Завершён", color:"#16A34A", bg:"#DCFCE7"},
+    {key:"archive",   label:"Архив", color:"#6B7280", bg:"#F3F4F6"},
+    {key:"other",     label:"Другое", color:"#6B7280", bg:"#F3F4F6"}
   ];
   function stageDef(key){ return STAGE_DEFS.find(s=>s.key===key) || STAGE_DEFS[STAGE_DEFS.length-1]; }
 
@@ -1538,16 +1709,22 @@
     const inTransit = list.filter(o=>o.stage==="handover" || o.stage==="toDelivery").length;
     const done = list.filter(o=>o.stage==="completed").length;
 
+    const ICONS = {
+      file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>',
+      package: '<path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>',
+      truck: '<path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18H9"/><path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/>',
+      check: '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>'
+    };
     const cards = [
-      { icon:"📋", bg:"#EAE0F5", color:"#6B4FA0", num:active, lbl:"Активные" },
-      { icon:"📦", bg:"#F3E0BC", color:"#C8862B", num:needsPacking, lbl:"Нужно собрать" },
-      { icon:"🚚", bg:"#DCEEF5", color:"#2C6E8F", num:inTransit, lbl:"В пути" },
-      { icon:"✅", bg:"#E0EEDF", color:"#3E7D4C", num:done, lbl:"Завершено" }
+      { icon:ICONS.file, bg:"var(--o2-purple-bg)", color:"var(--o2-purple)", num:active, lbl:"Активные" },
+      { icon:ICONS.package, bg:"var(--o2-orange-bg)", color:"var(--o2-orange)", num:needsPacking, lbl:"Нужно собрать" },
+      { icon:ICONS.truck, bg:"var(--o2-blue-bg)", color:"var(--o2-blue)", num:inTransit, lbl:"В пути" },
+      { icon:ICONS.check, bg:"var(--o2-green-bg)", color:"var(--o2-green)", num:done, lbl:"Завершено" }
     ];
     document.getElementById("kaspiStatCards").innerHTML = cards.map(c=>`
-      <div class="stat-card-v2" style="background:#fff; border:1px solid var(--line);">
-        <div class="icon" style="background:${c.bg}; color:${c.color};">${c.icon}</div>
-        <div><div class="num" style="color:${c.color};">${c.num}</div><div class="lbl">${c.lbl}</div></div>
+      <div class="o2-card o2-shadow o2-stat">
+        <div class="o2-stat-icon" style="background:${c.bg}; color:${c.color};"><svg class="o2-icon" viewBox="0 0 24 24">${c.icon}</svg></div>
+        <div><div class="o2-stat-num">${c.num}</div><div class="o2-stat-lbl">${c.lbl}</div></div>
       </div>`).join("");
   }
 
@@ -1558,20 +1735,30 @@
     kaspiOrders.forEach(o=>{ o.stage = classifyStage(o); });
     renderKaspiStatCards();
 
-    // Фильтр по магазинам — чекбоксы, можно выбрать 1, 2 или все 3
+    // Фильтр по магазинам — чекбоксы, можно выбрать 1, 2 или все сразу
     const shopNames = Array.from(new Set(kaspiOrders.map(o=>o.shop).filter(Boolean))).sort();
     if(kaspiShopFilter===null) kaspiShopFilter = new Set(shopNames); // по умолчанию — все выбраны
     const shopWrap = document.getElementById("kaspiShopFilters");
     if(shopNames.length > 1){
-      shopWrap.innerHTML = shopNames.map(s=>{
+      const allSelected = kaspiShopFilter.size === shopNames.length;
+      const allBtn = `<button class="${allSelected?'active':''}" data-shop-all="1">Все <span class="o2-badge-count">${kaspiOrders.length}</span></button>`;
+      const shopBtns = shopNames.map(s=>{
         const count = kaspiOrders.filter(o=>o.shop===s).length;
-        const active = kaspiShopFilter.has(s);
-        return `<button class="pill ${active?'active':''}" data-shop="${esc(s)}">${esc(s)} <span class="count">${count}</span></button>`;
+        const active = kaspiShopFilter.has(s) && !allSelected;
+        return `<button class="${active?'active':''}" data-shop="${esc(s)}">${esc(s)} <span class="o2-badge-count">${count}</span></button>`;
       }).join("");
-      shopWrap.querySelectorAll("button").forEach(b=>{
+      shopWrap.innerHTML = allBtn + shopBtns;
+      shopWrap.querySelector("[data-shop-all]").addEventListener("click", ()=>{
+        kaspiShopFilter = new Set(shopNames);
+        renderKaspiOrders(false);
+      });
+      shopWrap.querySelectorAll("button[data-shop]").forEach(b=>{
         b.addEventListener("click", ()=>{
           const s = b.dataset.shop;
-          if(kaspiShopFilter.has(s)) kaspiShopFilter.delete(s); else kaspiShopFilter.add(s);
+          // Если сейчас выбраны все — клик по одному магазину означает "оставь только этот"
+          if(kaspiShopFilter.size === shopNames.length) kaspiShopFilter = new Set([s]);
+          else if(kaspiShopFilter.has(s)) kaspiShopFilter.delete(s);
+          else kaspiShopFilter.add(s);
           if(kaspiShopFilter.size===0) kaspiShopFilter = new Set(shopNames); // не даём снять все разом
           renderKaspiOrders(false);
         });
@@ -1587,16 +1774,14 @@
 
     function stagePill(sd, count){
       const isActive = kaspiStageMultiSelect.has(sd.key);
-      // Цвет пилюли берётся из той же палитры, что и бейдж статуса в таблице —
-      // тут просто группировка по смыслу, слова и цвета статуса не меняются.
-      const style = isActive ? `border-color:${sd.color};background:${sd.bg};color:${sd.color};` : "";
-      return `<button class="pill" style="${style}" data-stage="${sd.key}">${sd.label} <span class="count">${count}</span></button>`;
+      const style = isActive ? `background:${sd.bg};color:${sd.color};` : "";
+      return `<button class="o2-status-pill ${isActive?'active':''}" style="${style}" data-stage="${sd.key}">${sd.label} <span class="o2-badge-count">${count}</span></button>`;
     }
 
-    let html = `<div style="font-size:11px;color:var(--ink-soft);margin-bottom:6px;">Обзор</div><div class="pill-row" style="margin-bottom:14px;">`
-      + `<button class="pill ${kaspiStageFilter==='active' && !kaspiStageMultiSelect.size?'active':''}" data-quick="active">Активные <span class="count">${activeCount}</span></button>`
-      + `<button class="pill ${kaspiStageFilter==='all' && !kaspiStageMultiSelect.size?'active':''}" data-quick="all">Все <span class="count">${kaspiOrders.filter(o=>kaspiShopFilter.has(o.shop)).length}</span></button>`
-      + `</div>`;
+    const isQuickActiveSelected = kaspiStageFilter==='active' && !kaspiStageMultiSelect.size;
+    const isQuickAllSelected = kaspiStageFilter==='all' && !kaspiStageMultiSelect.size;
+    const quickActiveHtml = `<button class="o2-status-pill ${isQuickActiveSelected?'active':''}" style="${isQuickActiveSelected?'background:var(--o2-navy);color:#fff;':''}" data-quick="active">Активные <span class="o2-badge-count" style="${isQuickActiveSelected?'background:rgba(255,255,255,0.2);':''}">${activeCount}</span></button>`;
+    const quickAllHtml = `<button class="o2-status-pill ${isQuickAllSelected?'active':''}" style="${isQuickAllSelected?'background:var(--o2-navy);color:#fff;':''}" data-quick="all">Все <span class="o2-badge-count" style="${isQuickAllSelected?'background:rgba(255,255,255,0.2);':''}">${kaspiOrders.filter(o=>kaspiShopFilter.has(o.shop)).length}</span></button>`;
 
     const working = STAGE_DEFS.filter(sd=>nonTerminal.includes(sd.key));
     const workingHtml = working.map(sd=>{
@@ -1604,16 +1789,15 @@
       if(count===0 && sd.key==="other") return "";
       return stagePill(sd, count);
     }).join("");
-    if(workingHtml) html += `<div style="font-size:11px;color:var(--ink-soft);margin-bottom:6px;">В работе — можно выбрать несколько сразу</div><div class="pill-row" style="margin-bottom:14px;">${workingHtml}</div>`;
 
     const terminal = STAGE_DEFS.filter(sd=>terminalKeys.includes(sd.key));
     const terminalHtml = terminal.map(sd=>{
       const count = kaspiOrders.filter(o=>o.stage===sd.key && kaspiShopFilter.has(o.shop)).length;
       return stagePill(sd, count);
     }).join("");
-    html += `<div style="font-size:11px;color:var(--ink-soft);margin-bottom:6px;">Завершено</div><div class="pill-row">${terminalHtml}</div>`;
 
-    filterWrap.innerHTML = html;
+    filterWrap.innerHTML = quickActiveHtml + workingHtml + terminalHtml + quickAllHtml;
+
     filterWrap.querySelectorAll("button[data-quick]").forEach(b=>{
       b.addEventListener("click", ()=>{
         kaspiStageMultiSelect.clear();
@@ -1630,9 +1814,22 @@
       });
     });
 
+    // Кнопка "Сбросить фильтры" — видна, если выбрано что-то нестандартное
+    const resetBtn = document.getElementById("btnResetKaspiFilters");
+    const hasCustomFilter = kaspiStageMultiSelect.size>0 || kaspiStageFilter!=='active' || kaspiOrdersSearchQuery || kaspiShopFilter.size!==shopNames.length;
+    resetBtn.style.display = hasCustomFilter ? "flex" : "none";
+    resetBtn.onclick = ()=>{
+      kaspiStageMultiSelect.clear();
+      kaspiStageFilter = "active";
+      kaspiShopFilter = new Set(shopNames);
+      kaspiOrdersSearchQuery = "";
+      document.getElementById("kaspiOrdersSearch").value = "";
+      renderKaspiOrders(false);
+    };
+
     // заголовок таблицы по видимым колонкам
     const cols = KCOL_DEFS.filter(c=>kaspiVisibleCols[c.key]);
-    document.getElementById("kaspiOrdersHead").innerHTML = `<tr><th style="width:32px;"><input type="checkbox" id="kaspiSelectAllCheckbox"></th>`+cols.map(c=>`<th>${c.label}</th>`).join("")+"<th></th></tr>";
+    document.getElementById("kaspiOrdersHead").innerHTML = `<tr><th style="width:32px;"><input type="checkbox" class="o2-check" id="kaspiSelectAllCheckbox"></th>`+cols.map(c=>`<th>${c.label}</th>`).join("")+"<th></th></tr>";
 
     let list = kaspiOrders.slice().filter(o=>kaspiShopFilter.has(o.shop));
     if(kaspiStageMultiSelect.size) list = list.filter(o=>kaspiStageMultiSelect.has(o.stage));
@@ -1661,11 +1858,12 @@
           const article = o.entriesRaw?.data?.[0]?.attributes?.offer?.code;
           if(article && catalogPhotoByArticle[article]) photo = catalogPhotoByArticle[article];
         }
-        return photo ? `<img class="thumb" src="${esc(photo)}" style="cursor:zoom-in;" onclick="window.open('${esc(photo)}','_blank')">` : `<div class="thumb-empty">—</div>`;
+        return photo ? `<img class="o2-thumb" src="${esc(photo)}" style="cursor:zoom-in;" onclick="window.open('${esc(photo)}','_blank')">`
+                     : `<div class="o2-thumb-empty"><svg class="o2-icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg></div>`;
       }
       if(key==="num") return esc(o.displayNumber||"");
-      if(key==="code") return `<span class="mono">${esc(o.kaspiCode||"")}</span>`;
-      if(key==="shop") return esc(o.shop||"");
+      if(key==="code") return `<span class="o2-mono">${esc(o.kaspiCode||"")}</span>`;
+      if(key==="shop") return `<span class="o2-shop-badge">${esc(o.shop||"")}</span>`;
       if(key==="name") return esc(o.productName||"—");
       if(key==="courier"){
         if(!o.courierHandoverDate) return "—";
@@ -1673,32 +1871,50 @@
         const todayStart = new Date(); todayStart.setHours(0,0,0,0);
         const isUrgent = dueDate <= todayStart && !["completed","cancelled","cancelledDelivery","returns"].includes(o.stage);
         return isUrgent
-          ? `<span style="color:var(--red); font-weight:600;">🔴 ${fmtDate(o.courierHandoverDate)}</span>`
+          ? `<span class="o2-urgent"><svg class="o2-icon" style="width:14px;height:14px;" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> ${fmtDate(o.courierHandoverDate)}</span>`
           : fmtDate(o.courierHandoverDate);
       }
       if(key==="price") return o.totalPrice ? esc(o.totalPrice)+" ₸" : "—";
       if(key==="status"){
         const sd = stageDef(o.stage);
-        return `<span class="stamp" style="color:${sd.color};background:${sd.bg};border-color:${sd.color};">${esc(sd.label)}</span>`;
+        const colorClass = {"#7C3AED":"b-purple","#D97706":"b-orange","#2563EB":"b-blue","#0891B2":"b-cyan","#16A34A":"b-green","#DC2626":"b-red","#6B7280":"b-gray"}[sd.color] || "b-gray";
+        return `<span class="o2-badge ${colorClass}">${esc(sd.label)}</span>`;
       }
       if(key==="delivery") return esc(stateLabelKaspi(o.deliveryState));
       if(key==="waybill"){
-        if(!o.waybillUrl) return `<span style="color:var(--ink-soft);font-size:12px;">ещё не сформирована</span>`;
-        const printedBadge = o.printed ? ` <span style="color:var(--green);font-size:11px;">✓ распечатано</span>` : "";
-        return `<button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__printWaybill('${o.id}')">🖨️ Печать</button>${printedBadge}`;
+        if(!o.waybillUrl) return `<span style="color:var(--o2-ink-soft);font-size:12px;">ещё не сформирована</span>`;
+        const printedBadge = o.printed ? ` <span style="color:var(--o2-green);font-size:11px;">✓ распечатано</span>` : "";
+        return `<button class="o2-btn-ghost" style="padding:4px 10px;font-size:12px" onclick="window.__printWaybill('${o.id}')"><svg class="o2-icon" style="width:14px;height:14px;" viewBox="0 0 24 24"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> Печать</button>${printedBadge}`;
       }
       return "";
     };
+    document.getElementById("o2OrdersCount").textContent = `${list.length} найдено`;
     body.innerHTML = list.map(o=>`
       <tr>
-        <td><input type="checkbox" class="kaspi-order-select" data-id="${o.id}" ${selectedKaspiOrderIds.has(o.id)?'checked':''}></td>
-        ${cols.map(c=>`<td>${cellFor(o,c.key)}</td>`).join("")}
-        <td>
-          <button class="btn amber" style="padding:4px 10px;font-size:12px" onclick="window.__openWorkflow('${o.id}')">Обработка</button>
-          <button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__openKaspiDetail('${o.id}')">Детали</button>
-          ${o.status==="label_printed" ? `<button class="btn secondary" style="padding:4px 10px;font-size:12px;display:block;margin-top:4px;" onclick="window.__quickAdvance('${o.id}')">✅ Готово к отгрузке</button>` : ""}
+        <td data-label=""><input type="checkbox" class="o2-check kaspi-order-select" data-id="${o.id}" ${selectedKaspiOrderIds.has(o.id)?'checked':''}></td>
+        ${cols.map(c=>`<td class="${c.key==='photo'?'o2-td-photo':''}" data-label="${esc(c.label)}">${cellFor(o,c.key)}</td>`).join("")}
+        <td data-label="" style="text-align:right;">
+          <div class="o2-menu-wrap">
+            <button class="o2-menu-btn" onclick="window.__toggleRowMenu(event,'${o.id}')">
+              <svg class="o2-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+            </button>
+            <div class="o2-menu-dropdown" id="rowMenu-${o.id}">
+              <button onclick="window.__openWorkflow('${o.id}')">
+                <svg class="o2-icon" style="width:15px;height:15px;" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4Z"/></svg>
+                Обработка
+              </button>
+              <button onclick="window.__openKaspiDetail('${o.id}')">
+                <svg class="o2-icon" style="width:15px;height:15px;" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                Детали
+              </button>
+              ${o.status==="label_printed" ? `<button onclick="window.__quickAdvance('${o.id}')">
+                <svg class="o2-icon" style="width:15px;height:15px;" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>
+                Готово к отгрузке
+              </button>` : ""}
+            </div>
+          </div>
         </td>
-      </tr>`).join("") || `<tr><td colspan="${cols.length+2}" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет заказов на этой стадии</td></tr>`;
+      </tr>`).join("") || `<tr><td colspan="${cols.length+2}" style="text-align:center;color:var(--o2-ink-soft);padding:30px;">Нет заказов на этой стадии</td></tr>`;
 
     body.querySelectorAll(".kaspi-order-select").forEach(cb=>{
       cb.addEventListener("change", ()=>{
@@ -1725,9 +1941,8 @@
     if(!bar){
       bar = document.createElement("div");
       bar.id = "kaspiBulkBar";
-      bar.className = "panel";
-      bar.style.cssText = "display:flex; align-items:center; gap:10px; padding:10px 18px; background:var(--navy); color:#fff;";
-      document.getElementById("kaspiOrdersHead").closest("div.tbl-wrap").insertAdjacentElement("beforebegin", bar);
+      bar.className = "o2-bulk-bar";
+      document.querySelector("#tab-kaspiOrders .o2-table-card").insertAdjacentElement("afterend", bar);
     }
     if(count===0){ bar.style.display="none"; return; }
     bar.style.display = "flex";
@@ -1737,15 +1952,27 @@
     const canPush = selectedOrders.some(o=>!o.assembled && !o.preOrder && o.status!=="cancelled" && o.status!=="shipped");
     const canConfirmPreorder = selectedOrders.some(o=>o.preOrder);
     const canQuickAdvance = selectedOrders.some(o=>o.status==="label_printed");
-    const dis = (ok)=> ok ? "" : "disabled style=\"opacity:0.35; cursor:not-allowed;\"";
+    const dis = (ok)=> ok ? "" : "disabled";
 
     bar.innerHTML = `
-      <span>Выбрано: ${count}</span>
-      <button class="btn secondary" id="kaspiBulkPrint" style="margin-left:12px;" ${dis(canPrint)}>🖨️ Печать накладных</button>
-      <button class="btn secondary" id="kaspiBulkPushKaspi" ${dis(canPush)}>📤 Передать в Kaspi</button>
-      <button class="btn secondary" id="kaspiBulkConfirmPreorder" ${dis(canConfirmPreorder)}>📦 Подтвердить предзаказы</button>
-      <button class="btn secondary" id="kaspiBulkQuickAdvance" ${dis(canQuickAdvance)}>✅ Готово к отгрузке (группой)</button>
-      <button class="btn secondary" id="kaspiBulkClear" style="margin-left:auto;">Снять выбор</button>
+      <span class="o2-bulk-count">Выбрано: ${count}</span>
+      <button class="o2-bulk-btn" id="kaspiBulkPrint" ${dis(canPrint)}>
+        <svg class="o2-icon" style="width:14px;height:14px;" viewBox="0 0 24 24"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+        Печать накладных
+      </button>
+      <button class="o2-bulk-btn" id="kaspiBulkPushKaspi" ${dis(canPush)}>
+        <svg class="o2-icon" style="width:14px;height:14px;" viewBox="0 0 24 24"><path d="m3 3 3 9-3 9 19-9Z"/><path d="M6 12h16"/></svg>
+        Передать в Kaspi
+      </button>
+      <button class="o2-bulk-btn" id="kaspiBulkConfirmPreorder" ${dis(canConfirmPreorder)}>
+        <svg class="o2-icon" style="width:14px;height:14px;" viewBox="0 0 24 24"><path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="M12 22V12"/></svg>
+        Подтвердить предзаказы
+      </button>
+      <button class="o2-bulk-btn" id="kaspiBulkQuickAdvance" ${dis(canQuickAdvance)}>
+        <svg class="o2-icon" style="width:14px;height:14px;" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>
+        Готово к отгрузке
+      </button>
+      <button class="o2-bulk-clear" id="kaspiBulkClear">Снять выбор</button>
     `;
     document.getElementById("kaspiBulkClear").onclick = ()=>{ selectedKaspiOrderIds.clear(); renderKaspiOrders(false); };
     document.getElementById("kaspiBulkPrint").onclick = ()=>{
@@ -1972,6 +2199,18 @@
       toast("Не получилось: "+e.message);
     }
   };
+
+  // Меню на три точки в строке таблицы — открывает одно, закрывает остальные
+  window.__toggleRowMenu = function(evt, id){
+    evt.stopPropagation();
+    const target = document.getElementById("rowMenu-"+id);
+    const wasOpen = target.classList.contains("show");
+    document.querySelectorAll(".o2-menu-dropdown.show").forEach(el=>el.classList.remove("show"));
+    if(!wasOpen) target.classList.add("show");
+  };
+  document.addEventListener("click", ()=>{
+    document.querySelectorAll(".o2-menu-dropdown.show").forEach(el=>el.classList.remove("show"));
+  });
 
   window.__openWorkflow = async function(id){
     const order = await api("/orders/"+id);
