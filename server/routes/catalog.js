@@ -40,14 +40,17 @@ function rowToCatalogItem(row) {
     preorderDays: row.kaspi_preorder_days,
     syncedAt: row.kaspi_synced_at,
     showInPrice: row.show_in_price !== 0, // по умолчанию true (в базе default 1)
+    isArchived: row.is_archived === 1,
     sortOrder: row.sort_order || 0,
     createdAt: row.created_at
   };
 }
 
 router.get("/", (req, res) => {
+  const withArchived = req.query.archived === "1";
   const rows = db.prepare(
-    "SELECT * FROM price_items ORDER BY kaspi_synced_at DESC, created_at DESC"
+    `SELECT * FROM price_items ${withArchived ? "" : "WHERE COALESCE(is_archived,0) = 0"}
+     ORDER BY kaspi_synced_at DESC, created_at DESC`
   ).all();
   res.json(rows.map(rowToCatalogItem));
 });
@@ -103,7 +106,6 @@ router.post("/sync-from-orders", (req, res) => {
   const rows = db.prepare("SELECT * FROM orders WHERE source = 'kaspi' OR kaspi_code LIKE 'УД-%'").all();
   const now = new Date().toISOString();
   let added = 0, updated = 0, skipped = 0;
-  const shopsByArticle = new Map();
 
   for (const o of rows) {
     // Артикул: сначала из позиций заказа (там он настоящий, от Kaspi),
@@ -120,10 +122,6 @@ router.post("/sync-from-orders", (req, res) => {
     } catch (e) { /* сырых данных нет или битые — работаем по колонкам заказа */ }
 
     if (!article) { skipped++; continue; }
-    if (o.shop) {
-      if (!shopsByArticle.has(article)) shopsByArticle.set(article, new Set());
-      shopsByArticle.get(article).add(o.shop);
-    }
 
     const existing = db.prepare("SELECT * FROM price_items WHERE article = ?").get(article);
     if (existing) {
@@ -140,10 +138,7 @@ router.post("/sync-from-orders", (req, res) => {
   }
 
   logAudit({ user: req.session.username, action: "catalog_sync_orders", comment: `+${added} ~${updated}` });
-  res.json({
-    added, updated, skipped,
-    shops: Array.from(new Set(rows.map(o => o.shop).filter(Boolean)))
-  });
+  res.json({ added, updated, skipped, shops: Array.from(new Set(rows.map(o => o.shop).filter(Boolean))) });
 });
 
 // Ручное добавление товара — для того, чего в Kaspi ещё нет
@@ -196,6 +191,10 @@ router.put("/:id", (req, res) => {
     updates.push("show_in_price = ?");
     params.push(b.showInPrice ? 1 : 0);
   }
+  if (Object.prototype.hasOwnProperty.call(b, "isArchived")) {
+    updates.push("is_archived = ?");
+    params.push(b.isArchived ? 1 : 0);
+  }
   if (updates.length) {
     params.push(req.params.id);
     db.prepare(`UPDATE price_items SET ${updates.join(", ")} WHERE id = ?`).run(...params);
@@ -236,12 +235,22 @@ router.post("/bulk-update", (req, res) => {
   };
   const numericFields = new Set(["height","diameter","weight","laborRate","materialCost","miscCost","ragsCost","costPrice","retailPrice"]);
 
-  let updated = 0, notFound = 0;
+  // createMissing = true: строки с новым артикулом заводятся как новые товары.
+  // Так из старой системы можно залить весь каталог разом, а не по одному.
+  const createMissing = req.body?.createMissing !== false;
+  let updated = 0, notFound = 0, created = 0;
   for (const it of items) {
     const sku = String(it.article || "").trim();
     if (!sku) continue;
-    const existing = db.prepare("SELECT id FROM price_items WHERE article = ?").get(sku);
-    if (!existing) { notFound++; continue; }
+    let existing = db.prepare("SELECT id FROM price_items WHERE article = ?").get(sku);
+    if (!existing) {
+      if (!createMissing) { notFound++; continue; }
+      const id = uid();
+      db.prepare(`INSERT INTO price_items (id, article, name, type, retail, cost, created_at)
+                  VALUES (?, ?, '', '', 0, NULL, ?)`).run(id, sku, new Date().toISOString());
+      existing = { id };
+      created++;
+    }
 
     const updates = [];
     const params = [];
@@ -260,8 +269,9 @@ router.post("/bulk-update", (req, res) => {
       updated++;
     }
   }
-  logAudit({ user: req.session.username, action: "catalog_bulk_update", comment: `~${updated} (не найдено: ${notFound})` });
-  res.json({ updated, notFound });
+  logAudit({ user: req.session.username, action: "catalog_bulk_update",
+             comment: `~${updated}, новых ${created}${notFound ? `, не найдено ${notFound}` : ""}` });
+  res.json({ updated, created, notFound });
 });
 
 export default router;
