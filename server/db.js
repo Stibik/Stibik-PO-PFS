@@ -525,6 +525,15 @@ export function ensureSchema() {
   safeAddColumn("price_items", "subgroup TEXT");                 // "Подраздел" — второй уровень группировки внутри категории (type), для печатного прайса
 
   // ── Поля по образцу справочника PRODIX (расценка труда нужна для "Зарплаты") ──
+  // Права и привязка пользователя к сотруднику (для зарплаты забивщика)
+  safeAddColumn("users", "permissions TEXT");            // JSON-список разрешённых разделов
+  safeAddColumn("users", "employee_id TEXT");            // кто это из сотрудников — чтобы работа падала ему
+  safeAddColumn("users", "is_active INTEGER DEFAULT 1"); // уволился — отключаем, история остаётся
+  // Забивщик отмечает «готово», менеджер подтверждает — только тогда к выплате
+  safeAddColumn("payroll_entries", "reported_done INTEGER DEFAULT 0");
+  safeAddColumn("payroll_entries", "reported_at TEXT");
+  safeAddColumn("payroll_entries", "reported_by TEXT");
+
   safeAddColumn("price_items", "labor_rate REAL");     // РАСЦЕНКА ТРУДА — ставка за 1 шт, читает раздел "Зарплата"
   safeAddColumn("price_items", "material_cost REAL");  // Затраты на материал
   safeAddColumn("price_items", "misc_cost REAL");      // Прочие затраты
