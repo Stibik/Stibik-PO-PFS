@@ -641,6 +641,7 @@
         <input type="text" id="catalogSearch" placeholder="Поиск по артикулу или названию..." style="flex:1; min-width:220px;">
         <select id="catalogFilterGroup" style="min-width:170px;"><option value="">Все группы</option></select>
         <label style="font-size:12.5px;"><input type="checkbox" id="catalogOnlyIncomplete"> Только незаполненные</label>
+        <label style="font-size:12.5px;"><input type="checkbox" id="catalogShowArchived"> Показывать архив</label>
         <span id="catalogCount" style="font-size:12.5px; color:var(--ink-soft); margin-left:auto;"></span>
       </div>
       <div class="tbl-wrap">
@@ -671,7 +672,10 @@
           </div>
           <div class="full"><label>Название для печати</label><input id="ci_printName" type="text" placeholder="Как будет видно клиенту"></div>
           <div><label>Порядок внутри группы (для прайса)</label><input id="ci_sortOrder" type="number" step="1" value="0"></div>
-          <div style="display:flex;align-items:flex-end;padding-bottom:8px;"><label style="margin:0;"><input type="checkbox" id="ci_showInPrice" checked> Показывать в прайсе</label></div>
+          <div style="display:flex;align-items:flex-end;padding-bottom:8px; gap:16px;">
+            <label style="margin:0;"><input type="checkbox" id="ci_showInPrice" checked> Показывать в прайсе</label>
+            <label style="margin:0;" title="Позиция уходит из списков и прайса, но остаётся в истории заказов"><input type="checkbox" id="ci_isArchived"> В архиве</label>
+          </div>
           <div><label>Группа</label><input id="ci_category" type="text" placeholder="напр. Манекены для борьбы и ММА"></div>
           <div><label>Подраздел</label><input id="ci_subgroup" type="text" placeholder="напр. 1-ноги, ПВХ"></div>
           <div><label>Материал</label><input id="ci_material" type="text"></div>
@@ -1832,7 +1836,8 @@
 
   async function loadCatalog(){
     try{
-      catalogItems = await api("/catalog");
+      const showArch = document.getElementById("catalogShowArchived");
+      catalogItems = await api("/catalog" + (showArch && showArch.checked ? "?archived=1" : ""));
       renderCatalog();
     }catch(e){
       document.getElementById("catalogBody").innerHTML = `<tr><td colspan="7" style="color:var(--red);padding:20px;">Ошибка загрузки справочника: ${esc(e.message)}</td></tr>`;
@@ -1912,7 +1917,7 @@
         if(!items.length){ toast("Не нашлось строк с заполненным SKU"); return; }
         const result = await api("/catalog/bulk-update", {method:"POST", body:JSON.stringify({items})});
         await loadCatalog();
-        toast(`Обновлено: ${result.updated}${result.notFound?`, не найдено в справочнике: ${result.notFound}`:''}`);
+        toast(`Обновлено: ${result.updated}${result.created?`, заведено новых: ${result.created}`:""}${result.notFound?`, пропущено: ${result.notFound}`:""}`);
       }catch(err){
         console.error(err);
         toast("Ошибка: "+(err.message||"не удалось прочитать файл"));
@@ -2031,9 +2036,9 @@
       return;
     }
     body.innerHTML = visible.map((it)=>`
-      <tr>
+      <tr style="${it.isArchived ? "opacity:.5;" : ""}">
         <td>${it.photo?`<img class="thumb" src="${esc(it.photo)}">`:`<div class="thumb-empty">—</div>`}</td>
-        <td class="mono" style="font-size:11.5px;">${esc(it.article)}</td>
+        <td class="mono" style="font-size:11.5px;">${esc(it.article)}${it.isArchived ? `<div style="font-size:10px; color:var(--ink-soft);">в архиве</div>` : ""}</td>
         <td>${esc(it.kaspiName||"—")}</td>
         <td>${esc(it.printName||"—")}</td>
         <td>${esc(it.category||"—")}</td>
@@ -2050,6 +2055,7 @@
     const el = document.getElementById(id);
     el.addEventListener(el.tagName === "INPUT" && el.type === "text" ? "input" : "change", renderCatalog);
   });
+  document.getElementById("catalogShowArchived").addEventListener("change", loadCatalog);
 
   // Синхронизация из заказов: каталог товаров Kaspi через API не отдаёт, зато
   // в заказах обоих магазинов есть артикул и название каждой позиции
@@ -2225,6 +2231,7 @@
     document.getElementById("ci_printName").value = it.printName || "";
     document.getElementById("ci_sortOrder").value = it.sortOrder || 0;
     document.getElementById("ci_showInPrice").checked = it.showInPrice !== false; // по умолчанию true, если явно не false
+    document.getElementById("ci_isArchived").checked = it.isArchived === true;
     document.getElementById("ci_category").value = it.category || "";
     document.getElementById("ci_subgroup").value = it.subgroup || "";
     document.getElementById("ci_material").value = it.material || "";
@@ -2319,6 +2326,7 @@
       printName: document.getElementById("ci_printName").value.trim(),
       sortOrder: parseFloat(document.getElementById("ci_sortOrder").value) || 0,
       showInPrice: document.getElementById("ci_showInPrice").checked,
+      isArchived: document.getElementById("ci_isArchived").checked,
       category: document.getElementById("ci_category").value.trim(),
       subgroup: document.getElementById("ci_subgroup").value.trim(),
       material: document.getElementById("ci_material").value.trim(),
@@ -2422,7 +2430,7 @@
 
   // База — что вообще может попасть в прайс (до фильтров)
   function priceBaseItems(){
-    let list = catalogItems.slice();
+    let list = catalogItems.filter(it=>!it.isArchived);
     if(document.getElementById("priceOnlyShown").checked) list = list.filter(it=>it.showInPrice !== false);
     list = list.filter(it=>it.printName); // без названия для печати показывать нечего в любом случае
     if(document.getElementById("priceOnlyReady").checked) list = list.filter(it=>it.retailPrice);
