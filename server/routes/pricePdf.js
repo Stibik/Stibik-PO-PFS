@@ -192,6 +192,19 @@ function transliterate(s) {
   return String(s).toLowerCase().split("").map(ch => map[ch] ?? ch).join("").replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 }
 
+// Имя файла для заголовка Content-Disposition.
+// ВАЖНО: в сам заголовок нельзя класть кириллицу — Node роняет ответ с
+// ERR_INVALID_CHAR (проверено). Поэтому: латиницей — в filename (запасной
+// вариант для старых браузеров), кириллицей — в filename* по RFC 5987
+// (percent-encoding, тоже чистый ASCII). Современные браузеры возьмут второе
+// и сохранят файл с нормальным русским названием.
+function contentDisposition(companyShortName) {
+  const date = new Date().toISOString().slice(0, 10);
+  const asciiName = `Price_${transliterate(companyShortName || "company") || "company"}_${date}.pdf`;
+  const utf8Name = encodeURIComponent(`Прайс ${companyShortName || ""} ${date}.pdf`.replace(/\s+/g, " ").trim());
+  return `attachment; filename="${asciiName}"; filename*=UTF-8''${utf8Name}`;
+}
+
 // Общая подготовка данных из БД по списку id — используется и для скачивания,
 // и для предпросмотра, чтобы гарантированно не расходились
 function loadPdfInputs(body) {
@@ -230,12 +243,12 @@ router.post("/generate-pdf", (req, res) => {
   const inputs = loadPdfInputs(req.body || {});
   if (inputs.error === "company_not_found") return res.status(400).json({ error: "company_not_found", message: "Компания не найдена" });
   if (inputs.error === "no_items") return res.status(400).json({ error: "no_items", message: "Не выбрано ни одного товара" });
+  if (!inputs.items.length) return res.status(400).json({ error: "no_items", message: "После фильтра «только с ценой» не осталось ни одного товара" });
 
   try {
     const doc = buildPdfDocument(inputs);
-    const filename = `Прайс_${transliterate(inputs.company.shortName || "company")}_${new Date().toISOString().slice(0, 10)}.pdf`;
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Content-Disposition", contentDisposition(inputs.company.shortName));
     doc.pipe(res);
     doc.end();
   } catch (e) {
@@ -250,6 +263,7 @@ router.post("/preview-pdf", (req, res) => {
   const inputs = loadPdfInputs(req.body || {});
   if (inputs.error === "company_not_found") return res.status(400).json({ error: "company_not_found", message: "Компания не найдена" });
   if (inputs.error === "no_items") return res.status(400).json({ error: "no_items", message: "Не выбрано ни одного товара" });
+  if (!inputs.items.length) return res.status(400).json({ error: "no_items", message: "После фильтра «только с ценой» не осталось ни одного товара" });
 
   try {
     const doc = buildPdfDocument(inputs);
