@@ -738,6 +738,34 @@
           </table>
         </div>
       </div>
+
+      <div class="panel" style="margin-top:16px;">
+        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+          <b style="font-size:14px;">Работы</b>
+          <input type="text" id="workSearch" placeholder="Артикул или название..." style="flex:1; min-width:200px;">
+          <select id="workEmployee" style="min-width:160px;"><option value="">Все сотрудники</option></select>
+          <select id="workShop" style="min-width:140px;"><option value="">Все магазины</option></select>
+          <button class="btn secondary" id="workReset" style="padding:5px 12px; font-size:12px;">Сбросить</button>
+        </div>
+        <div class="panel-divider"></div>
+        <div class="pill-row" id="workStatusFilters"></div>
+      </div>
+      <div class="panel" style="padding:0; overflow:hidden;">
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border-bottom:1px solid var(--line); flex-wrap:wrap; gap:8px;">
+          <span id="workCount" style="font-size:12.5px; color:var(--ink-soft);"></span>
+          <span id="workTotal" style="font-size:14px;"></span>
+        </div>
+        <div class="tbl-wrap" style="max-height:55vh; overflow:auto;">
+          <table>
+            <thead><tr>
+              <th>Артикул</th><th>Наименование</th><th>Откуда</th>
+              <th class="num">Кол-во</th><th class="num">Расценка</th><th class="num">Сумма</th>
+              <th>Исполнитель</th><th>Статус</th><th></th>
+            </tr></thead>
+            <tbody id="workBody"></tbody>
+          </table>
+        </div>
+      </div>
     </section>
     <section id="tab-production" style="display:none">
       <div class="toolbar">
@@ -746,6 +774,19 @@
         <button class="btn secondary" id="btnManageEmployees" style="margin-left:auto;">Сотрудники</button>
       </div>
       <div id="prodStats" style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:14px;"></div>
+      <div class="panel" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+        <input type="text" id="prodSearch" placeholder="Поиск по артикулу или названию..." style="flex:1; min-width:220px;">
+        <select id="prodShopFilter" style="min-width:150px;"><option value="">Все магазины</option></select>
+        <span id="prodCount" style="font-size:12.5px; color:var(--ink-soft);"></span>
+      </div>
+      <div class="panel" id="prodBulkBar" style="display:none; align-items:center; gap:10px; flex-wrap:wrap; background:var(--navy); color:#fff;">
+        <b id="prodBulkCount" style="font-size:13.5px;">Выбрано: 0</b>
+        <select id="prodBulkEmployee" style="min-width:190px;"></select>
+        <button class="btn amber" id="prodBulkAssign" style="padding:6px 12px; font-size:12.5px;">Назначить исполнителя</button>
+        <button class="btn secondary" id="prodBulkStock" style="padding:6px 12px; font-size:12.5px;">📦 Списать с остатков</button>
+        <button class="btn secondary" id="prodBulkReturn" style="padding:6px 12px; font-size:12.5px;">↩️ Перекрыть возвратом</button>
+        <button class="btn secondary" id="prodBulkClear" style="padding:6px 12px; font-size:12.5px; margin-left:auto;">Снять выбор</button>
+      </div>
       <div id="prodList"></div>
     </section>
 
@@ -3539,7 +3580,102 @@
 
     body.querySelectorAll("[data-entries]").forEach(b=>b.addEventListener("click", ()=>openPayEntries(b.dataset.entries)));
     body.querySelectorAll("[data-payout]").forEach(b=>b.addEventListener("click", ()=>openPayout(b.dataset.payout)));
+
+    if(!employeesList.length){ try{ employeesList = await api("/employees"); }catch(e){} }
+    loadSalaryWorks();
   }
+
+  // ---------- Все работы: список с артикулами и разнесением по людям ----------
+  let workStatusFilter = "";
+  let workRows = [];
+
+  async function loadSalaryWorks(){
+    const body = document.getElementById("workBody");
+    body.innerHTML = `<tr><td colspan="9" style="padding:16px; text-align:center; color:var(--ink-soft);">Загрузка...</td></tr>`;
+    const p = new URLSearchParams();
+    const q = document.getElementById("workSearch").value.trim();
+    if(q) p.set("q", q);
+    const emp = document.getElementById("workEmployee").value;
+    if(emp) p.set("employeeId", emp);
+    const shop = document.getElementById("workShop").value;
+    if(shop) p.set("shop", shop);
+    if(workStatusFilter) p.set("status", workStatusFilter);
+    try{
+      workRows = await api("/payroll/entries" + (p.toString() ? "?" + p.toString() : ""));
+    }catch(e){
+      body.innerHTML = `<tr><td colspan="9" style="padding:16px; color:var(--red);">${esc(e.message)}</td></tr>`;
+      return;
+    }
+    renderSalaryWorks();
+  }
+
+  function renderSalaryWorks(){
+    // Фильтры сотрудников и магазинов собираем из того, что реально есть
+    const empSel = document.getElementById("workEmployee");
+    if(empSel.options.length <= 1 && employeesList.length){
+      empSel.innerHTML = `<option value="">Все сотрудники</option>` +
+        employeesList.map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join("");
+    }
+    const shops = Array.from(new Set(workRows.map(r=>r.shop).filter(Boolean))).sort();
+    const shopSel = document.getElementById("workShop");
+    const prevShop = shopSel.value;
+    shopSel.innerHTML = `<option value="">Все магазины</option>` +
+      shops.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join("") +
+      `<option value="__stock__" ${prevShop==="__stock__"?"selected":""}>на запас</option>`;
+    shopSel.value = prevShop;
+
+    document.getElementById("workStatusFilters").innerHTML = [
+      { k:"", l:"Все" }, { k:"pending", l:"Отложено" }, { k:"payable", l:"К выплате" }, { k:"paid", l:"Выплачено" }
+    ].map(f=>`<button class="pill ${workStatusFilter===f.k?"active":""}" data-ws="${f.k}">${f.l}</button>`).join("");
+    document.getElementById("workStatusFilters").querySelectorAll("[data-ws]").forEach(b=>
+      b.addEventListener("click", ()=>{ workStatusFilter = b.dataset.ws; loadSalaryWorks(); }));
+
+    let rows = workRows;
+    if(prevShop === "__stock__") rows = rows.filter(r=>r.kind === "stock");
+
+    const total = rows.reduce((s,r)=>s + r.amount, 0);
+    document.getElementById("workCount").textContent = `Работ: ${rows.length}`;
+    document.getElementById("workTotal").innerHTML = `Итого по расценкам: <b>${money(total)} ₸</b>`;
+
+    const body = document.getElementById("workBody");
+    if(!rows.length){
+      body.innerHTML = `<tr><td colspan="9" style="padding:20px; text-align:center; color:var(--ink-soft);">
+        Работ нет. Они появляются, когда в «Производстве» назначают исполнителя или делают изделие на запас.</td></tr>`;
+      return;
+    }
+    body.innerHTML = rows.map(r=>`
+      <tr>
+        <td class="mono" style="font-size:11.5px;">${esc(r.article || "—")}</td>
+        <td>${esc(r.productName || "—")}<div style="font-size:11px; color:var(--ink-soft);">${esc((r.createdAt||"").slice(0,10))}</div></td>
+        <td style="font-size:12px;">${r.kind === "stock" ? "на запас" : (r.shop ? esc(r.shop) : "заказ")}</td>
+        <td class="num">${money(r.qty)}</td>
+        <td class="num">${r.needsRate ? `<span style="color:var(--red); font-size:11.5px;">не задана</span>` : money(r.rate)}</td>
+        <td class="num"><b>${money(r.amount)} ₸</b></td>
+        <td>${esc(r.employeeName || "—")}</td>
+        <td>${payBadge(r.status)}</td>
+        <td style="white-space:nowrap;">
+          ${r.status === "pending" ? `<button class="btn amber" style="padding:3px 10px; font-size:11.5px;" data-wacc="${esc(r.id)}">Принята</button>` : ""}
+          ${r.status !== "paid" ? `<button class="btn secondary" style="padding:3px 8px; font-size:11.5px;" data-wre="${esc(r.id)}" title="Передать другому">👤</button>` : ""}
+        </td>
+      </tr>`).join("");
+
+    body.querySelectorAll("[data-wacc]").forEach(b=>b.addEventListener("click", ()=>acceptPayEntry(b.dataset.wacc, loadSalaryWorks)));
+    body.querySelectorAll("[data-wre]").forEach(b=>b.addEventListener("click", ()=>reassignEntry(b.dataset.wre, async ()=>{ await loadSalaryWorks(); loadSalary(); })));
+  }
+
+  ["workSearch","workEmployee","workShop"].forEach(id=>{
+    const el = document.getElementById(id);
+    el.addEventListener(el.tagName === "INPUT" ? "input" : "change", ()=>{
+      if(id === "workShop" && el.value === "__stock__") renderSalaryWorks(); else loadSalaryWorks();
+    });
+  });
+  document.getElementById("workReset").addEventListener("click", ()=>{
+    document.getElementById("workSearch").value = "";
+    document.getElementById("workEmployee").value = "";
+    document.getElementById("workShop").value = "";
+    workStatusFilter = "";
+    loadSalaryWorks();
+  });
 
   // ---------- Начисления сотрудника ----------
   async function openPayEntries(employeeId){
@@ -3887,6 +4023,7 @@
   let productionItems = [];
   let employeesList = [];
   let payrollByProduction = {};
+  let selectedProdIds = new Set();
 
   async function loadProduction(){
     try{
@@ -3895,6 +4032,7 @@
       employeesList = await api("/employees");
       // Начисления показываем прямо здесь, чтобы не бегать в «Зарплату»
       // проверять, ушли ли деньги за эту работу
+      if(!catalogItems.length){ try{ catalogItems = await api("/catalog"); }catch(e){} }
       payrollByProduction = {};
       try{
         const entries = await api("/payroll/entries");
@@ -3914,105 +4052,145 @@
     return "Ждёт решения";
   }
 
-  function renderProduction(){
-    const pending = productionItems.filter(p=>!p.decision).length;
-    document.getElementById("prodStats").innerHTML = `
-      <div class="stat-card" style="background:#fff;border:1px solid var(--line);border-left:4px solid var(--amber);padding:12px 16px;">
-        <div style="font-size:11px;text-transform:uppercase;color:var(--ink-soft);">Ждут решения</div>
-        <div style="font-family:var(--serif,serif);font-size:22px;">${pending}</div>
-      </div>`;
+  function prodRate(article){
+    const it = catalogItems.find(x=>x.article === article);
+    return it && it.laborRate ? Number(it.laborRate) : 0;
+  }
+  const PROD_DECISION = {
+    stock:         { label:"Списано с остатков", color:"#4B5563", bg:"#F3F4F6" },
+    assigned:      { label:"В работе",           color:"#2563EB", bg:"#DBEAFE" },
+    return_offset: { label:"Перекрыто возвратом", color:"#7C3AED", bg:"#EDE9FE" }
+  };
 
-    const list = document.getElementById("prodList");
-    if(!productionItems.length){
-      list.innerHTML = `<div style="padding:30px;text-align:center;color:var(--ink-soft);">Пусто — новые заказы появятся тут автоматически</div>`;
-      return;
-    }
-
-    list.innerHTML = productionItems.map(p=>{
-      const order = p.order || {};
-      const isPending = !p.decision;
-      return `
-      <div style="background:#fff; border:1px solid var(--line); border-radius:8px; padding:14px 16px; margin-bottom:10px;" data-prod-id="${p.id}">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:${isPending?'10px':'0'};">
-          <div>
-            <div style="font-size:11px; color:var(--ink-soft);">Заказ №${esc(order.displayNumber||"")} · ${esc(order.shop||"")}</div>
-            <div style="font-weight:600;">${esc(p.productName||"—")}</div>
-          </div>
-          ${!isPending ? `<span class="stamp" style="white-space:nowrap;">${decisionLabel(p.decision)}</span>` : ""}
-        </div>
-        ${isPending ? `
-        <div class="prod-warehouse-hint" data-article="${esc(p.article||"")}" data-prod-id="${p.id}" style="display:none; align-items:flex-start; gap:8px; background:#E6F1FB; border-radius:6px; padding:8px 10px; margin-bottom:10px; font-size:12.5px;">
-          <span></span>
-        </div>
-        <div style="display:flex; flex-direction:column; gap:6px;">
-          <button class="btn secondary prod-action-stock" data-prod-id="${p.id}" style="text-align:left; padding:8px 12px;">📦 Списать с остатков</button>
-          <div class="prod-assign-row" style="display:flex; gap:6px;">
-            <select class="prod-employee-select" data-prod-id="${p.id}" style="flex:1;">
-              <option value="">Выбрать сотрудника...</option>
-              ${employeesList.map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join("")}
-            </select>
-            <button class="btn amber prod-action-assign" data-prod-id="${p.id}" style="padding:8px 14px;">Назначить</button>
-          </div>
-          <button class="btn secondary prod-action-return" data-prod-id="${p.id}" style="text-align:left; padding:8px 12px;">↩️ Перекрыть возвратом</button>
-        </div>
-        ` : (p.decision==="assigned" ? `
-        <div style="margin-top:8px; font-size:12.5px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-          <span>Исполнитель: <b>${esc((employeesList.find(e=>e.id===p.employeeId)||{}).name || "—")}</b></span>
-          ${renderProdPayroll(p)}
-        </div>` : "")}
-      </div>`;
-    }).join("");
-
-    // Проверяем совпадение со складом для каждой ожидающей записи (по артикулу)
-    list.querySelectorAll(".prod-warehouse-hint").forEach(async (hint)=>{
-      const prodId = hint.dataset.prodId;
-      if(!hint.dataset.article){ return; }
-      try{
-        const res = await api("/production/"+prodId+"/warehouse-match");
-        if(res.match){
-          hint.style.display = "flex";
-          hint.querySelector("span").textContent = `На складе есть подходящий товар (${res.match.source==='cancelled'?'из отменённого':'из возврата'} заказа)`;
-          const stockBtn = list.querySelector(`.prod-action-stock[data-prod-id="${prodId}"]`);
-          if(stockBtn) stockBtn.textContent = "📦 Списать с остатков (есть в наличии)";
-        }
-      }catch(e){}
-    });
-
-    list.querySelectorAll(".prod-action-stock").forEach(btn=>{
-      btn.addEventListener("click", ()=>resolveProduction(btn.dataset.prodId, "stock"));
-    });
-    list.querySelectorAll(".prod-action-return").forEach(btn=>{
-      btn.addEventListener("click", ()=>resolveProduction(btn.dataset.prodId, "return_offset"));
-    });
-    list.querySelectorAll(".prod-action-assign").forEach(btn=>{
-      btn.addEventListener("click", ()=>{
-        const select = list.querySelector(`.prod-employee-select[data-prod-id="${btn.dataset.prodId}"]`);
-        if(!select.value){ toast("Сначала выберите сотрудника"); return; }
-        resolveProduction(btn.dataset.prodId, "assigned", { employeeId: select.value });
-      });
-    });
-    list.querySelectorAll(".prod-accept").forEach(b=>{
-      b.addEventListener("click", ()=>acceptPayEntry(b.dataset.entryId, loadProduction));
-    });
-    list.querySelectorAll(".prod-accrue").forEach(b=>{
-      b.addEventListener("click", async ()=>{
-        try{
-          const r = await api("/payroll/from-production/" + b.dataset.prodId, {method:"POST"});
-          toast(r.needsRate === false || r.amount ? `Начислено ${money(r.amount)} ₸` : "Начисление создано, но расценка не задана");
-          loadProduction();
-        }catch(e){ toast("Не получилось: " + e.message); }
-      });
-    });
-    list.querySelectorAll(".prod-paid-check").forEach(cb=>{
-      cb.addEventListener("change", async ()=>{
-        try{
-          await api("/production/"+cb.dataset.prodId+"/paid", {method:"PUT", body:JSON.stringify({paid: cb.checked})});
-          toast(cb.checked ? "Отмечено как оплачено" : "Отмечено как неоплачено");
-        }catch(e){ toast("Ошибка: "+e.message); }
-      });
+  function prodVisibleItems(){
+    const q = (document.getElementById("prodSearch").value || "").trim().toLowerCase();
+    const shop = document.getElementById("prodShopFilter").value;
+    return productionItems.filter(p=>{
+      const okShop = !shop || (p.order && p.order.shop) === shop || p.shop === shop;
+      const okQ = !q || String(p.article||"").toLowerCase().includes(q) || String(p.productName||"").toLowerCase().includes(q);
+      return okShop && okQ;
     });
   }
 
+  function renderProduction(){
+    const pending = productionItems.filter(p=>!p.decision).length;
+    const list = prodVisibleItems();
+
+    // Итог по видимым строкам: сколько работы и на какую сумму по расценкам
+    const workItems = list.filter(p=>p.decision === "assigned" || !p.decision);
+    const sumWork = workItems.reduce((s,p)=> s + prodRate(p.article) * (Number(p.quantity)||1), 0);
+    document.getElementById("prodStats").innerHTML = `
+      <div class="panel" style="border-left:4px solid var(--amber); margin:0; min-width:190px;">
+        <div style="font-size:11px; text-transform:uppercase; color:var(--ink-soft);">Ждут решения</div>
+        <div style="font-family:var(--serif); font-size:22px;">${pending}</div>
+      </div>
+      <div class="panel" style="border-left:4px solid var(--navy); margin:0; min-width:230px;">
+        <div style="font-size:11px; text-transform:uppercase; color:var(--ink-soft);">Работы по расценкам</div>
+        <div style="font-family:var(--serif); font-size:22px;">${money(sumWork)} ₸</div>
+        <div style="font-size:11.5px; color:var(--ink-soft);">${workItems.length} позиций в производстве</div>
+      </div>`;
+
+    const shops = Array.from(new Set(productionItems.map(p=>(p.order && p.order.shop) || p.shop).filter(Boolean))).sort();
+    const shopSel = document.getElementById("prodShopFilter");
+    const prevShop = shopSel.value;
+    shopSel.innerHTML = `<option value="">Все магазины</option>` + shops.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join("");
+    shopSel.value = prevShop;
+    document.getElementById("prodCount").textContent = `Показано ${list.length} из ${productionItems.length}`;
+
+    const wrap = document.getElementById("prodList");
+    if(!list.length){
+      wrap.innerHTML = `<div class="panel" style="text-align:center; color:var(--ink-soft);">
+        ${productionItems.length ? "Ничего не подходит под фильтр" : "Пусто — новые заказы появятся тут автоматически"}</div>`;
+      updateProdBulkBar();
+      return;
+    }
+
+    wrap.innerHTML = `<div class="panel" style="padding:0; overflow:hidden;"><div class="tbl-wrap"><table>
+      <thead><tr>
+        <th style="width:30px;"><input type="checkbox" id="prodSelectAll"></th>
+        <th>Заказ</th><th>Артикул</th><th>Наименование</th>
+        <th class="num">Кол-во</th><th class="num">Расценка</th><th class="num">Сумма</th>
+        <th>Состояние</th><th>Исполнитель / зарплата</th><th></th>
+      </tr></thead><tbody>
+      ${list.map(p=>{
+        const qty = Number(p.quantity) || 1;
+        const rate = prodRate(p.article);
+        const d = PROD_DECISION[p.decision];
+        const entry = payrollByProduction[p.id];
+        const emp = employeesList.find(e=>e.id === p.employeeId);
+        return `<tr>
+          <td>${!p.decision ? `<input type="checkbox" class="prod-select" data-id="${esc(p.id)}" ${selectedProdIds.has(p.id)?"checked":""}>` : ""}</td>
+          <td style="white-space:nowrap;">№${esc((p.order&&p.order.displayNumber)||"")}<div style="font-size:11px; color:var(--ink-soft);">${esc((p.order&&p.order.shop)||p.shop||"")}</div></td>
+          <td class="mono" style="font-size:11.5px;">${esc(p.article||"—")}</td>
+          <td>${esc(p.productName||"—")}</td>
+          <td class="num">${money(qty)}</td>
+          <td class="num">${rate ? money(rate) : `<span style="color:var(--red); font-size:11.5px;">нет</span>`}</td>
+          <td class="num">${rate ? `<b>${money(rate*qty)} ₸</b>` : "—"}</td>
+          <td>${d ? `<span style="color:${d.color}; background:${d.bg}; padding:3px 10px; border-radius:20px; font-size:11.5px; font-weight:600; white-space:nowrap;">${d.label}</span>`
+                  : `<span style="color:var(--amber); font-weight:600; font-size:12px;">ждёт решения</span>`}</td>
+          <td style="font-size:12px;">${p.decision === "assigned"
+              ? `${esc(emp ? emp.name : "—")}${entry ? `<div>${payBadge(entry.status)} <b>${money(entry.amount)} ₸</b></div>`
+                                                     : `<div style="color:var(--ink-soft);">начисления нет</div>`}`
+              : "—"}</td>
+          <td style="white-space:nowrap;">
+            ${!p.decision ? `
+              <button class="btn secondary prod-action-stock" data-prod-id="${esc(p.id)}" style="padding:3px 8px; font-size:11.5px;" title="Списать с остатков">📦</button>
+              <button class="btn secondary prod-action-return" data-prod-id="${esc(p.id)}" style="padding:3px 8px; font-size:11.5px;" title="Перекрыть возвратом">↩️</button>` : ""}
+            ${entry && entry.status === "pending" ? `<button class="btn amber prod-accept" data-entry-id="${esc(entry.id)}" style="padding:3px 10px; font-size:11.5px;">Работа принята</button>` : ""}
+            ${entry ? `<button class="btn secondary prod-reassign" data-entry-id="${esc(entry.id)}" style="padding:3px 8px; font-size:11.5px;" title="Передать другому">👤</button>` : ""}
+          </td>
+        </tr>`;
+      }).join("")}
+      </tbody></table></div></div>`;
+
+    wrap.querySelectorAll(".prod-select").forEach(cb=>cb.addEventListener("change", ()=>{
+      if(cb.checked) selectedProdIds.add(cb.dataset.id); else selectedProdIds.delete(cb.dataset.id);
+      updateProdBulkBar();
+    }));
+    const selectAll = document.getElementById("prodSelectAll");
+    if(selectAll){
+      const pendingList = list.filter(p=>!p.decision);
+      selectAll.checked = pendingList.length > 0 && pendingList.every(p=>selectedProdIds.has(p.id));
+      selectAll.addEventListener("change", ()=>{
+        pendingList.forEach(p=>{ if(selectAll.checked) selectedProdIds.add(p.id); else selectedProdIds.delete(p.id); });
+        renderProduction();
+      });
+    }
+    wrap.querySelectorAll(".prod-action-stock").forEach(b=>b.addEventListener("click", ()=>resolveProduction(b.dataset.prodId, "stock")));
+    wrap.querySelectorAll(".prod-action-return").forEach(b=>b.addEventListener("click", ()=>resolveProduction(b.dataset.prodId, "return_offset")));
+    wrap.querySelectorAll(".prod-accept").forEach(b=>b.addEventListener("click", ()=>acceptPayEntry(b.dataset.entryId, loadProduction)));
+    wrap.querySelectorAll(".prod-reassign").forEach(b=>b.addEventListener("click", ()=>reassignEntry(b.dataset.entryId, loadProduction)));
+    updateProdBulkBar();
+  }
+
+  // Панель массовых действий: одно решение сразу для многих строк — раньше
+  // приходилось тыкать каждую карточку отдельно
+  function updateProdBulkBar(){
+    const bar = document.getElementById("prodBulkBar");
+    if(!bar) return;
+    const n = selectedProdIds.size;
+    bar.style.display = n ? "flex" : "none";
+    if(!n) return;
+    const sel = document.getElementById("prodBulkEmployee");
+    const prev = sel.value;
+    sel.innerHTML = `<option value="">— выберите сотрудника —</option>` +
+      employeesList.map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join("");
+    sel.value = prev;
+    document.getElementById("prodBulkCount").textContent = `Выбрано: ${n}`;
+  }
+
+  async function reassignEntry(entryId, after){
+    if(!employeesList.length){ try{ employeesList = await api("/employees"); }catch(e){} }
+    const names = employeesList.map((e,i)=>`${i+1}. ${e.name}`).join("\n");
+    const pick = prompt(`Кому передать работу? Введите номер:\n${names}`);
+    const idx = parseInt(pick, 10) - 1;
+    if(!(idx >= 0 && idx < employeesList.length)) return;
+    try{
+      const r = await api("/payroll/entries/" + entryId, { method:"PUT", body: JSON.stringify({ employeeId: employeesList[idx].id })});
+      toast(`Работа передана: ${r.employeeName}`);
+      if(after) await after();
+    }catch(e){ toast("Не получилось: " + e.message); }
+  }
   // Что с деньгами по этой работе: сколько начислено и на каком шаге
   function renderProdPayroll(p){
     const e = payrollByProduction[p.id];
@@ -4046,6 +4224,36 @@
 
   // ---------- Управление сотрудниками ----------
   document.getElementById("btnStockProduction").addEventListener("click", openStockProduction);
+  document.getElementById("prodSearch").addEventListener("input", renderProduction);
+  document.getElementById("prodShopFilter").addEventListener("change", renderProduction);
+  document.getElementById("prodBulkClear").addEventListener("click", ()=>{ selectedProdIds.clear(); renderProduction(); });
+
+  async function prodBulkResolve(decision, extra, label){
+    const ids = Array.from(selectedProdIds);
+    if(!ids.length) return;
+    if(!confirm(`${label} — для ${ids.length} позиций?`)) return;
+    let ok = 0; const errors = [];
+    for(const id of ids){
+      try{
+        await api("/production/"+id+"/resolve", {method:"POST", body:JSON.stringify({decision, ...(extra||{})})});
+        if(decision === "assigned"){
+          try{ await api("/payroll/from-production/" + id, {method:"POST"}); }catch(e){ errors.push("начисление: " + e.message); }
+        }
+        ok++;
+      }catch(e){ errors.push(e.message); }
+    }
+    selectedProdIds.clear();
+    await loadProduction();
+    toast(errors.length ? `Готово: ${ok}, ошибок: ${errors.length}` : `Готово: ${ok} позиций`);
+  }
+  document.getElementById("prodBulkAssign").addEventListener("click", ()=>{
+    const employeeId = document.getElementById("prodBulkEmployee").value;
+    if(!employeeId){ toast("Сначала выберите сотрудника"); return; }
+    const name = (employeesList.find(e=>e.id===employeeId)||{}).name || "";
+    prodBulkResolve("assigned", { employeeId }, `Назначить «${name}»`);
+  });
+  document.getElementById("prodBulkStock").addEventListener("click", ()=>prodBulkResolve("stock", null, "Списать с остатков"));
+  document.getElementById("prodBulkReturn").addEventListener("click", ()=>prodBulkResolve("return_offset", null, "Перекрыть возвратом"));
   document.getElementById("btnManageEmployees").addEventListener("click", async ()=>{
     await renderEmployeesManagePanel();
     document.getElementById("employeesOverlay").classList.add("show");
