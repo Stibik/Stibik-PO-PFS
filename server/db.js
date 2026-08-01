@@ -303,6 +303,11 @@ export function ensureSchema() {
   safeAddColumn("price_items", "sort_order INTEGER DEFAULT 0");    // порядок внутри группы (Ø/материал)
   safeAddColumn("price_items", "price_display_name TEXT");         // отдельное название для печати, если отличается от обычного name
 
+  // ── Разовая доначистка: старые ручные заказы (созданные до фикса), у которых
+  // в поле "магазин" оказался произвольный текст из формы — приводим к
+  // единому "УД", как и должно быть у всех заказов, созданных вручную.
+  db.prepare("UPDATE orders SET shop = 'УД' WHERE source = 'manual' AND kaspi_code LIKE 'УД-%' AND shop != 'УД'").run();
+
   // ── Полная цепочка стадий заказа в производстве (доработка по ТЗ) ──
   // pending -> in_production/from_stock -> ready -> packed -> issued
   // плюс отдельные ветки: cancelled, returned_to_stock, archived
