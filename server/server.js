@@ -32,11 +32,12 @@ import chinaPurchasesRoutes from "./routes/chinaPurchases.js";
 import chinaStockRoutes from "./routes/chinaStock.js";
 import payrollRoutes from "./routes/payroll.js";
 import tasksRoutes from "./routes/tasks.js";
+import monitorRoutes from "./routes/monitor.js";
 import productionRoutes from "./routes/production.js";
 import metaRoutes from "./routes/meta.js";
 import settingsRoutes from "./routes/settings.js";
 import auditRoutes from "./routes/audit.js";
-import { requireAuth } from "./middleware/auth.js";
+import { requireAuth, requirePermission } from "./middleware/auth.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, "uploads");
@@ -92,16 +93,17 @@ app.use("/api/catalog", catalogRoutes);
 app.use("/api/counters", counterRoutes);
 app.use("/api/employees", employeeRoutes);
 app.use("/api/companies", companiesRoutes);
-app.use("/api/price-pdf", pricePdfRoutes);
-app.use("/api/price-lists", priceListsRoutes);
-app.use("/api/china-purchases", chinaPurchasesRoutes);
-app.use("/api/china-stock", chinaStockRoutes);
-app.use("/api/payroll", payrollRoutes);
+app.use("/api/price-pdf", requirePermission("price"), pricePdfRoutes);
+app.use("/api/price-lists", requirePermission("price"), priceListsRoutes);
+app.use("/api/china-purchases", requirePermission("china"), chinaPurchasesRoutes);
+app.use("/api/china-stock", requirePermission("china"), chinaStockRoutes);
+app.use("/api/payroll", requirePermission("salary"), payrollRoutes);
 app.use("/api/tasks", tasksRoutes);
+app.use("/api/monitor", monitorRoutes);
 app.use("/api/production", productionRoutes);
 app.use("/api/meta", metaRoutes);
-app.use("/api/settings", settingsRoutes);
-app.use("/api/audit", auditRoutes);
+app.use("/api/settings", requirePermission("kaspi"), settingsRoutes);
+app.use("/api/audit", requirePermission("audit"), auditRoutes);
 
 // Статика фронтенда
 app.use(express.static(path.join(__dirname, "public")));
