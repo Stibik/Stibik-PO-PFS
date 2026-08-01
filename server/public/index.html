@@ -329,6 +329,7 @@
     <button class="tab-btn" data-tab="price">Прайс</button>
     <button class="tab-btn" data-tab="salary">Зарплата</button>
     <button class="tab-btn" data-tab="production">Производство</button>
+    <button class="tab-btn" data-tab="tasks">Задачи</button>
     <button class="tab-btn" data-tab="kaspi">Kaspi: настройки</button>
     <button class="tab-btn admin-only" data-tab="audit">Журнал</button>
     <button class="tab-btn admin-only" data-tab="users">Пользователи</button>
@@ -559,7 +560,11 @@
     </section>
     <section id="tab-catalog" style="display:none">
       <div class="toolbar">
-        <button class="btn amber" id="btnImportCatalog">Импорт из Kaspi (Excel)</button>
+        <button class="btn amber" id="btnSyncCatalog">🔄 Синхронизировать из заказов Kaspi</button>
+        <button class="btn secondary" id="btnAddCatalogItem">+ Добавить товар</button>
+        <button class="btn secondary" id="btnBulkPhotos">🖼️ Загрузить фото пачкой</button>
+        <input type="file" id="bulkPhotosInput" accept="image/*" multiple style="display:none">
+        <button class="btn secondary" id="btnImportCatalog">Импорт из Kaspi (Excel)</button>
         <input type="file" id="importCatalogInput" accept=".xlsx,.xls" style="display:none">
         <button class="btn secondary" id="btnExportCatalog">Экспорт в Excel</button>
         <button class="btn secondary" id="btnImportCatalogFilled">Загрузить заполненный файл</button>
@@ -567,6 +572,12 @@
         <span id="catalogImportInfo" style="font-size:12.5px;color:var(--ink-soft);"></span>
       </div>
       <div id="catalogStats" style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:14px;"></div>
+      <div class="panel" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+        <input type="text" id="catalogSearch" placeholder="Поиск по артикулу или названию..." style="flex:1; min-width:220px;">
+        <select id="catalogFilterGroup" style="min-width:170px;"><option value="">Все группы</option></select>
+        <label style="font-size:12.5px;"><input type="checkbox" id="catalogOnlyIncomplete"> Только незаполненные</label>
+        <span id="catalogCount" style="font-size:12.5px; color:var(--ink-soft); margin-left:auto;"></span>
+      </div>
       <div class="tbl-wrap">
         <table>
           <thead><tr><th></th><th>SKU</th><th>Название (Kaspi)</th><th>Название для печати</th><th>Группа</th><th>Подраздел</th><th>Розница</th><th>Наличие</th><th></th></tr></thead>
@@ -806,6 +817,30 @@
       </div>
     </div>
 
+    <section id="tab-tasks" style="display:none">
+      <style>
+        #tab-tasks .tk-cols{display:grid; grid-template-columns:repeat(3,1fr); gap:14px; align-items:start;}
+        #tab-tasks .tk-col{background:#fff; border:1px solid var(--line); border-radius:12px; padding:12px; min-height:120px;}
+        #tab-tasks .tk-col h4{margin:0 0 10px; font-size:13px; text-transform:uppercase; color:var(--ink-soft); letter-spacing:.02em;}
+        #tab-tasks .tk-card{border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin-bottom:9px; background:#FEFDFB;}
+        #tab-tasks .tk-card.high{border-left:4px solid var(--red);}
+        #tab-tasks .tk-card.overdue{background:#FDF3F1;}
+        #tab-tasks .tk-title{font-size:13.5px; font-weight:600;}
+        #tab-tasks .tk-meta{font-size:11.5px; color:var(--ink-soft); margin-top:3px;}
+        #tab-tasks .tk-actions{display:flex; gap:6px; margin-top:8px; flex-wrap:wrap;}
+        @media (max-width:900px){ #tab-tasks .tk-cols{grid-template-columns:1fr;} }
+      </style>
+      <div class="toolbar">
+        <button class="btn amber" id="btnNewTask">+ Новая задача</button>
+        <select id="taskFilterEmployee" style="min-width:180px;"><option value="">Все сотрудники</option></select>
+        <label style="font-size:12.5px;"><input type="checkbox" id="taskShowArchive"> Показывать архив</label>
+      </div>
+      <div class="tk-cols">
+        <div class="tk-col"><h4>Надо сделать <span id="tkCount-todo"></span></h4><div id="tkList-todo"></div></div>
+        <div class="tk-col"><h4>В работе <span id="tkCount-doing"></span></h4><div id="tkList-doing"></div></div>
+        <div class="tk-col"><h4>Готово <span id="tkCount-done"></span></h4><div id="tkList-done"></div></div>
+      </div>
+    </section>
     <section id="tab-kaspi" style="display:none">
       <p>Введите токены API для каждого магазина (получаются в кабинете продавца Kaspi, раздел API). Без токена синхронизация для этого магазина работать не будет.</p>
       <div id="kaspiShopForms"></div>
@@ -1262,6 +1297,52 @@
   </div>
 </div>
 
+<div class="overlay" id="newCatalogOverlay">
+  <div class="modal" style="max-width:520px;">
+    <h3>Добавить товар вручную</h3>
+    <div style="font-size:12.5px; color:var(--ink-soft); margin-bottom:12px;">
+      Для того, чего ещё нет в Kaspi. Артикул обязателен — по нему товар потом
+      сам свяжется с заказами и производством. Остальное можно дозаполнить позже в карточке.
+    </div>
+    <div class="grid2">
+      <div><label>Артикул *</label><input type="text" id="nc_article" style="width:100%;"></div>
+      <div><label>Название для печати</label><input type="text" id="nc_printName" style="width:100%;"></div>
+      <div><label>Группа</label><input type="text" id="nc_category" style="width:100%;"></div>
+      <div><label>Подраздел</label><input type="text" id="nc_subgroup" style="width:100%;"></div>
+      <div><label>Материал</label><input type="text" id="nc_material" style="width:100%;"></div>
+      <div><label>Розница, ₸</label><input type="number" id="nc_retail" style="width:100%;"></div>
+    </div>
+    <div class="error" id="nc_error"></div>
+    <div class="modal-actions">
+      <div></div>
+      <div><button class="btn secondary" id="nc_cancel">Отмена</button> <button class="btn amber" id="nc_save">Добавить</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="taskOverlay">
+  <div class="modal" style="max-width:520px;">
+    <h3 id="taskModalTitle">Новая задача</h3>
+    <div class="grid2">
+      <div class="full"><label>Что нужно сделать *</label><input type="text" id="tk_title" style="width:100%;" placeholder="напр. Купить нитки №40, чёрные, 5 катушек"></div>
+      <div class="full"><label>Подробности</label><textarea id="tk_description" style="width:100%; min-height:60px;"></textarea></div>
+      <div><label>Кому</label><select id="tk_employee" style="width:100%;"></select></div>
+      <div><label>Тип</label><select id="tk_kind" style="width:100%;">
+        <option value="buy">Купить</option><option value="make">Сделать</option><option value="other" selected>Прочее</option>
+      </select></div>
+      <div><label>Важность</label><select id="tk_priority" style="width:100%;">
+        <option value="low">Обычная</option><option value="normal" selected>Средняя</option><option value="high">Срочно</option>
+      </select></div>
+      <div><label>Срок</label><input type="date" id="tk_due" style="width:100%;"></div>
+    </div>
+    <div class="error" id="tk_error"></div>
+    <div class="modal-actions">
+      <div></div>
+      <div><button class="btn secondary" id="tk_cancel">Отмена</button> <button class="btn amber" id="tk_save">Сохранить</button></div>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -1688,6 +1769,22 @@
     reader.readAsArrayBuffer(file);
   });
 
+  function catalogVisibleItems(){
+    const q = (document.getElementById("catalogSearch").value || "").trim().toLowerCase();
+    const group = document.getElementById("catalogFilterGroup").value;
+    const onlyIncomplete = document.getElementById("catalogOnlyIncomplete").checked;
+    return catalogItems.filter(it=>{
+      const okQ = !q || String(it.article||"").toLowerCase().includes(q)
+        || String(it.printName||"").toLowerCase().includes(q)
+        || String(it.kaspiName||"").toLowerCase().includes(q);
+      const okGroup = !group || (it.category||"") === group;
+      // «Незаполненные» — те, с которыми ещё нельзя работать: нет названия для
+      // печати, розницы или расценки труда
+      const okIncomplete = !onlyIncomplete || !it.printName || !it.retailPrice || it.laborRate == null;
+      return okQ && okGroup && okIncomplete;
+    });
+  }
+
   function renderCatalog(){
     const totalCount = catalogItems.length;
     const withPrintName = catalogItems.filter(it=>it.printName).length;
@@ -1706,12 +1803,25 @@
         <div style="font-family:var(--serif,serif);font-size:22px;">${totalCount-withLaborRate}</div>
       </div>` : "";
 
+    const groups = Array.from(new Set(catalogItems.map(it=>it.category).filter(Boolean))).sort();
+    const gsel = document.getElementById("catalogFilterGroup");
+    const prevGroup = gsel.value;
+    gsel.innerHTML = `<option value="">Все группы</option>` + groups.map(g=>`<option value="${esc(g)}">${esc(g)}</option>`).join("");
+    gsel.value = prevGroup;
+
+    const visible = catalogVisibleItems();
+    document.getElementById("catalogCount").textContent = `Показано ${visible.length} из ${catalogItems.length}`;
+
     const body = document.getElementById("catalogBody");
     if(!catalogItems.length){
       body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--ink-soft);padding:20px;">Справочник пуст — нажмите «Импорт из Kaspi», чтобы загрузить файл выгрузки активных товаров</td></tr>`;
       return;
     }
-    body.innerHTML = catalogItems.map((it)=>`
+    if(!visible.length){
+      body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--ink-soft);padding:20px;">Ничего не найдено по этому фильтру</td></tr>`;
+      return;
+    }
+    body.innerHTML = visible.map((it)=>`
       <tr>
         <td>${it.photo?`<img class="thumb" src="${esc(it.photo)}">`:`<div class="thumb-empty">—</div>`}</td>
         <td class="mono" style="font-size:11.5px;">${esc(it.article)}</td>
@@ -1726,6 +1836,87 @@
         </td>
       </tr>`).join("");
   }
+
+  ["catalogSearch","catalogFilterGroup","catalogOnlyIncomplete"].forEach(id=>{
+    const el = document.getElementById(id);
+    el.addEventListener(el.tagName === "INPUT" && el.type === "text" ? "input" : "change", renderCatalog);
+  });
+
+  // Синхронизация из заказов: каталог товаров Kaspi через API не отдаёт, зато
+  // в заказах обоих магазинов есть артикул и название каждой позиции
+  document.getElementById("btnSyncCatalog").addEventListener("click", async ()=>{
+    const btn = document.getElementById("btnSyncCatalog");
+    const old = btn.textContent;
+    btn.disabled = true; btn.textContent = "Синхронизируем...";
+    try{
+      const r = await api("/catalog/sync-from-orders", {method:"POST"});
+      await loadCatalog();
+      toast(`Готово: новых ${r.added}, обновлено ${r.updated}${r.shops.length ? " · магазины: " + r.shops.join(", ") : ""}`);
+      document.getElementById("catalogImportInfo").textContent =
+        `Из заказов: новых ${r.added}, обновлено ${r.updated}. Названия для печати, цены и расценки не перезаписывались.`;
+    }catch(e){ toast("Не получилось: " + e.message); }
+    finally{ btn.disabled = false; btn.textContent = old; }
+  });
+
+  // Ручное добавление
+  document.getElementById("btnAddCatalogItem").addEventListener("click", ()=>{
+    ["nc_article","nc_printName","nc_category","nc_subgroup","nc_material","nc_retail"].forEach(id=>document.getElementById(id).value = "");
+    document.getElementById("nc_error").textContent = "";
+    document.getElementById("newCatalogOverlay").classList.add("show");
+  });
+  document.getElementById("nc_cancel").addEventListener("click", ()=>document.getElementById("newCatalogOverlay").classList.remove("show"));
+  document.getElementById("nc_save").addEventListener("click", async ()=>{
+    const body = {
+      article: document.getElementById("nc_article").value.trim(),
+      printName: document.getElementById("nc_printName").value.trim(),
+      category: document.getElementById("nc_category").value.trim(),
+      subgroup: document.getElementById("nc_subgroup").value.trim(),
+      material: document.getElementById("nc_material").value.trim(),
+      retailPrice: parseFloat(document.getElementById("nc_retail").value) || 0
+    };
+    if(!body.article){ document.getElementById("nc_error").textContent = "Артикул обязателен"; return; }
+    try{
+      await api("/catalog", {method:"POST", body: JSON.stringify(body)});
+      document.getElementById("newCatalogOverlay").classList.remove("show");
+      await loadCatalog();
+      toast("Товар добавлен");
+    }catch(e){ document.getElementById("nc_error").textContent = e.message; }
+  });
+
+  // Пакетная загрузка фото: имя файла = артикул. Фото из Kaspi не приходят
+  // (в API заказов их нет), поэтому это самый быстрый способ закрыть весь список.
+  document.getElementById("btnBulkPhotos").addEventListener("click", ()=>{
+    toast("Назовите файлы по артикулу: SA40150K.jpg — тогда они разложатся сами");
+    document.getElementById("bulkPhotosInput").click();
+  });
+  document.getElementById("bulkPhotosInput").addEventListener("change", async (e)=>{
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    if(!files.length) return;
+    if(!catalogItems.length) await loadCatalog();
+    let ok = 0; const notFound = [];
+    document.getElementById("catalogImportInfo").textContent = `Загружаю фото: 0 из ${files.length}...`;
+    for(const file of files){
+      const base = file.name.replace(/\.[^.]+$/, "").trim();
+      const item = catalogItems.find(it=>String(it.article||"").toLowerCase() === base.toLowerCase());
+      if(!item){ notFound.push(file.name); continue; }
+      try{
+        const normalized = await normalizeCatalogPhoto(file);
+        const fd = new FormData();
+        fd.append("photo", normalized);
+        const resp = await fetch("/api/upload", {method:"POST", body:fd, credentials:"same-origin"});
+        if(!resp.ok) throw new Error("upload_failed");
+        const data = await resp.json();
+        await api("/catalog/" + item.id, {method:"PUT", body: JSON.stringify({photo: data.path})});
+        ok++;
+        document.getElementById("catalogImportInfo").textContent = `Загружаю фото: ${ok} из ${files.length}...`;
+      }catch(err){ notFound.push(file.name + " (ошибка загрузки)"); }
+    }
+    await loadCatalog();
+    document.getElementById("catalogImportInfo").textContent =
+      `Фото загружено: ${ok}${notFound.length ? `. Не совпал артикул: ${notFound.slice(0,5).join(", ")}${notFound.length>5?" и ещё "+(notFound.length-5):""}` : ""}`;
+    toast(`Фото проставлено: ${ok} из ${files.length}`);
+  });
 
   let editingCatalogId = null;
   const catalogItemOverlay = document.getElementById("catalogItemOverlay");
@@ -3520,6 +3711,118 @@
     loadChina();
   });
 
+  // ================= Доска задач =================
+  // Бытовые поручения: купить, сделать, съездить. Специально отдельно от
+  // «Производства» — там работа по заказам и деньги, тут зарплата не считается.
+  const TASK_KIND = { buy:"🛒 Купить", make:"🔧 Сделать", other:"📌 Прочее" };
+  const TASK_NEXT = { todo:"doing", doing:"done" };
+  const TASK_NEXT_LABEL = { todo:"В работу →", doing:"Готово ✓" };
+  let tasksList = [];
+  let editingTaskId = null;
+
+  async function loadTasks(){
+    if(!employeesList.length){ try{ employeesList = await api("/employees"); }catch(e){} }
+    const sel = document.getElementById("taskFilterEmployee");
+    if(sel.options.length <= 1){
+      sel.innerHTML = `<option value="">Все сотрудники</option>` +
+        employeesList.map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join("");
+    }
+    const p = new URLSearchParams();
+    if(sel.value) p.set("employeeId", sel.value);
+    if(document.getElementById("taskShowArchive").checked) p.set("archived", "1");
+    try{
+      tasksList = await api("/tasks" + (p.toString() ? "?" + p.toString() : ""));
+      renderTasks();
+    }catch(e){
+      document.getElementById("tkList-todo").innerHTML = `<div style="color:var(--red); font-size:12.5px;">Ошибка: ${esc(e.message)}</div>`;
+    }
+  }
+
+  function renderTasks(){
+    ["todo","doing","done"].forEach(status=>{
+      const list = tasksList.filter(t=>t.status === status);
+      document.getElementById("tkCount-" + status).textContent = list.length ? `(${list.length})` : "";
+      const wrap = document.getElementById("tkList-" + status);
+      if(!list.length){
+        wrap.innerHTML = `<div style="font-size:12px; color:var(--ink-soft); padding:6px 2px;">${
+          status === "todo" ? "Пусто. Нажмите «+ Новая задача» и опишите, что нужно сделать." : "Пусто"}</div>`;
+        return;
+      }
+      wrap.innerHTML = list.map(t=>`
+        <div class="tk-card ${t.priority === "high" ? "high" : ""} ${t.overdue ? "overdue" : ""}">
+          <div class="tk-title">${esc(t.title)}</div>
+          ${t.description ? `<div class="tk-meta">${esc(t.description)}</div>` : ""}
+          <div class="tk-meta">${TASK_KIND[t.kind] || ""}${t.employeeName ? " · " + esc(t.employeeName) : " · не назначено"}${
+            t.dueDate ? ` · <span style="${t.overdue ? "color:var(--red); font-weight:600;" : ""}">до ${fmtDate(t.dueDate)}</span>` : ""}</div>
+          ${t.status === "done" && t.doneAt ? `<div class="tk-meta">закрыл ${esc(t.doneBy||"")} · ${fmtDate((t.doneAt||"").slice(0,10))}</div>` : ""}
+          <div class="tk-actions">
+            ${TASK_NEXT[t.status] ? `<button class="btn amber" style="padding:3px 10px; font-size:11.5px;" data-tknext="${esc(t.id)}">${TASK_NEXT_LABEL[t.status]}</button>` : ""}
+            ${t.status !== "todo" ? `<button class="btn secondary" style="padding:3px 9px; font-size:11.5px;" data-tkback="${esc(t.id)}">←</button>` : ""}
+            <button class="btn secondary" style="padding:3px 9px; font-size:11.5px;" data-tkedit="${esc(t.id)}">Изменить</button>
+            <button class="btn secondary" style="padding:3px 9px; font-size:11.5px;" data-tkarch="${esc(t.id)}">${t.isArchived ? "Вернуть" : "В архив"}</button>
+          </div>
+        </div>`).join("");
+
+      wrap.querySelectorAll("[data-tknext]").forEach(b=>b.addEventListener("click", ()=>changeTaskStatus(b.dataset.tknext, TASK_NEXT[status])));
+      wrap.querySelectorAll("[data-tkback]").forEach(b=>b.addEventListener("click", ()=>changeTaskStatus(b.dataset.tkback, status === "done" ? "doing" : "todo")));
+      wrap.querySelectorAll("[data-tkedit]").forEach(b=>b.addEventListener("click", ()=>openTaskForm(tasksList.find(x=>x.id === b.dataset.tkedit))));
+      wrap.querySelectorAll("[data-tkarch]").forEach(b=>b.addEventListener("click", async ()=>{
+        const task = tasksList.find(x=>x.id === b.dataset.tkarch);
+        try{
+          await api(`/tasks/${task.id}/archive`, {method:"POST", body: JSON.stringify({archived: !task.isArchived})});
+          loadTasks();
+        }catch(e){ toast("Не получилось: " + e.message); }
+      }));
+    });
+  }
+
+  async function changeTaskStatus(id, status){
+    try{
+      await api(`/tasks/${id}/status`, {method:"POST", body: JSON.stringify({status})});
+      loadTasks();
+    }catch(e){ toast("Не получилось: " + e.message); }
+  }
+
+  function openTaskForm(task){
+    editingTaskId = task ? task.id : null;
+    document.getElementById("taskModalTitle").textContent = task ? "Изменить задачу" : "Новая задача";
+    document.getElementById("tk_employee").innerHTML = `<option value="">— не назначено —</option>` +
+      employeesList.map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join("");
+    document.getElementById("tk_title").value = task?.title || "";
+    document.getElementById("tk_description").value = task?.description || "";
+    document.getElementById("tk_employee").value = task?.employeeId || "";
+    document.getElementById("tk_kind").value = task?.kind || "other";
+    document.getElementById("tk_priority").value = task?.priority || "normal";
+    document.getElementById("tk_due").value = task?.dueDate || "";
+    document.getElementById("tk_error").textContent = "";
+    document.getElementById("taskOverlay").classList.add("show");
+  }
+  document.getElementById("btnNewTask").addEventListener("click", async ()=>{
+    if(!employeesList.length){ try{ employeesList = await api("/employees"); }catch(e){} }
+    openTaskForm(null);
+  });
+  document.getElementById("tk_cancel").addEventListener("click", ()=>document.getElementById("taskOverlay").classList.remove("show"));
+  document.getElementById("tk_save").addEventListener("click", async ()=>{
+    const body = {
+      title: document.getElementById("tk_title").value.trim(),
+      description: document.getElementById("tk_description").value.trim(),
+      employeeId: document.getElementById("tk_employee").value || null,
+      kind: document.getElementById("tk_kind").value,
+      priority: document.getElementById("tk_priority").value,
+      dueDate: document.getElementById("tk_due").value
+    };
+    if(!body.title){ document.getElementById("tk_error").textContent = "Напишите, что нужно сделать"; return; }
+    try{
+      if(editingTaskId) await api("/tasks/" + editingTaskId, {method:"PUT", body: JSON.stringify(body)});
+      else await api("/tasks", {method:"POST", body: JSON.stringify(body)});
+      document.getElementById("taskOverlay").classList.remove("show");
+      toast(editingTaskId ? "Задача обновлена" : "Задача добавлена");
+      loadTasks();
+    }catch(e){ document.getElementById("tk_error").textContent = e.message; }
+  });
+  document.getElementById("taskFilterEmployee").addEventListener("change", loadTasks);
+  document.getElementById("taskShowArchive").addEventListener("change", loadTasks);
+
   // ================= Зарплата =================
   // Деньги считает сервер: расценка берётся из Справочника и фиксируется в
   // начислении. Здесь только показываем и отправляем действия.
@@ -3973,6 +4276,13 @@
         <b>После изготовления:</b> проверили работу — «Работа принята», сумма уходит в Зарплату к выплате.<br>
         <b>На запас:</b> кнопка «Сделать на запас» — изделие встаёт на склад, начисление создаётся, но платить сразу не обязаны.`
     },
+    tasks: {
+      title: "Задачи — поручения сотрудникам",
+      body: `<b>Зачем:</b> чтобы не держать в голове и не объяснять голосом: купить нитки, доделать партию, съездить на склад.<br>
+        <b>Как работать:</b> «+ Новая задача» → пишете, что сделать, кому и до какого числа → карточка едет по колонкам «Надо сделать» → «В работе» → «Готово».<br>
+        <b>Срочное</b> помечается красной полосой, просроченное подсвечивается целиком.<br>
+        <b>Важно:</b> это бытовые поручения, зарплата за них не начисляется. Работа по заказам — в «Производстве».`
+    },
     kaspi: {
       title: "Kaspi: настройки",
       body: `<b>Токены:</b> берутся в кабинете продавца Kaspi, раздел API. Без токена магазин не синхронизируется.<br>
@@ -4297,12 +4607,13 @@
     b.addEventListener("click", ()=>{
       document.querySelectorAll(".tab-btn").forEach(x=>x.classList.remove("active"));
       b.classList.add("active");
-      ["orders","kaspiOrders","claims","price","catalog","salary","production","kaspi","audit","users"].forEach(t=> document.getElementById("tab-"+t).style.display = (t===b.dataset.tab)?"":"none");
+      ["orders","kaspiOrders","claims","price","catalog","salary","production","tasks","kaspi","audit","users"].forEach(t=> document.getElementById("tab-"+t).style.display = (t===b.dataset.tab)?"":"none");
       if(b.dataset.tab === "orders") applyContour();
       if(b.dataset.tab === "catalog") loadCatalog();
       if(b.dataset.tab === "price") { loadPriceCompanies().catch(()=>{}).then(loadPriceTab); }
       if(b.dataset.tab === "production") loadProduction();
       if(b.dataset.tab === "salary") loadSalary();
+      if(b.dataset.tab === "tasks") loadTasks();
       if(b.dataset.tab === "kaspiOrders") renderKaspiOrders();
       if(b.dataset.tab === "claims") { if(!kaspiOrders.length) renderKaspiOrders().then(renderClaims); else renderClaims(); }
       if(b.dataset.tab === "kaspi") { loadKaspiSettings(); loadOrderNumbering(); }
