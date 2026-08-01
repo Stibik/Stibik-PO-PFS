@@ -193,6 +193,29 @@ CREATE INDEX IF NOT EXISTS idx_production_order ON production(order_id);
 CREATE INDEX IF NOT EXISTS idx_warehouse_article ON warehouse_stock(article);
 CREATE INDEX IF NOT EXISTS idx_warehouse_consumed ON warehouse_stock(consumed);
 
+CREATE TABLE IF NOT EXISTS companies (
+  id TEXT PRIMARY KEY,
+  short_name TEXT NOT NULL,        -- краткое название (в выпадающем списке)
+  full_name TEXT,                  -- полное юридическое наименование
+  bin TEXT,                        -- ИИН/БИН
+  address TEXT,                    -- юридический адрес
+  bank_name TEXT,
+  bik TEXT,
+  iban TEXT,
+  kbe TEXT,
+  phone TEXT,
+  email TEXT,
+  website TEXT,
+  contact_person TEXT,             -- ФИО руководителя/контактного лица (необязательно)
+  logo TEXT,                       -- путь к логотипу (через тот же /api/upload, что и фото товаров)
+  brand_color TEXT,                -- основной цвет оформления (необязательно)
+  extra_text TEXT,                 -- дополнительный текст для PDF (необязательно)
+  is_active INTEGER DEFAULT 1,
+  is_default INTEGER DEFAULT 0,
+  created_at TEXT,
+  updated_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT
@@ -231,6 +254,7 @@ export function ensureSchema() {
   safeAddColumn("orders", "category TEXT");
   safeAddColumn("orders", "actual_qty REAL");
   safeAddColumn("orders", "kaspi_creation_date TEXT"); // настоящая дата создания заказа В KASPI (не в нашей базе!)
+  safeAddColumn("orders", "manual_packing INTEGER DEFAULT 0"); // пользователь вручную перенёс предзаказ в нашу "Упаковку" — не зависит от того, что говорит Kaspi
   safeAddColumn("orders", "courier_transmission_planning_date TEXT"); // срок упаковки от Kaspi — по нему кабинет переводит заказ в "Упаковка"
 
   // ── Единоразовая доначистка: для заказов, у которых kaspi_creation_date ещё
@@ -273,6 +297,11 @@ export function ensureSchema() {
   safeAddColumn("price_items", "material_cost REAL");  // Затраты на материал
   safeAddColumn("price_items", "misc_cost REAL");      // Прочие затраты
   safeAddColumn("price_items", "rags_cost REAL");      // Ветошь (расходники на производстве)
+
+  // ── Поля специально для нового конструктора "Прайс" (компании + PDF) ──
+  safeAddColumn("price_items", "show_in_price INTEGER DEFAULT 1"); // "Показывать в прайсе" — по умолчанию да, чтобы старые товары не пропали молча
+  safeAddColumn("price_items", "sort_order INTEGER DEFAULT 0");    // порядок внутри группы (Ø/материал)
+  safeAddColumn("price_items", "price_display_name TEXT");         // отдельное название для печати, если отличается от обычного name
 
   // ── Полная цепочка стадий заказа в производстве (доработка по ТЗ) ──
   // pending -> in_production/from_stock -> ready -> packed -> issued
