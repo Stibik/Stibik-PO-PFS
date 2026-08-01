@@ -1,4 +1,9 @@
 import express from "express";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import { db, logAudit } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
 
@@ -158,6 +163,52 @@ router.post("/", (req, res) => {
          Number(b.retailPrice) || 0, null, b.photo || null, now);
   logAudit({ user: req.session.username, action: "catalog_create", comment: `${article} — ${b.printName || ""}` });
   res.json(rowToCatalogItem(db.prepare("SELECT * FROM price_items WHERE id = ?").get(id)));
+});
+
+// Перенос цен Kaspi в розницу: цена на Kaspi уже есть у каждого товара,
+// а розница у большинства пустая — руками её перебивать долго.
+router.post("/kaspi-price-to-retail", (req, res) => {
+  const onlyEmpty = req.body?.onlyEmpty !== false; // по умолчанию не трогаем уже заполненные
+  const rows = db.prepare("SELECT * FROM price_items WHERE kaspi_price > 0").all();
+  let updated = 0, skipped = 0;
+  for (const row of rows) {
+    if (onlyEmpty && Number(row.retail) > 0) { skipped++; continue; }
+    db.prepare("UPDATE price_items SET retail = ? WHERE id = ?").run(Number(row.kaspi_price), row.id);
+    updated++;
+  }
+  logAudit({ user: req.session.username, action: "catalog_kaspi_price_to_retail",
+             comment: `Перенесено цен: ${updated}${skipped ? `, пропущено заполненных: ${skipped}` : ""}` });
+  res.json({ updated, skipped, total: rows.length });
+});
+
+// Проверка загрузки фото: куда пишем, доступна ли папка, сколько там файлов.
+// Нужна, когда фото «не грузятся» — сразу видно, дело в правах или в другом.
+router.get("/photos-status", (req, res) => {
+  const dir = process.env.UPLOAD_DIR || path.join(__dirname, "..", "uploads");
+  const result = { dir, exists: false, writable: false, files: 0, sizeMb: 0, onPersistentDisk: dir.startsWith("/var/data") };
+  try {
+    result.exists = fs.existsSync(dir);
+    if (result.exists) {
+      const names = fs.readdirSync(dir).filter(f => fs.statSync(path.join(dir, f)).isFile());
+      result.files = names.length;
+      result.sizeMb = Math.round(names.reduce((s, f) => s + fs.statSync(path.join(dir, f)).size, 0) / 104857.6) / 10;
+    }
+    const probe = path.join(dir, ".write-test");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(probe, "x");
+    fs.unlinkSync(probe);
+    result.writable = true;
+  } catch (e) {
+    result.error = e.message;
+  }
+  // Сколько товаров ссылается на фото, которых физически нет
+  let broken = 0;
+  for (const row of db.prepare("SELECT photo FROM price_items WHERE photo IS NOT NULL AND photo != ''").all()) {
+    const name = String(row.photo).replace(/^\/uploads\//, "");
+    if (!fs.existsSync(path.join(dir, name))) broken++;
+  }
+  result.brokenLinks = broken;
+  res.json(result);
 });
 
 // Точечное обновление ручных полей: название для печати, категория,
