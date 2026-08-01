@@ -524,6 +524,7 @@
         <span id="priceCompanyHint" style="font-size:12.5px; color:var(--red); padding-bottom:8px;">Выберите компанию</span>
         <button class="btn secondary" id="btnManageCompanies" style="padding:7px 12px;" title="Справочник компаний">⚙ Компании</button>
         <div style="margin-left:auto; display:flex; gap:8px;">
+          <button class="btn secondary" id="btnPriceSaveList">💾 Сохранить прайс</button>
           <button class="btn secondary" id="btnPricePreviewPdf">👁 Предпросмотр</button>
           <button class="btn amber" id="btnPriceDownloadPdf">⬇ Скачать PDF</button>
         </div>
@@ -546,6 +547,10 @@
             <div id="priceCatalogTree"></div>
           </div>
           <div class="panel">
+            <div class="panel-label">Сохранённые прайсы</div>
+            <div id="priceSavedList"></div>
+          </div>
+          <div class="panel">
             <div class="panel-label">Настройки PDF</div>
             <div id="pricePdfSettingsBody"></div>
             <div style="font-size:11px; color:var(--ink-soft); margin-top:8px;">Влияют только на PDF и предпросмотр — в таблице слева данные видны всегда.</div>
@@ -558,6 +563,7 @@
             <span id="priceSelectedInfo" style="font-weight:600; font-size:13.5px;">Выбрано: 0</span>
             <button class="btn secondary" id="btnPriceSelectAll" style="padding:5px 12px; font-size:12.5px;">Выбрать всё видимое</button>
             <button class="btn secondary" id="btnPriceSelectNone" style="padding:5px 12px; font-size:12.5px;">Снять выбор</button>
+            <span id="priceDraftStatus" style="font-size:11.5px; color:var(--ink-soft);"></span>
             <span id="priceTreeInfo" style="margin-left:auto; font-size:12.5px; color:var(--ink-soft);"></span>
           </div>
           <div class="panel" style="padding:0; overflow:hidden;">
@@ -1371,9 +1377,31 @@
     currentCatalogPhoto = null;
     updateCatalogPhotoPreview();
   });
+  // Генератор PDF на сервере понимает только JPEG и PNG. Фото, сохранённое с
+  // сайта, часто оказывается webp — на экране оно видно, а в PDF молча не
+  // попадало. Поэтому такие файлы переводим в JPEG прямо здесь, до отправки.
+  async function normalizeCatalogPhoto(file){
+    if(file.type === "image/jpeg" || file.type === "image/png") return file;
+    if(typeof createImageBitmap !== "function") return file;
+    try{
+      const bitmap = await createImageBitmap(file);
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width; canvas.height = bitmap.height;
+      canvas.getContext("2d").drawImage(bitmap, 0, 0);
+      const blob = await new Promise(res=>canvas.toBlob(res, "image/jpeg", 0.92));
+      if(!blob) return file;
+      const name = (file.name || "photo").replace(/\.[^.]+$/, "") + ".jpg";
+      return new File([blob], name, { type: "image/jpeg" });
+    }catch(err){
+      console.warn("Не получилось перевести фото в JPEG, отправляю как есть:", err);
+      return file;
+    }
+  }
+
   document.getElementById("ci_photo_input").addEventListener("change", async (e)=>{
-    const file = e.target.files[0];
+    let file = e.target.files[0];
     if(!file) return;
+    file = await normalizeCatalogPhoto(file);
     const fd = new FormData();
     fd.append("photo", file);
     try{
@@ -1496,7 +1524,9 @@
       Array.from(priceSelected).forEach(id=>{ if(!alive.has(id)) priceSelected.delete(id); });
       savePriceSelection();
       document.getElementById("priceName").value = priceLoadStored("priceName", "") || "";
+      await loadPriceDraftFromServer();
       renderPricePdfSettings();
+      renderPriceSavedLists();
       renderPriceCatalogTree();
       renderPriceFilters();
       renderPriceTable();
@@ -1832,8 +1862,155 @@
     });
   }
 
+  // ---------- Черновик на сервере ----------
+  // Раньше выбор жил только в localStorage — то есть в одном браузере. Для работы
+  // с двух рабочих мест черновик хранится на сервере и привязан к логину:
+  // сел за другой компьютер под своим пользователем — продолжил с того же места.
+  let priceDraftTimer = null;
+  let priceDraftReady = false; // до загрузки серверного черновика ничего не пишем, чтобы не затереть его пустым
+
+  async function loadPriceDraftFromServer(){
+    try{
+      const draft = await api("/price-lists/draft");
+      if(draft && draft.exists){
+        priceSelected = new Set(draft.itemIds || []);
+        savePriceSelection();
+        if(draft.settings && Object.keys(draft.settings).length){
+          pricePdfSettings = Object.assign({}, PRICE_PDF_DEFAULTS, draft.settings);
+          localStorage.setItem("pricePdfSettings", JSON.stringify(pricePdfSettings));
+        }
+        if(draft.name) document.getElementById("priceName").value = draft.name;
+        const sel = document.getElementById("priceCompanySelect");
+        if(draft.companyId && Array.from(sel.options).some(o=>o.value === draft.companyId)){
+          sel.value = draft.companyId;
+          updatePriceCompanyHint();
+        }
+        setPriceDraftStatus("черновик загружен с сервера");
+      } else {
+        setPriceDraftStatus("");
+      }
+    }catch(e){
+      // Сервер недоступен или маршрут ещё не залит — работаем на локальной копии
+      setPriceDraftStatus("черновик только в этом браузере");
+    }
+    priceDraftReady = true;
+  }
+
+  function setPriceDraftStatus(text){
+    const el = document.getElementById("priceDraftStatus");
+    if(el) el.textContent = text;
+  }
+
+  function schedulePriceDraftSave(){
+    if(!priceDraftReady) return;
+    setPriceDraftStatus("сохраняем...");
+    clearTimeout(priceDraftTimer);
+    priceDraftTimer = setTimeout(savePriceDraftNow, 800);
+  }
+
+  async function savePriceDraftNow(){
+    try{
+      await api("/price-lists/draft", { method:"PUT", body: JSON.stringify({
+        name: document.getElementById("priceName").value.trim(),
+        companyId: document.getElementById("priceCompanySelect").value,
+        settings: pricePdfSettings,
+        itemIds: Array.from(priceSelected)
+      })});
+      setPriceDraftStatus("черновик сохранён");
+    }catch(e){
+      setPriceDraftStatus("черновик не сохранился на сервере");
+    }
+  }
+
+  // ---------- Сохранённые прайсы (общие для всех сотрудников) ----------
+  async function renderPriceSavedLists(){
+    const el = document.getElementById("priceSavedList");
+    if(!el) return;
+    let rows;
+    try{
+      rows = await api("/price-lists");
+    }catch(e){
+      el.innerHTML = `<div style="font-size:12px; color:var(--ink-soft);">Список недоступен: ${esc(e.message)}</div>`;
+      return;
+    }
+    if(!rows.length){
+      el.innerHTML = `<div style="font-size:12px; color:var(--ink-soft);">Пока пусто. Отметьте товары, впишите название и нажмите «Сохранить прайс» — он появится здесь и будет виден на любом компьютере.</div>`;
+      return;
+    }
+    el.innerHTML = rows.map(r=>`
+      <div style="border-bottom:1px solid var(--line); padding:8px 0;">
+        <div style="font-size:13px; font-weight:600;">${esc(r.name)}</div>
+        <div style="font-size:11px; color:var(--ink-soft);">${r.itemCount} поз.${r.companyName?" · "+esc(r.companyName):""} · ${esc((r.updatedAt||"").slice(0,10))}${r.createdBy?" · "+esc(r.createdBy):""}</div>
+        <div style="display:flex; gap:6px; margin-top:6px;">
+          <button class="btn secondary" style="padding:3px 9px; font-size:11.5px;" data-open="${esc(r.id)}">Открыть</button>
+          <button class="btn secondary" style="padding:3px 9px; font-size:11.5px;" data-pdf="${esc(r.id)}" title="PDF с ценами на момент сохранения">PDF</button>
+          <button class="btn danger" style="padding:3px 9px; font-size:11.5px;" data-del="${esc(r.id)}" title="Удалить">✕</button>
+        </div>
+      </div>`).join("");
+
+    el.querySelectorAll("[data-open]").forEach(b=>{
+      b.addEventListener("click", ()=>openPriceList(b.dataset.open));
+    });
+    el.querySelectorAll("[data-pdf]").forEach(b=>{
+      b.addEventListener("click", ()=>priceGeneratePdf("download", b.dataset.pdf));
+    });
+    el.querySelectorAll("[data-del]").forEach(b=>{
+      b.addEventListener("click", async ()=>{
+        if(!confirm("Удалить этот сохранённый прайс? Товары и цены в Справочнике не пострадают.")) return;
+        try{
+          await api("/price-lists/"+b.dataset.del, {method:"DELETE"});
+          toast("Прайс удалён");
+          renderPriceSavedLists();
+        }catch(e){ toast("Не получилось: "+e.message); }
+      });
+    });
+  }
+
+  // Открытие сохранённого прайса переносит его состав в текущую работу —
+  // с актуальными ценами из Справочника. Кнопка «PDF» рядом, наоборот, отдаёт
+  // документ с ценами на момент сохранения.
+  async function openPriceList(id){
+    try{
+      const pl = await api("/price-lists/"+id);
+      priceSelected = new Set(pl.itemIds || []);
+      savePriceSelection();
+      document.getElementById("priceName").value = pl.name || "";
+      if(pl.settings && Object.keys(pl.settings).length){
+        pricePdfSettings = Object.assign({}, PRICE_PDF_DEFAULTS, pl.settings);
+        localStorage.setItem("pricePdfSettings", JSON.stringify(pricePdfSettings));
+        renderPricePdfSettings();
+      }
+      const sel = document.getElementById("priceCompanySelect");
+      if(pl.companyId && Array.from(sel.options).some(o=>o.value === pl.companyId)){
+        sel.value = pl.companyId;
+        updatePriceCompanyHint();
+      }
+      renderPriceTable();
+      schedulePriceDraftSave();
+      toast(`Открыт прайс «${pl.name}» — ${(pl.itemIds||[]).length} позиций`);
+    }catch(e){ toast("Не открылось: "+e.message); }
+  }
+
+  document.getElementById("btnPriceSaveList").addEventListener("click", async ()=>{
+    const name = document.getElementById("priceName").value.trim();
+    if(!name){ toast("Впишите «Название прайса» — под ним он и сохранится"); return; }
+    if(!document.getElementById("priceCompanySelect").value){ toast("Сначала выберите компанию"); return; }
+    if(!priceSelected.size){ toast("Отметьте хотя бы один товар"); return; }
+    try{
+      const r = await api("/price-lists", { method:"POST", body: JSON.stringify({
+        name,
+        companyId: document.getElementById("priceCompanySelect").value,
+        settings: pricePdfSettings,
+        itemIds: Array.from(priceSelected)
+      })});
+      toast(`Прайс «${r.name}» сохранён — цены зафиксированы на сегодня`);
+      renderPriceSavedLists();
+    }catch(e){ toast("Не сохранилось: "+e.message); }
+  });
+
   function savePriceSelection(){
     localStorage.setItem("priceSelectedIds", JSON.stringify(Array.from(priceSelected)));
+    schedulePriceDraftSave();
   }
 
   function updatePriceSelectedInfo(){
@@ -1857,6 +2034,7 @@
   });
   document.getElementById("priceName").addEventListener("input", (e)=>{
     localStorage.setItem("priceName", JSON.stringify(e.target.value));
+    schedulePriceDraftSave();
   });
   document.getElementById("priceOnlyReady").addEventListener("change", ()=>{ renderPriceCatalogTree(); renderPriceFilters(); renderPriceTable(); });
   document.getElementById("priceOnlyShown").addEventListener("change", ()=>{ renderPriceCatalogTree(); renderPriceFilters(); renderPriceTable(); });
@@ -1892,6 +2070,7 @@
       cb.addEventListener("change", ()=>{
         pricePdfSettings[cb.dataset.key] = cb.checked;
         localStorage.setItem("pricePdfSettings", JSON.stringify(pricePdfSettings));
+        schedulePriceDraftSave();
       });
     });
   }
@@ -1903,11 +2082,24 @@
   });
 
   // ---------- Настоящий PDF с сервера ----------
-  async function priceGeneratePdf(mode){
+  // priceListId задан — собираем сохранённый прайс по снимку (цены на момент
+  // сохранения). Без него — обычная выборка с актуальными ценами.
+  async function priceGeneratePdf(mode, priceListId){
     const companyId = document.getElementById("priceCompanySelect").value;
-    if(!companyId){ toast("Сначала выберите компанию"); return; }
     const itemIds = Array.from(priceSelected);
-    if(!itemIds.length){ toast("Отметьте хотя бы один товар"); return; }
+    if(!priceListId){
+      if(!companyId){ toast("Сначала выберите компанию"); return; }
+      if(!itemIds.length){ toast("Отметьте хотя бы один товар"); return; }
+    }
+
+    // Старые фото могли быть загружены в webp — в PDF вместо них будет рамка.
+    // Предупреждаем заранее, чтобы это не выяснилось уже перед клиентом.
+    if(pricePdfSettings.showPhoto && !priceListId){
+      const bad = itemIds
+        .map(id=>catalogItems.find(x=>x.id === id))
+        .filter(it=>it && it.photo && !/\.(jpe?g|png)$/i.test(it.photo));
+      if(bad.length) toast(`У ${bad.length} товаров фото не в JPG/PNG — в PDF будет рамка «нет фото». Перезалейте их в карточке товара.`);
+    }
 
     const btn = document.getElementById(mode === "preview" ? "btnPricePreviewPdf" : "btnPriceDownloadPdf");
     const oldText = btn.textContent;
@@ -1922,12 +2114,14 @@
         method: "POST",
         headers: {"Content-Type":"application/json"},
         credentials: "same-origin",
-        body: JSON.stringify({
-          companyId,
-          itemIds,
-          settings: pricePdfSettings,
-          priceName: document.getElementById("priceName").value.trim()
-        })
+        body: JSON.stringify(priceListId
+          ? { priceListId }
+          : {
+              companyId,
+              itemIds,
+              settings: pricePdfSettings,
+              priceName: document.getElementById("priceName").value.trim()
+            })
       });
       if(!resp.ok){
         const t = await resp.json().catch(()=>({}));
@@ -1987,7 +2181,10 @@
     // Кнопки PDF включаются только когда выбраны и компания, и хотя бы один товар
     updatePriceSelectedInfo();
   }
-  document.getElementById("priceCompanySelect").addEventListener("change", updatePriceCompanyHint);
+  document.getElementById("priceCompanySelect").addEventListener("change", ()=>{
+    updatePriceCompanyHint();
+    schedulePriceDraftSave();
+  });
 
   document.getElementById("btnManageCompanies").addEventListener("click", ()=>{
     openCompaniesModal();
