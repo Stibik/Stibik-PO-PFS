@@ -314,6 +314,7 @@
     </div>
     <div class="hdr-menu" id="hdrUserMenu">
       <div class="hdr-menu-title">Аккаунт</div>
+      <button id="btnChangePassword">Сменить пароль</button>
       <button id="btnLogout">Выйти</button>
     </div>
     <div class="hdr-menu" id="hdrBellMenu" style="right:100px;">
@@ -907,7 +908,7 @@
       </div>
       <div class="tbl-wrap">
         <table>
-          <thead><tr><th>Логин</th><th>Роль</th><th>Сотрудник</th><th>Доступ к разделам</th><th>Состояние</th><th></th></tr></thead>
+          <thead><tr><th>Логин</th><th>Роль</th><th>Сотрудник</th><th>Доступ к разделам</th><th>Последний вход</th><th>Состояние</th><th></th></tr></thead>
           <tbody id="usersBody"></tbody>
         </table>
       </div>
@@ -1398,11 +1399,33 @@
         <span style="font-size:11.5px; color:var(--ink-soft);">роль подставляет галочки, дальше правьте вручную</span>
       </div>
       <div id="us_permissions"></div>
+      <div style="border-top:1px solid var(--line); margin-top:12px; padding-top:10px;">
+        <button class="btn secondary" id="us_preview" style="padding:5px 12px; font-size:12px;">👁 Посмотреть, что он увидит</button>
+        <button class="btn secondary" id="us_invite" style="padding:5px 12px; font-size:12px;">📱 Приглашение на телефон</button>
+        <div id="us_previewBox" style="display:none; margin-top:10px; background:#F7FAFF; border:1px solid #CFE0F5; border-radius:8px; padding:10px 12px; font-size:12.5px;"></div>
+      </div>
     </div>
     <div class="error" id="us_error"></div>
     <div class="modal-actions">
       <div></div>
       <div><button class="btn secondary" id="us_cancel">Отмена</button> <button class="btn amber" id="us_save">Сохранить</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="passwordOverlay">
+  <div class="modal" style="max-width:420px;">
+    <h3 id="pwTitle">Смена пароля</h3>
+    <div id="pwForced" style="display:none; background:var(--amber-light); border:1px solid var(--amber); border-radius:8px; padding:10px 12px; font-size:12.5px; margin-bottom:12px;">
+      Вы вошли по временному паролю. Придумайте свой — его не будет знать никто, включая администратора.
+    </div>
+    <div><label style="font-size:11px; color:var(--ink-soft);">Текущий пароль</label><input type="password" id="pw_old" style="width:100%; margin-bottom:8px;"></div>
+    <div><label style="font-size:11px; color:var(--ink-soft);">Новый пароль (минимум 4 символа)</label><input type="password" id="pw_new" style="width:100%; margin-bottom:8px;"></div>
+    <div><label style="font-size:11px; color:var(--ink-soft);">Повторите новый</label><input type="password" id="pw_new2" style="width:100%;"></div>
+    <div class="error" id="pw_error"></div>
+    <div class="modal-actions">
+      <div></div>
+      <div><button class="btn secondary" id="pw_cancel">Отмена</button> <button class="btn amber" id="pw_save">Сменить</button></div>
     </div>
   </div>
 </div>
@@ -1452,6 +1475,7 @@
       myRole = data.role;
       myPermissions = data.permissions || [];
       setCurrentUser(data.username, data.role);
+      if(data.mustChangePassword) setTimeout(()=>openPasswordForm(true), 400);
       applyRoleUI();
       showApp();
       await loadAll();
@@ -6647,6 +6671,36 @@
     });
   }
 
+  // ---------- Смена пароля ----------
+  let passwordForced = false;
+  function openPasswordForm(forced){
+    passwordForced = !!forced;
+    document.getElementById("pwTitle").textContent = forced ? "Задайте свой пароль" : "Смена пароля";
+    document.getElementById("pwForced").style.display = forced ? "block" : "none";
+    document.getElementById("pw_cancel").style.display = forced ? "none" : "";
+    ["pw_old","pw_new","pw_new2"].forEach(id=>document.getElementById(id).value = "");
+    document.getElementById("pw_error").textContent = "";
+    document.getElementById("passwordOverlay").classList.add("show");
+  }
+  document.getElementById("btnChangePassword").addEventListener("click", ()=>openPasswordForm(false));
+  document.getElementById("pw_cancel").addEventListener("click", ()=>document.getElementById("passwordOverlay").classList.remove("show"));
+  document.getElementById("pw_save").addEventListener("click", async ()=>{
+    const oldPassword = document.getElementById("pw_old").value;
+    const newPassword = document.getElementById("pw_new").value;
+    const repeat = document.getElementById("pw_new2").value;
+    const err = document.getElementById("pw_error");
+    if(newPassword.length < 4){ err.textContent = "Новый пароль — минимум 4 символа"; return; }
+    if(newPassword !== repeat){ err.textContent = "Новые пароли не совпадают"; return; }
+    try{
+      await api("/auth/change-password", {method:"POST", body: JSON.stringify({oldPassword, newPassword})});
+      document.getElementById("passwordOverlay").classList.remove("show");
+      passwordForced = false;
+      toast("Пароль изменён");
+    }catch(e){
+      err.textContent = e.message === "wrong_old_password" ? "Текущий пароль указан неверно" : e.message;
+    }
+  });
+
   // ---------- Роли: скрываем админ-разделы для склада ----------
   let myPermissions = [];
   const TAB_PERMISSION = {
@@ -6705,12 +6759,16 @@
         <td>${esc(u.employeeName || "—")}</td>
         <td style="max-width:320px; font-size:11.5px; color:var(--ink-soft);">
           ${u.role === "admin" ? "все разделы" : (u.permissions.map(p=>labels[p] || p).join(", ") || "нет доступа")}</td>
-        <td>${u.isActive ? `<span style="color:var(--green); font-size:12px;">работает</span>` : `<span style="color:var(--ink-soft); font-size:12px;">отключён</span>`}</td>
+        <td style="font-size:11.5px;">${u.lastLoginAt
+            ? `${esc((u.lastLoginAt||"").slice(0,16).replace("T"," "))}<div style="color:var(--ink-soft);">${esc(u.lastLoginIp||"")}</div>`
+            : `<span style="color:var(--ink-soft);">не заходил</span>`}</td>
+        <td>${u.isActive ? `<span style="color:var(--green); font-size:12px;">работает</span>` : `<span style="color:var(--ink-soft); font-size:12px;">отключён</span>`}
+          ${u.mustChangePassword ? `<div style="font-size:11px; color:var(--amber);">пароль временный</div>` : ""}</td>
         <td style="white-space:nowrap;">
           <button class="btn secondary" style="padding:4px 10px; font-size:12px;" data-uedit="${esc(u.id)}">Изменить</button>
           <button class="btn secondary" style="padding:4px 10px; font-size:12px;" data-utoggle="${esc(u.id)}">${u.isActive ? "Отключить" : "Включить"}</button>
         </td>
-      </tr>`).join("") || `<tr><td colspan="6" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет пользователей</td></tr>`;
+      </tr>`).join("") || `<tr><td colspan="7" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет пользователей</td></tr>`;
 
     document.querySelectorAll("[data-uedit]").forEach(b=>b.addEventListener("click", ()=>openUserForm(usersList.find(u=>u.id === b.dataset.uedit))));
     document.querySelectorAll("[data-utoggle]").forEach(b=>b.addEventListener("click", async ()=>{
@@ -6735,6 +6793,49 @@
       </div>`).join("");
   }
 
+  // Предпросмотр: показываем ровно то, что человек увидит, — чтобы не гадать
+  // по галочкам и не заходить под его логином
+  function renderPermissionPreview(){
+    const chosen = Array.from(document.querySelectorAll(".us-perm:checked")).map(cb=>cb.value);
+    const role = document.getElementById("us_role").value;
+    const meta = permMeta?.permissions || [];
+    const sections = meta.filter(p=>p.group === "Разделы");
+    const abilities = meta.filter(p=>p.group !== "Разделы");
+    const isAdmin = role === "admin";
+    const visible = isAdmin ? sections : sections.filter(p=>chosen.includes(p.key));
+    const hidden = isAdmin ? [] : sections.filter(p=>!chosen.includes(p.key));
+    const box = document.getElementById("us_previewBox");
+    box.style.display = "block";
+    box.innerHTML = `
+      <div><b>Увидит вкладки:</b> ${visible.length ? visible.map(p=>esc(p.label)).join(", ") : `<span style="color:var(--red);">ни одной — человек не сможет работать</span>`}</div>
+      <div style="margin-top:6px;"><b>Не увидит:</b> ${hidden.length ? hidden.map(p=>esc(p.label)).join(", ") : "ничего не скрыто"}</div>
+      <div style="margin-top:6px;"><b>Дополнительно:</b> ${abilities.map(p=>`${esc(p.label)} — ${(isAdmin || chosen.includes(p.key)) ? "да" : "нет"}`).join(" · ")}</div>
+      <div style="margin-top:6px; color:var(--ink-soft);">Права проверяются на сервере: закрытые разделы недоступны, даже если открыть ссылку напрямую.</div>`;
+  }
+  document.getElementById("us_preview").addEventListener("click", renderPermissionPreview);
+
+  // Готовое приглашение: ссылка, логин, временный пароль и что нажать на телефоне
+  document.getElementById("us_invite").addEventListener("click", ()=>{
+    const login = document.getElementById("us_username").value.trim();
+    const pass = document.getElementById("us_password").value || "(пароль, который вы задали)";
+    const text = "Доступ в рабочую программу PFS\n\nСсылка: " + location.origin +
+      "\nЛогин: " + login + "\nВременный пароль: " + pass +
+      "\n\nПри первом входе программа попросит придумать свой пароль — задайте любой, который запомните." +
+      "\n\nЧтобы был значок как у приложения: откройте ссылку в Chrome → меню (три точки) → «Добавить на главный экран».";
+    const box = document.getElementById("us_previewBox");
+    box.style.display = "block";
+    box.innerHTML = `<div style="white-space:pre-wrap; font-size:12.5px;">${esc(text)}</div>
+      <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="btn secondary" id="us_copyInvite" style="padding:4px 10px; font-size:12px;">Скопировать</button>
+        <a class="btn secondary" style="padding:4px 10px; font-size:12px; text-decoration:none;" target="_blank" rel="noopener"
+           href="https://wa.me/?text=${encodeURIComponent(text)}">Отправить в WhatsApp</a>
+      </div>`;
+    document.getElementById("us_copyInvite").addEventListener("click", async ()=>{
+      try{ await navigator.clipboard.writeText(text); toast("Приглашение скопировано"); }
+      catch(e){ toast("Не удалось скопировать — выделите текст вручную"); }
+    });
+  });
+
   function openUserForm(user){
     editingUserId = user ? user.id : null;
     document.getElementById("userModalTitle").textContent = user ? `Пользователь ${user.username}` : "Новый пользователь";
@@ -6748,6 +6849,7 @@
       employeesList.map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join("");
     document.getElementById("us_employee").value = user ? (user.employeeId || "") : "";
     renderPermissionChecks(user ? user.permissions : (permMeta?.roles.find(r=>r.key === "warehouse")?.preset || []));
+    document.getElementById("us_previewBox").style.display = "none";
     document.getElementById("us_error").textContent = "";
     document.getElementById("userOverlay").classList.add("show");
   }
@@ -6794,6 +6896,7 @@
       myRole = me.role;
       myPermissions = me.permissions || [];
       myEmployeeId = me.employeeId || null;
+      if(me.mustChangePassword) setTimeout(()=>openPasswordForm(true), 400);
       setCurrentUser(me.username, me.role, me.roleLabel);
       applyRoleUI();
       showApp();
