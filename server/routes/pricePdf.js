@@ -2,13 +2,47 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
+import { createRequire } from "module";
 import PDFDocument from "pdfkit";
 import { db } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
 
+const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const FONT_REGULAR = path.join(__dirname, "..", "fonts", "DejaVuSans.ttf");
-const FONT_BOLD = path.join(__dirname, "..", "fonts", "DejaVuSans-Bold.ttf");
+
+// Шрифт с кириллицей. Раньше путь был жёстко прибит к server/fonts — и если
+// этих файлов на сервере нет (а их там не было), генерация падала с ENOENT
+// ещё до первой строки документа. Теперь ищем в нескольких местах, главное из
+// них — npm-пакет dejavu-fonts-ttf, который ставится сам при сборке.
+function findFontDir() {
+  const candidates = [];
+  if (process.env.PDF_FONT_DIR) candidates.push(process.env.PDF_FONT_DIR);
+  candidates.push(path.join(__dirname, "..", "fonts"));
+  try {
+    candidates.push(path.join(path.dirname(require.resolve("dejavu-fonts-ttf/package.json")), "ttf"));
+  } catch (e) { /* пакет не установлен — не беда, проверим остальные пути */ }
+  candidates.push("/usr/share/fonts/truetype/dejavu");
+  for (const dir of candidates) {
+    if (dir && fs.existsSync(path.join(dir, "DejaVuSans.ttf")) && fs.existsSync(path.join(dir, "DejaVuSans-Bold.ttf"))) return dir;
+  }
+  return null;
+}
+let fontDirCache = null;
+function fontPaths() {
+  if (!fontDirCache) {
+    fontDirCache = findFontDir();
+    if (fontDirCache) console.log("[price-pdf] Шрифт найден:", fontDirCache);
+  }
+  if (!fontDirCache) {
+    const err = new Error("не найден шрифт DejaVuSans.ttf. Проверьте, что установлена зависимость dejavu-fonts-ttf (она есть в package.json) — либо положите DejaVuSans.ttf и DejaVuSans-Bold.ttf в папку server/fonts");
+    err.code = "FONT_NOT_FOUND";
+    throw err;
+  }
+  return {
+    regular: path.join(fontDirCache, "DejaVuSans.ttf"),
+    bold: path.join(fontDirCache, "DejaVuSans-Bold.ttf")
+  };
+}
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, "..", "uploads");
 
 const router = express.Router();
@@ -23,9 +57,9 @@ const CONTENT_BOTTOM = PAGE_H - PAGE_MARGIN - FOOTER_H;
 // Колонки таблицы товаров. Ширины подобраны так, чтобы длинное название
 // переносилось внутри своей колонки и не наезжало на характеристики и цену.
 const COL = {
-  photoX: PAGE_MARGIN,            photoW: 40,
-  nameX:  PAGE_MARGIN + 50,       nameW: 195,
-  specX:  PAGE_MARGIN + 255,      specW: 140,
+  photoX: PAGE_MARGIN,            photoW: 46, photoH: 58,
+  nameX:  PAGE_MARGIN + 58,       nameW: 190,
+  specX:  PAGE_MARGIN + 258,      specW: 137,
   priceX: PAGE_W - PAGE_MARGIN - 120, priceW: 120
 };
 
@@ -87,12 +121,13 @@ function groupItems(items) {
 // Основная сборка документа — используется и для скачивания, и для предпросмотра,
 // чтобы они гарантированно не расходились (требование ТЗ).
 function buildPdfDocument({ company, items, settings, priceName }) {
+  const fonts = fontPaths(); // бросит понятную ошибку, если шрифта нет
   const doc = new PDFDocument({ size: "A4", margin: PAGE_MARGIN, bufferPages: true });
-  doc.registerFont("F", FONT_REGULAR);
-  doc.registerFont("FB", FONT_BOLD);
+  doc.registerFont("F", fonts.regular);
+  doc.registerFont("FB", fonts.bold);
   doc.font("F");
 
-  const rowH = 50;
+  const rowH = 66;
   const groupHeaderH = 40;
 
   // Шапка таблицы повторяется на каждой новой странице (требование ТЗ 7.2)
@@ -120,6 +155,32 @@ function buildPdfDocument({ company, items, settings, priceName }) {
   function ensureSpace(neededHeight, isGroupStart) {
     const minNeeded = isGroupStart ? neededHeight + rowH : neededHeight;
     if (doc.y + minNeeded > CONTENT_BOTTOM) newPage();
+  }
+
+  // Фото товара. pdfkit умеет только JPEG и PNG: webp/gif он не откроет, и
+  // раньше такая картинка просто молча исчезала из документа. Теперь вместо
+  // неё рисуется нейтральный плейсхолдер, чтобы строка не выглядела сломанной.
+  function drawPhoto(it, rowTop) {
+    const photoPath = resolveLocalUpload(it.photo);
+    let drawn = false;
+    if (photoPath) {
+      // fit сохраняет пропорции — фото не растягивается (требование ТЗ 3)
+      try {
+        doc.image(photoPath, COL.photoX, rowTop, { fit: [COL.photoW, COL.photoH], align: "center", valign: "center" });
+        drawn = true;
+      } catch (e) {
+        console.warn("[price-pdf] Фото не поддерживается pdfkit (нужен JPG или PNG):", it.photo, e.message);
+      }
+    }
+    if (!drawn) {
+      doc.save();
+      doc.roundedRect(COL.photoX, rowTop, COL.photoW, COL.photoH, 4)
+         .fillOpacity(1).fillAndStroke("#F8FAFC", "#E2E8F0");
+      doc.fontSize(6).fillColor("#94A3B8")
+         .text("нет фото", COL.photoX, rowTop + COL.photoH / 2 - 3, { width: COL.photoW, align: "center" });
+      doc.restore();
+      doc.fillColor("#0F172A");
+    }
   }
 
   // ---------- Шапка документа ----------
@@ -181,11 +242,7 @@ function buildPdfDocument({ company, items, settings, priceName }) {
       ensureSpace(rowH, false);
       const rowTop = doc.y;
 
-      if (settings.showPhoto) {
-        const photoPath = resolveLocalUpload(it.photo);
-        // fit сохраняет пропорции — фото не растягивается (требование ТЗ 3)
-        if (photoPath) { try { doc.image(photoPath, COL.photoX, rowTop, { fit: [COL.photoW, 44] }); } catch (e) {} }
-      }
+      if (settings.showPhoto) drawPhoto(it, rowTop);
 
       doc.fontSize(11).fillColor("#0F172A").font("FB")
          .text(it.printName || "—", COL.nameX, rowTop, { width: COL.nameW });
@@ -207,7 +264,7 @@ function buildPdfDocument({ company, items, settings, priceName }) {
       doc.font("F");
 
       // Низ строки — по самой длинной из колонок, чтобы ничего не наложилось
-      doc.y = Math.max(doc.y, rowTop + (settings.showPhoto ? 46 : 34));
+      doc.y = Math.max(doc.y, rowTop + (settings.showPhoto ? COL.photoH + 2 : 34));
       doc.moveTo(PAGE_MARGIN, doc.y + 4).lineTo(PAGE_W - PAGE_MARGIN, doc.y + 4).lineWidth(0.5).strokeColor("#E5E7EB").stroke();
       doc.y += 12;
     }
