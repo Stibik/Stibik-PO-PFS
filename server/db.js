@@ -529,6 +529,11 @@ export function ensureSchema() {
   safeAddColumn("users", "permissions TEXT");            // JSON-список разрешённых разделов
   safeAddColumn("users", "employee_id TEXT");            // кто это из сотрудников — чтобы работа падала ему
   safeAddColumn("users", "is_active INTEGER DEFAULT 1"); // уволился — отключаем, история остаётся
+  // Первый вход по временному паролю обязывает сменить его: так пароли
+  // сотрудников не знает даже администратор
+  safeAddColumn("users", "must_change_password INTEGER DEFAULT 0");
+  safeAddColumn("users", "last_login_at TEXT");
+  safeAddColumn("users", "last_login_ip TEXT");
   // Забивщик отмечает «готово», менеджер подтверждает — только тогда к выплате
   safeAddColumn("payroll_entries", "reported_done INTEGER DEFAULT 0");
   safeAddColumn("payroll_entries", "reported_at TEXT");
