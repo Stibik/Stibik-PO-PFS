@@ -857,16 +857,33 @@
       <div class="panel" style="margin-top:16px;">
         <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
           <b style="font-size:14px;">Работы</b>
-          <input type="text" id="workSearch" placeholder="Артикул или название..." style="flex:1; min-width:200px;">
+          <input type="text" id="workSearch" placeholder="№ заказа, код Kaspi, артикул или название..." style="flex:1; min-width:220px;">
           <select id="workEmployee" style="min-width:160px;"><option value="">Все сотрудники</option></select>
           <select id="workShop" style="min-width:140px;"><option value="">Все магазины</option></select>
           <select id="workMonth" style="min-width:150px;"><option value="">Все месяцы</option></select>
           <button class="btn secondary" id="workReset" style="padding:5px 12px; font-size:12px;">Сбросить</button>
           <button class="btn secondary" id="workExport" style="padding:5px 12px; font-size:12px;">Выгрузить в Excel</button>
         </div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:8px;">
+          <span style="font-size:12.5px; color:var(--ink-soft);">Дата работы:</span>
+          <input type="date" id="workFrom" style="width:150px;">
+          <span style="font-size:12.5px; color:var(--ink-soft);">—</span>
+          <input type="date" id="workTo" style="width:150px;">
+          <span id="workArchiveInfo" style="font-size:12px; color:var(--ink-soft); margin-left:auto;"></span>
+        </div>
         <div class="panel-divider"></div>
         <div class="pill-row" id="workStatusFilters"></div>
       </div>
+
+      <div class="panel" id="workBulkBar" style="display:none; background:#FFF8E6; border-color:var(--amber); align-items:center; gap:10px; flex-wrap:wrap;">
+        <b style="font-size:13px;" id="workBulkCount"></b>
+        <select id="workBulkEmployee" style="min-width:180px;"><option value="">— выберите исполнителя —</option></select>
+        <button class="btn amber" id="workBulkAssign" style="padding:5px 12px; font-size:12px;">Разнести</button>
+        <button class="btn secondary" id="workBulkArchive" style="padding:5px 12px; font-size:12px;">В архив</button>
+        <button class="btn secondary" id="workBulkUnarchive" style="padding:5px 12px; font-size:12px; display:none;">Вернуть из архива</button>
+        <button class="btn secondary" id="workBulkClear" style="padding:5px 12px; font-size:12px; margin-left:auto;">Снять выделение</button>
+      </div>
+
       <div class="panel" style="padding:0; overflow:hidden;">
         <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border-bottom:1px solid var(--line); flex-wrap:wrap; gap:8px;">
           <span id="workCount" style="font-size:12.5px; color:var(--ink-soft);"></span>
@@ -875,11 +892,15 @@
         <div class="tbl-wrap" style="max-height:55vh; overflow:auto;">
           <table>
             <thead><tr>
-              <th>Артикул</th><th>Наименование</th><th>Откуда</th>
+              <th style="width:28px;"><input type="checkbox" id="workCheckAll" title="Выделить все"></th>
+              <th class="num" style="width:60px;">№</th>
+              <th>Заказ Kaspi</th>
+              <th>Наименование</th><th>Откуда</th>
               <th class="num">Кол-во</th><th class="num">Расценка</th><th class="num">Сумма</th>
               <th>Исполнитель</th><th>Статус</th><th></th>
             </tr></thead>
             <tbody id="workBody"></tbody>
+            <tfoot id="workFoot" style="position:sticky; bottom:0; background:#FAFAF7; border-top:2px solid var(--line);"></tfoot>
           </table>
         </div>
       </div>
@@ -1213,6 +1234,29 @@
     <div class="modal-actions">
       <div></div>
       <div><button class="btn secondary" id="manualOrderCancelBtn">Отмена</button> <button class="btn amber" id="manualOrderSaveBtn">Создать</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="workEditOverlay">
+  <div class="modal" style="max-width:620px;">
+    <h3>Работа по заказу</h3>
+    <div id="workEditHead" style="font-size:12.5px; color:var(--ink-soft); margin-top:-8px; margin-bottom:12px;"></div>
+    <div class="grid2">
+      <div><label>Исполнитель</label><select id="workEdit_employee" style="width:100%;"></select></div>
+      <div><label>Количество</label><input type="number" id="workEdit_qty" style="width:100%;" min="0.01" step="0.5"></div>
+      <div><label>Расценка за штуку, ₸</label><input type="number" id="workEdit_rate" style="width:100%;" min="0" step="50"></div>
+      <div><label>К выплате, ₸</label><input type="text" id="workEdit_amount" style="width:100%; background:#F4F4F0;" readonly></div>
+      <div class="full"><label>Комментарий к работе</label><input type="text" id="workEdit_comment" style="width:100%;"></div>
+      <div class="full"><label>Причина правки (попадёт в историю)</label><input type="text" id="workEdit_reason" style="width:100%;" placeholder="Например: ошиблись при переносе из старой таблицы"></div>
+    </div>
+    <div class="panel-divider"></div>
+    <b style="font-size:13px;">История изменений</b>
+    <div id="workEditLog" style="max-height:200px; overflow:auto; margin-top:8px; font-size:12px;"></div>
+    <div class="error" id="workEditError"></div>
+    <div class="modal-actions">
+      <div><button class="btn secondary" id="workEditArchiveBtn" style="font-size:12px;">В архив</button></div>
+      <div><button class="btn secondary" id="workEditCancelBtn">Отмена</button> <button class="btn amber" id="workEditSaveBtn">Сохранить</button></div>
     </div>
   </div>
 </div>
@@ -5467,28 +5511,64 @@
     XLSX.writeFile(wb, `зарплата_по_месяцам_${new Date().toISOString().slice(0,10)}.xlsx`);
   });
 
-  // ---------- Все работы: список с артикулами и разнесением по людям ----------
+  // ---------- Все работы: список с номерами заказов и разнесением по людям ----------
+  // Основа раздела — привязка к заказу: номер и код Kaspi, как в рабочем файле.
+  // Пустой исполнитель здесь означает ровно то же, что пустая клетка в таблице:
+  // работа есть, а кому платить — ещё не решили.
   let workStatusFilter = "";
   let workRows = [];
+  let workSelected = new Set();
+
+  const WORK_FILTERS = [
+    { k:"",           l:"Все" },
+    { k:"unassigned", l:"Не разнесено" },
+    { k:"pending",    l:"Отложено" },
+    { k:"payable",    l:"К выплате" },
+    { k:"paid",       l:"Выплачено" },
+    { k:"archived",   l:"Архив" }
+  ];
+  const workIsArchiveView = ()=> workStatusFilter === "archived";
 
   async function loadSalaryWorks(){
     const body = document.getElementById("workBody");
-    body.innerHTML = `<tr><td colspan="9" style="padding:16px; text-align:center; color:var(--ink-soft);">Загрузка...</td></tr>`;
+    body.innerHTML = `<tr><td colspan="11" style="padding:16px; text-align:center; color:var(--ink-soft);">Загрузка...</td></tr>`;
     const p = new URLSearchParams();
     const q = document.getElementById("workSearch").value.trim();
     if(q) p.set("q", q);
     const emp = document.getElementById("workEmployee").value;
     if(emp) p.set("employeeId", emp);
     const shop = document.getElementById("workShop").value;
-    if(shop) p.set("shop", shop);
-    if(workStatusFilter) p.set("status", workStatusFilter);
+    if(shop && shop !== "__stock__") p.set("shop", shop);
+    const from = document.getElementById("workFrom").value;
+    if(from) p.set("from", from);
+    const to = document.getElementById("workTo").value;
+    if(to) p.set("to", to);
+    // «Не разнесено» и «Архив» — не статусы начисления, а отдельные срезы
+    if(workStatusFilter === "unassigned") p.set("unassigned", "1");
+    else if(workStatusFilter === "archived") p.set("archived", "1");
+    else if(workStatusFilter) p.set("status", workStatusFilter);
     try{
       workRows = await api("/payroll/entries" + (p.toString() ? "?" + p.toString() : ""));
     }catch(e){
-      body.innerHTML = `<tr><td colspan="9" style="padding:16px; color:var(--red);">${esc(e.message)}</td></tr>`;
+      body.innerHTML = `<tr><td colspan="11" style="padding:16px; color:var(--red);">${esc(e.message)}</td></tr>`;
       return;
     }
+    // Выделение чистим от строк, которых в новой выборке уже нет
+    const present = new Set(workRows.map(r=>r.id));
+    workSelected = new Set(Array.from(workSelected).filter(id=>present.has(id)));
     renderSalaryWorks();
+    refreshArchiveInfo();
+  }
+
+  async function refreshArchiveInfo(){
+    const el = document.getElementById("workArchiveInfo");
+    try{
+      const s = await api("/payroll/archive-stats");
+      el.innerHTML = s.count
+        ? `В архиве: <b>${s.count}</b> работ на ${money(s.sum)} ₸` +
+          (s.unpaidCount ? ` <span style="color:var(--red);">(невыплаченных ${s.unpaidCount} на ${money(s.unpaidSum)} ₸ — в долг не считаются)</span>` : "")
+        : "";
+    }catch(e){ el.textContent = ""; }
   }
 
   function renderSalaryWorks(){
@@ -5506,11 +5586,10 @@
       `<option value="__stock__" ${prevShop==="__stock__"?"selected":""}>на запас</option>`;
     shopSel.value = prevShop;
 
-    document.getElementById("workStatusFilters").innerHTML = [
-      { k:"", l:"Все" }, { k:"pending", l:"Отложено" }, { k:"payable", l:"К выплате" }, { k:"paid", l:"Выплачено" }
-    ].map(f=>`<button class="pill ${workStatusFilter===f.k?"active":""}" data-ws="${f.k}">${f.l}</button>`).join("");
+    document.getElementById("workStatusFilters").innerHTML = WORK_FILTERS
+      .map(f=>`<button class="pill ${workStatusFilter===f.k?"active":""}" data-ws="${f.k}">${f.l}</button>`).join("");
     document.getElementById("workStatusFilters").querySelectorAll("[data-ws]").forEach(b=>
-      b.addEventListener("click", ()=>{ workStatusFilter = b.dataset.ws; loadSalaryWorks(); }));
+      b.addEventListener("click", ()=>{ workStatusFilter = b.dataset.ws; workSelected.clear(); loadSalaryWorks(); }));
 
     let rows = workRows;
     if(prevShop === "__stock__") rows = rows.filter(r=>r.kind === "stock");
@@ -5526,40 +5605,232 @@
     monthSel.value = prevMonth;
     if(prevMonth) rows = rows.filter(r=>monthOf(r) === prevMonth);
 
+    const sumBy = (f)=>rows.filter(f).reduce((s,r)=>s + r.amount, 0);
     const total = rows.reduce((s,r)=>s + r.amount, 0);
-    document.getElementById("workCount").textContent = `Работ: ${rows.length}`;
+    const unassigned = rows.filter(r=>!r.employeeId);
+    document.getElementById("workCount").innerHTML = `Работ: <b>${rows.length}</b>` +
+      (unassigned.length ? ` · <span style="color:var(--red);">не разнесено: ${unassigned.length}</span>` : "");
     document.getElementById("workTotal").innerHTML = `Итого по расценкам: <b>${money(total)} ₸</b>`;
 
     const body = document.getElementById("workBody");
+    const foot = document.getElementById("workFoot");
     if(!rows.length){
-      body.innerHTML = `<tr><td colspan="9" style="padding:20px; text-align:center; color:var(--ink-soft);">
-        Работ нет. Они появляются, когда в «Производстве» назначают исполнителя или делают изделие на запас.</td></tr>`;
+      foot.innerHTML = "";
+      body.innerHTML = `<tr><td colspan="11" style="padding:20px; text-align:center; color:var(--ink-soft);">
+        ${workIsArchiveView() ? "В архиве пусто." : "Работ нет. Они появляются, когда в «Производстве» назначают исполнителя или делают изделие на запас."}</td></tr>`;
+      updateWorkBulkBar();
       return;
     }
-    body.innerHTML = rows.map(r=>`
-      <tr>
-        <td class="mono" style="font-size:11.5px;">${esc(r.article || "—")}</td>
-        <td>${esc(r.productName || "—")}<div style="font-size:11px; color:var(--ink-soft);">${esc((r.createdAt||"").slice(0,10))}</div></td>
+
+    body.innerHTML = rows.map(r=>{
+      const num = r.orderNumber != null ? String(r.orderNumber) : (r.kind === "stock" ? "—" : "—");
+      const kaspi = r.kaspiCode
+        ? `<span class="mono" style="font-size:11.5px;">${esc(r.kaspiCode)}</span>` +
+          (r.orderDate ? `<div style="font-size:11px; color:var(--ink-soft);">${esc(String(r.orderDate).slice(0,10))}</div>` : "")
+        : `<span style="color:var(--ink-soft); font-size:11.5px;">${r.kind === "stock" ? "на запас" : "без заказа"}</span>`;
+      const who = r.employeeName
+        ? esc(r.employeeName) + (r.assignedBy ? `<div style="font-size:10.5px; color:var(--ink-soft);">разнёс: ${esc(r.assignedBy)}</div>` : "")
+        : `<span style="color:var(--red); font-weight:600;" title="Работа не разнесена — непонятно, кому платить">не разнесено</span>`;
+      return `
+      <tr${r.archivedAt ? ' style="opacity:0.65;"' : ""}>
+        <td><input type="checkbox" data-wsel="${esc(r.id)}" ${workSelected.has(r.id)?"checked":""}></td>
+        <td class="num mono" style="font-size:12px;">${esc(num)}</td>
+        <td>${kaspi}</td>
+        <td>${esc(r.productName || "—")}
+          <div style="font-size:11px; color:var(--ink-soft);">${esc(r.article || "без артикула")}</div></td>
         <td style="font-size:12px;">${r.kind === "stock" ? "на запас" : (r.shop ? esc(r.shop) : "заказ")}</td>
         <td class="num">${money(r.qty)}${r.reportedWeight ? `<div style="font-size:11px; color:var(--ink-soft);">${money(r.reportedWeight)} кг</div>` : ""}</td>
         <td class="num">${r.needsRate ? `<span style="color:var(--red); font-size:11.5px;">не задана</span>` : money(r.rate)}</td>
         <td class="num"><b>${money(r.amount)} ₸</b></td>
-        <td>${r.employeeName ? esc(r.employeeName) : `<span style="color:var(--red); font-weight:600;" title="Работа не разнесена — непонятно, кому платить">не разнесено</span>`}</td>
-        <td>${payBadge(r.status)}</td>
+        <td>${who}</td>
+        <td>${payBadge(r.status)}${r.archivedAt ? `<div style="font-size:10.5px; color:var(--ink-soft);">в архиве</div>` : ""}</td>
         <td style="white-space:nowrap;">
-          ${r.status === "pending" ? `<button class="btn amber" style="padding:3px 10px; font-size:11.5px;" data-wacc="${esc(r.id)}">Принята</button>` : ""}
-          ${r.status !== "paid" ? `<button class="btn secondary" style="padding:3px 8px; font-size:11.5px;" data-wre="${esc(r.id)}" title="Передать другому">👤</button>` : ""}
+          ${r.status === "pending" && !r.archivedAt ? `<button class="btn amber" style="padding:3px 10px; font-size:11.5px;" data-wacc="${esc(r.id)}">Принята</button>` : ""}
+          <button class="btn secondary" style="padding:3px 8px; font-size:11.5px;" data-wedit="${esc(r.id)}" title="Изменить и посмотреть историю">✏️</button>
         </td>
-      </tr>`).join("");
+      </tr>`;}).join("");
+
+    // Итоги внизу — как в вашем файле: отдельно то, что ещё предстоит выплатить
+    foot.innerHTML = `<tr style="font-weight:700;">
+        <td colspan="5" style="padding:10px 12px;">ИТОГО: ${rows.length} работ${unassigned.length ? `, не разнесено ${unassigned.length}` : ""}</td>
+        <td class="num">${money(rows.reduce((s,r)=>s + r.qty, 0))}</td>
+        <td></td>
+        <td class="num">${money(total)} ₸</td>
+        <td colspan="3" style="padding:10px 12px; font-weight:400; font-size:11.5px; color:var(--ink-soft);">
+          отложено ${money(sumBy(r=>r.status==="pending"))} ₸ ·
+          к выплате <b style="color:var(--red);">${money(sumBy(r=>r.status==="payable"))} ₸</b> ·
+          выплачено ${money(sumBy(r=>r.status==="paid"))} ₸
+        </td>
+      </tr>`;
 
     window.__workRowsShown = rows;
     body.querySelectorAll("[data-wacc]").forEach(b=>b.addEventListener("click", ()=>acceptPayEntry(b.dataset.wacc, loadSalaryWorks)));
-    body.querySelectorAll("[data-wre]").forEach(b=>b.addEventListener("click", ()=>reassignEntry(b.dataset.wre, async ()=>{ await loadSalaryWorks(); loadSalary(); })));
+    body.querySelectorAll("[data-wedit]").forEach(b=>b.addEventListener("click", ()=>openWorkEdit(b.dataset.wedit)));
+    body.querySelectorAll("[data-wsel]").forEach(c=>c.addEventListener("change", ()=>{
+      if(c.checked) workSelected.add(c.dataset.wsel); else workSelected.delete(c.dataset.wsel);
+      updateWorkBulkBar();
+    }));
+    document.getElementById("workCheckAll").checked = false;
+    updateWorkBulkBar();
   }
 
-  ["workSearch","workEmployee","workShop"].forEach(id=>{
+  // ---------- Групповые действия ----------
+  function updateWorkBulkBar(){
+    const bar = document.getElementById("workBulkBar");
+    if(!workSelected.size){ bar.style.display = "none"; return; }
+    bar.style.display = "flex";
+    const chosen = (window.__workRowsShown || []).filter(r=>workSelected.has(r.id));
+    const sum = chosen.reduce((s,r)=>s + r.amount, 0);
+    document.getElementById("workBulkCount").textContent = `Выбрано: ${workSelected.size} — ${money(sum)} ₸`;
+    document.getElementById("workBulkArchive").style.display = workIsArchiveView() ? "none" : "";
+    document.getElementById("workBulkUnarchive").style.display = workIsArchiveView() ? "" : "none";
+    const sel = document.getElementById("workBulkEmployee");
+    if(sel.options.length <= 1 && employeesList.length){
+      sel.innerHTML = `<option value="">— выберите исполнителя —</option>` +
+        employeesList.map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join("");
+    }
+  }
+
+  document.getElementById("workCheckAll").addEventListener("change", (ev)=>{
+    const rows = window.__workRowsShown || [];
+    if(ev.target.checked) rows.forEach(r=>workSelected.add(r.id)); else workSelected.clear();
+    document.querySelectorAll("[data-wsel]").forEach(c=>{ c.checked = workSelected.has(c.dataset.wsel); });
+    updateWorkBulkBar();
+  });
+
+  document.getElementById("workBulkClear").addEventListener("click", ()=>{
+    workSelected.clear();
+    document.querySelectorAll("[data-wsel]").forEach(c=>{ c.checked = false; });
+    document.getElementById("workCheckAll").checked = false;
+    updateWorkBulkBar();
+  });
+
+  document.getElementById("workBulkAssign").addEventListener("click", async ()=>{
+    const employeeId = document.getElementById("workBulkEmployee").value;
+    if(!employeeId){ toast("Сначала выберите исполнителя"); return; }
+    try{
+      const r = await api("/payroll/entries/assign", { method:"POST",
+        body: JSON.stringify({ ids: Array.from(workSelected), employeeId }) });
+      toast(`Разнесено на ${r.employeeName}: ${r.assigned}` + (r.skippedPaid ? `, пропущено оплаченных: ${r.skippedPaid}` : ""));
+      workSelected.clear();
+      await loadSalaryWorks(); loadSalary();
+    }catch(e){ toast("Не получилось: " + e.message); }
+  });
+
+  async function workArchive(toArchive){
+    const chosen = (window.__workRowsShown || []).filter(r=>workSelected.has(r.id));
+    const unpaid = chosen.filter(r=>r.status === "pending" || r.status === "payable");
+    // Прячем деньги, которые ещё никому не выплатили, — предупреждаем прямо
+    if(toArchive && unpaid.length && !confirm(
+        `Среди выбранных ${unpaid.length} невыплаченных работ на ${money(unpaid.reduce((s,r)=>s+r.amount,0))} ₸.\n` +
+        `В архиве они перестанут считаться долгом. Всё равно убрать?`)) return;
+    try{
+      const r = await api("/payroll/entries/archive", { method:"POST",
+        body: JSON.stringify({ ids: Array.from(workSelected), archived: toArchive }) });
+      toast(toArchive ? `В архив: ${r.count}` : `Возвращено из архива: ${r.count}`);
+      workSelected.clear();
+      await loadSalaryWorks(); loadSalary();
+    }catch(e){ toast("Не получилось: " + e.message); }
+  }
+  document.getElementById("workBulkArchive").addEventListener("click", ()=>workArchive(true));
+  document.getElementById("workBulkUnarchive").addEventListener("click", ()=>workArchive(false));
+
+  // ---------- Правка одной работы ----------
+  let workEditId = null;
+  const ACTION_RU = { assign:"разнесение", edit:"правка", archive:"в архив", unarchive:"из архива", accept:"принята", cancel:"отменена" };
+  const FIELD_RU  = { employee:"исполнитель", qty:"количество", rate:"расценка", amount:"сумма", comment:"комментарий", status:"статус" };
+
+  async function openWorkEdit(entryId){
+    const r = (workRows || []).find(x=>x.id === entryId);
+    if(!r) return;
+    workEditId = entryId;
+    document.getElementById("workEditError").textContent = "";
+    document.getElementById("workEditHead").innerHTML =
+      `<b>${esc(r.productName || r.article || "работа")}</b><br>` +
+      `№ ${r.orderNumber != null ? esc(String(r.orderNumber)) : "—"}` +
+      (r.kaspiCode ? ` · Kaspi ${esc(r.kaspiCode)}` : "") +
+      (r.shop ? ` · ${esc(r.shop)}` : "") +
+      ` · ${(PAY_STATUS[r.status] || PAY_STATUS.pending).label}` +
+      (r.archivedAt ? ` · <span style="color:var(--red);">в архиве</span>` : "");
+
+    if(!employeesList.length){ try{ employeesList = await api("/employees"); }catch(e){} }
+    document.getElementById("workEdit_employee").innerHTML =
+      `<option value="">— не разнесено —</option>` +
+      employeesList.map(e=>`<option value="${esc(e.id)}" ${e.id===r.employeeId?"selected":""}>${esc(e.name)}</option>`).join("");
+    document.getElementById("workEdit_qty").value = r.qty;
+    document.getElementById("workEdit_rate").value = r.rate;
+    document.getElementById("workEdit_comment").value = r.comment || "";
+    document.getElementById("workEdit_reason").value = "";
+    document.getElementById("workEditArchiveBtn").textContent = r.archivedAt ? "Вернуть из архива" : "В архив";
+    recalcWorkEdit();
+
+    // Оплаченное менять нельзя — деньги уже выданы
+    const locked = r.status === "paid";
+    ["workEdit_employee","workEdit_qty","workEdit_rate"].forEach(id=>{ document.getElementById(id).disabled = locked; });
+    document.getElementById("workEditSaveBtn").style.display = locked ? "none" : "";
+    if(locked) document.getElementById("workEditError").textContent = "Работа уже оплачена — суммы и исполнителя изменить нельзя.";
+
+    document.getElementById("workEditOverlay").classList.add("show");
+    const logBox = document.getElementById("workEditLog");
+    logBox.innerHTML = `<div style="color:var(--ink-soft);">Загрузка...</div>`;
+    try{
+      const log = await api(`/payroll/entries/${encodeURIComponent(entryId)}/log`);
+      logBox.innerHTML = log.length ? log.map(l=>`
+        <div style="padding:6px 0; border-bottom:1px solid var(--line);">
+          <b>${esc(ACTION_RU[l.action] || l.action)}</b>${l.field ? ` · ${esc(FIELD_RU[l.field] || l.field)}` : ""}
+          ${l.oldValue != null || l.newValue != null ? `: <span style="color:var(--ink-soft);">${esc(l.oldValue ?? "")}</span> → <b>${esc(l.newValue ?? "")}</b>` : ""}
+          <div style="font-size:11px; color:var(--ink-soft);">${esc(String(l.at||"").slice(0,16).replace("T"," "))} · ${esc(l.user || "")}${l.comment ? ` · ${esc(l.comment)}` : ""}</div>
+        </div>`).join("")
+        : `<div style="color:var(--ink-soft);">Правок не было.</div>`;
+    }catch(e){ logBox.innerHTML = `<div style="color:var(--red);">${esc(e.message)}</div>`; }
+  }
+
+  function recalcWorkEdit(){
+    const qty = Number(document.getElementById("workEdit_qty").value) || 0;
+    const rate = Number(document.getElementById("workEdit_rate").value) || 0;
+    document.getElementById("workEdit_amount").value = money(qty * rate) + " ₸";
+  }
+  ["workEdit_qty","workEdit_rate"].forEach(id=>
+    document.getElementById(id).addEventListener("input", recalcWorkEdit));
+
+  document.getElementById("workEditCancelBtn").addEventListener("click", ()=>
+    document.getElementById("workEditOverlay").classList.remove("show"));
+
+  document.getElementById("workEditSaveBtn").addEventListener("click", async ()=>{
+    if(!workEditId) return;
+    const qty = Number(document.getElementById("workEdit_qty").value);
+    if(!(qty > 0)){ document.getElementById("workEditError").textContent = "Количество должно быть больше нуля"; return; }
+    try{
+      await api("/payroll/entries/" + encodeURIComponent(workEditId), { method:"PUT", body: JSON.stringify({
+        employeeId: document.getElementById("workEdit_employee").value || null,
+        qty,
+        rate: Number(document.getElementById("workEdit_rate").value) || 0,
+        comment: document.getElementById("workEdit_comment").value,
+        reason: document.getElementById("workEdit_reason").value
+      })});
+      document.getElementById("workEditOverlay").classList.remove("show");
+      toast("Сохранено");
+      await loadSalaryWorks(); loadSalary();
+    }catch(e){ document.getElementById("workEditError").textContent = e.message; }
+  });
+
+  document.getElementById("workEditArchiveBtn").addEventListener("click", async ()=>{
+    if(!workEditId) return;
+    const r = (workRows || []).find(x=>x.id === workEditId);
+    const toArchive = !(r && r.archivedAt);
+    try{
+      await api("/payroll/entries/archive", { method:"POST",
+        body: JSON.stringify({ ids: [workEditId], archived: toArchive,
+                               reason: document.getElementById("workEdit_reason").value })});
+      document.getElementById("workEditOverlay").classList.remove("show");
+      toast(toArchive ? "Убрано в архив" : "Возвращено из архива");
+      await loadSalaryWorks(); loadSalary();
+    }catch(e){ document.getElementById("workEditError").textContent = e.message; }
+  });
+
+  ["workSearch","workEmployee","workShop","workFrom","workTo"].forEach(id=>{
     const el = document.getElementById(id);
-    el.addEventListener(el.tagName === "INPUT" ? "input" : "change", ()=>{
+    el.addEventListener(el.tagName === "INPUT" && el.type === "text" ? "input" : "change", ()=>{
       if(id === "workShop" && el.value === "__stock__") renderSalaryWorks(); else loadSalaryWorks();
     });
   });
@@ -5568,18 +5839,26 @@
   document.getElementById("workExport").addEventListener("click", ()=>{
     const rows = window.__workRowsShown || [];
     if(!rows.length){ toast("Нечего выгружать"); return; }
-    const STATUS = { pending:"отложено", payable:"к выплате", paid:"выплачено" };
+    const STATUS = { pending:"отложено", payable:"Доплатить", paid:"выплачено" };
     const data = rows.map(r=>({
-      "Артикул": r.article || "",
+      "№ IN": r.orderNumber ?? "",
+      "Заказ": r.kaspiCode || "",
+      "Компания": r.shop || "",
       "наим-е": r.productName || "",
-      "Сумма": r.amount,
+      "Артикул": r.article || "",
+      "Сумма": r.orderTotal || "",
       "кол-во": r.qty,
       "Вес, кг": r.reportedWeight || "",
-      "Исполнитель": r.employeeName || "не разнесено",
-      "Оплата": r.status === "paid" ? String(r.paidAt || "").slice(0,10) : STATUS[r.status] || r.status,
-      "Откуда": r.kind === "stock" ? "на запас" : (r.shop || "заказ"),
-      "Дата работы": String(r.createdAt || "").slice(0,10)
+      "Исполнитель": r.employeeName || "",
+      "Разнёс": r.assignedBy || "",
+      "Оплата": r.status === "paid" ? String(r.paidAt || "").slice(0,10) : (STATUS[r.status] || r.status),
+      "Дата заказа": String(r.orderDate || "").slice(0,10),
+      "К выплате": r.amount,
+      "Архив": r.archivedAt ? "да" : ""
     }));
+    // Итоговая строка внизу — так же, как её ведут руками в файле
+    data.push({ "наим-е": "ИТОГО", "кол-во": rows.reduce((s,r)=>s + r.qty, 0),
+                "К выплате": rows.reduce((s,r)=>s + r.amount, 0) });
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Работы");
@@ -5588,11 +5867,10 @@
   });
 
   document.getElementById("workReset").addEventListener("click", ()=>{
-    document.getElementById("workSearch").value = "";
-    document.getElementById("workEmployee").value = "";
-    document.getElementById("workShop").value = "";
-    document.getElementById("workMonth").value = "";
+    ["workSearch","workEmployee","workShop","workMonth","workFrom","workTo"].forEach(id=>
+      document.getElementById(id).value = "");
     workStatusFilter = "";
+    workSelected.clear();
     loadSalaryWorks();
   });
 
