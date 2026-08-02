@@ -272,6 +272,51 @@ router.get("/summary", (req, res) => {
   res.json({ employees: rows, totals });
 });
 
+// Выплаты по месяцам — как в вашей таблице: строки месяцы, столбцы люди.
+// Долгом считается всё принятое и отложенное, что ещё не выплачено.
+router.get("/by-months", (req, res) => {
+  const entries = db.prepare(`SELECT e.*, em.name AS emp_name FROM payroll_entries e
+                              LEFT JOIN employees em ON em.id = e.employee_id
+                              WHERE e.status != 'cancelled'`).all();
+  const months = new Map();
+  const debts = new Map();
+  const people = new Set();
+  let paidTotal = 0, debtTotal = 0, undistributed = 0;
+
+  for (const e of entries) {
+    const name = e.emp_name || "не разнесено";
+    const amount = num(e.amount);
+    if (!e.employee_id || !e.emp_name) { undistributed += amount; continue; }
+    people.add(name);
+    if (e.status === "paid") {
+      const when = String(e.paid_at || e.accepted_at || e.created_at || "").slice(0, 7);
+      if (!months.has(when)) months.set(when, new Map());
+      const m = months.get(when);
+      m.set(name, money((m.get(name) || 0) + amount));
+      paidTotal += amount;
+    } else {
+      debts.set(name, money((debts.get(name) || 0) + amount));
+      debtTotal += amount;
+    }
+  }
+
+  const MONTH_NAMES = ["январь","февраль","март","апрель","май","июнь","июль","август","сентябрь","октябрь","ноябрь","декабрь"];
+  res.json({
+    people: Array.from(people).sort(),
+    months: Array.from(months.entries()).sort().map(([key, m]) => {
+      const mm = parseInt(key.slice(5, 7), 10);
+      return {
+        key,
+        label: `${MONTH_NAMES[mm - 1] || key} ${key.slice(0, 4)}`,
+        byPerson: Object.fromEntries(m),
+        total: money(Array.from(m.values()).reduce((s, v) => s + v, 0))
+      };
+    }),
+    debts: Array.from(debts.entries()).map(([name, sum]) => ({ name, sum })).sort((a, b) => b.sum - a.sum),
+    totals: { paid: money(paidTotal), debt: money(debtTotal), undistributed: money(undistributed) }
+  });
+});
+
 // ---------- Выплаты ----------
 router.post("/payouts", (req, res) => {
   const b = req.body || {};
