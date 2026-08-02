@@ -10,11 +10,24 @@ function uid(prefix) { return prefix + "_" + Date.now().toString(36) + Math.rand
 function num(v) { const n = Number(v); return Number.isFinite(n) ? n : 0; }
 function str(v, max = 300) { return String(v == null ? "" : v).replace(/[\r\n\t]+/g, " ").trim().slice(0, max); }
 
-// Слова, которые в колонке «Исполнитель» означают не человека, а пометку
+// Слова, которые в колонке «Исполнитель» означают не человека, а пометку.
+// «Перекрыто» и «Без оплаты» — это заказ, закрытый товаром с возврата или
+// отмены: работу заново не делали, платить не за что.
 const NOT_A_PERSON = new Set([
   "перекрыто","перекрыт","перекрытро","прекрыт","возврат","отмена","пропустим",
   "без оплаты","хз","","none","-","—"
 ]);
+const COVERED_WORDS = ["перекрыт","прекрыт","возврат","отмена","без оплаты"];
+
+// Заказ закрыт со склада (возврат/отмена), а не изготовлен заново
+function isCovered(raw) {
+  const ex = String(raw.executor || "").toLowerCase().trim();
+  const pay = String(raw.payCode || "").toLowerCase().trim();
+  if (COVERED_WORDS.some(w => ex.includes(w))) return true;
+  // «Без оплаты» в колонке оплаты при отсутствии живого исполнителя — тоже перекрытие
+  if (!cleanName(raw.executor) && COVERED_WORDS.some(w => pay.includes(w))) return true;
+  return false;
+}
 // В старом файле имена писали по-разному
 const NAME_FIX = { "агдрей": "Андрей", "илья": "Илья", "нурбол": "Нурбол", "андрей": "Андрей", "бекзат": "Бекзат", "слава": "Слава" };
 
@@ -34,7 +47,7 @@ function payCodeOf(v) {
 
 function analyze(rows) {
   const employees = new Map();
-  let matched = 0, notMatched = 0, withRate = 0, paidSum = 0, debtSum = 0, numbered = 0;
+  let matched = 0, notMatched = 0, withRate = 0, paidSum = 0, debtSum = 0, numbered = 0, covered = 0;
   const unmatchedExamples = [];
 
   for (const raw of rows) {
@@ -45,6 +58,7 @@ function analyze(rows) {
       if (order) { matched++; if (order.display_number !== n) numbered++; }
       else { notMatched++; if (unmatchedExamples.length < 5) unmatchedExamples.push(`${n} / ${kaspiCode}`); }
     }
+    if (isCovered(raw)) { covered++; continue; }
     const name = cleanName(raw.executor);
     const amount = num(raw.amount);
     if (!name) continue;
@@ -58,7 +72,7 @@ function analyze(rows) {
     }
   }
   return {
-    rows: rows.length, matched, notMatched, numbered, withRate,
+    rows: rows.length, matched, notMatched, numbered, withRate, covered,
     paidSum: Math.round(paidSum), debtSum: Math.round(debtSum),
     unmatchedExamples,
     employees: Array.from(employees.entries()).map(([name, v]) => ({
@@ -83,7 +97,9 @@ router.post("/apply", (req, res) => {
   const doSalary = opts.salary !== false;
 
   const now = new Date().toISOString();
-  const stats = { numbersUpdated: 0, ordersNotFound: 0, employeesCreated: 0, entriesCreated: 0, entriesSkipped: 0, payoutsCreated: 0, debtTotal: 0, paidTotal: 0 };
+  const matchedOrderIds = new Set();
+  const stats = { numbersUpdated: 0, ordersNotFound: 0, employeesCreated: 0, entriesCreated: 0,
+                  entriesSkipped: 0, payoutsCreated: 0, debtTotal: 0, paidTotal: 0, coveredMarked: 0 };
 
   // 1. Сотрудники
   const empId = new Map();
@@ -107,6 +123,7 @@ router.post("/apply", (req, res) => {
       if (!kaspiCode || n <= 0) continue;
       const order = db.prepare("SELECT * FROM orders WHERE kaspi_code = ?").get(kaspiCode);
       if (!order) { stats.ordersNotFound++; continue; }
+      matchedOrderIds.add(order.id);
       if (order.display_number !== n) {
         db.prepare("UPDATE orders SET display_number = ? WHERE id = ?").run(n, order.id);
         stats.numbersUpdated++;
@@ -117,10 +134,37 @@ router.post("/apply", (req, res) => {
     }
   }
 
-  // 3. Зарплата: начисления и выплаты
+  // 3. Перекрытые заказы: помечаем в «Производстве», чтобы они не висели
+  // в очереди «ждут решения». Начисление по ним не создаётся — уже оплачено раньше.
+  if (doSalary) {
+    for (const raw of rows) {
+      if (!isCovered(raw)) continue;
+      const kaspiCode = str(raw.kaspiCode, 40);
+      if (!kaspiCode) continue;
+      const order = db.prepare("SELECT * FROM orders WHERE kaspi_code = ?").get(kaspiCode);
+      if (!order) continue;
+      const existing = db.prepare("SELECT * FROM production WHERE order_id = ?").get(order.id);
+      if (existing) {
+        if (!existing.decision) {
+          db.prepare("UPDATE production SET decision = 'return_offset', resolved_at = ? WHERE id = ?").run(now, existing.id);
+          stats.coveredMarked++;
+        }
+      } else {
+        db.prepare(`INSERT INTO production (id, order_id, article, product_name, quantity, shop, decision, resolved_at, created_at)
+                    VALUES (?,?,?,?,?,?,'return_offset',?,?)`)
+          .run(uid("prod"), order.id, str(raw.article, 60) || order.article,
+               str(raw.name, 200) || order.product_name, num(raw.qty) || num(order.qty) || 1,
+               str(raw.shop, 20) || order.shop, now, now);
+        stats.coveredMarked++;
+      }
+    }
+  }
+
+  // 4. Зарплата: начисления и выплаты
   const payoutBuckets = new Map(); // код выплаты -> список начислений
   if (doSalary) {
     for (const raw of rows) {
+      if (isCovered(raw)) continue; // перекрыто возвратом — денег не начисляем
       const name = cleanName(raw.executor);
       const amount = num(raw.amount);
       if (!name || amount <= 0) continue;
@@ -174,10 +218,45 @@ router.post("/apply", (req, res) => {
   }
 
   logAudit({ user: req.session.username, action: "legacy_import",
-             comment: `Номеров ${stats.numbersUpdated}, начислений ${stats.entriesCreated}, выплат ${stats.payoutsCreated}, долг ${Math.round(stats.debtTotal)}` });
+             comment: `Номеров ${stats.numbersUpdated}, начислений ${stats.entriesCreated}, перекрыто ${stats.coveredMarked}, долг ${Math.round(stats.debtTotal)}` });
   stats.debtTotal = Math.round(stats.debtTotal);
   stats.paidTotal = Math.round(stats.paidTotal);
-  res.json({ ok: true, ...stats });
+  // Отдаём номера заказов из файла и максимальный из них: дальше по ним
+  // продолжится сплошная нумерация остальных
+  const maxFromFile = rows.reduce((m, r) => Math.max(m, num(r.num) || 0), 0);
+  res.json({ ok: true, ...stats, matchedOrderIds: Array.from(matchedOrderIds), maxNumberFromFile: maxFromFile });
+});
+
+// Наведение порядка в номерах: заказы, которых нет в старом файле (тестовые
+// на 600 и 5000, свежие из Kaspi), получают номера подряд от указанного числа.
+// Так весь список становится сплошным, без дыр и выдуманных значений.
+router.post("/renumber", (req, res) => {
+  const startFrom = Number(req.body?.startFrom);
+  if (!Number.isFinite(startFrom) || startFrom < 1) {
+    return res.status(400).json({ error: "bad_start", message: "Укажите, с какого номера продолжать" });
+  }
+  const keepIds = new Set(Array.isArray(req.body?.keepOrderIds) ? req.body.keepOrderIds : []);
+  const dryRun = req.body?.dryRun === true;
+
+  // Берём только те заказы, номера которых мы НЕ переносили из файла
+  const rows = db.prepare(`SELECT id, display_number, shop, kaspi_code, product_name, created_at
+                           FROM orders WHERE source = 'kaspi' OR kaspi_code LIKE 'УД-%'
+                           ORDER BY created_at, rowid`).all();
+  const targets = rows.filter(o => !keepIds.has(o.id));
+
+  let n = startFrom;
+  const plan = targets.map(o => ({
+    id: o.id, kaspiCode: o.kaspi_code, shop: o.shop,
+    name: o.product_name, was: o.display_number, becomes: n++
+  }));
+
+  if (!dryRun) {
+    const upd = db.prepare("UPDATE orders SET display_number = ? WHERE id = ?");
+    plan.forEach(p => upd.run(p.becomes, p.id));
+    logAudit({ user: req.session.username, action: "orders_renumber",
+               comment: `Перенумеровано ${plan.length} заказов с ${startFrom}` });
+  }
+  res.json({ ok: true, count: plan.length, nextFree: n, examples: plan.slice(0, 8), dryRun });
 });
 
 export default router;
