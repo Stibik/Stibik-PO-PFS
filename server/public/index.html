@@ -395,6 +395,7 @@
     <button class="tab-btn" data-tab="production">Производство</button>
     <button class="tab-btn" data-tab="tasks">Задачи</button>
     <button class="tab-btn" data-tab="monitor">Мои заказы</button>
+    <button class="tab-btn" data-tab="stats">Статистика</button>
     <button class="tab-btn" data-tab="kaspi">Kaspi: настройки</button>
     <button class="tab-btn admin-only" data-tab="audit">Журнал</button>
     <button class="tab-btn admin-only" data-tab="users">Пользователи</button>
@@ -928,6 +929,39 @@
         <button class="btn secondary" id="mnRefresh" style="margin-left:auto; padding:6px 12px; font-size:12.5px;">🔄 Обновить</button>
       </div>
       <div id="mnList"></div>
+    </section>
+    <section id="tab-stats" style="display:none">
+      <style>
+        #tab-stats .st-cards{display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:16px;}
+        #tab-stats .st-card{background:#fff; border:1px solid var(--line); border-radius:14px; padding:16px 18px;}
+        #tab-stats .st-lbl{font-size:11.5px; text-transform:uppercase; color:var(--ink-soft); letter-spacing:.02em;}
+        #tab-stats .st-big{font-size:24px; font-weight:700; margin-top:4px; line-height:1.15;}
+        #tab-stats .st-sub{font-size:12px; color:var(--ink-soft); margin-top:4px;}
+        #tab-stats .st-up{color:var(--green); font-weight:600;}
+        #tab-stats .st-down{color:var(--red); font-weight:600;}
+        #tab-stats .st-grid2{display:grid; grid-template-columns:1fr 1fr; gap:14px; align-items:start;}
+        #tab-stats .st-bar{height:8px; border-radius:4px; background:#E5E7EB; overflow:hidden;}
+        #tab-stats .st-bar span{display:block; height:100%; background:var(--amber);}
+        @media (max-width:1000px){ #tab-stats .st-cards{grid-template-columns:1fr 1fr;} #tab-stats .st-grid2{grid-template-columns:1fr;} }
+      </style>
+      <div class="panel" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+        <div class="pill-row" id="statPeriods"></div>
+        <input type="date" id="statFrom" style="margin-left:8px;">
+        <span style="color:var(--ink-soft);">—</span>
+        <input type="date" id="statTo">
+        <select id="statShop" style="min-width:150px;"><option value="">Все магазины</option></select>
+        <button class="btn secondary" id="statRefresh" style="padding:6px 12px; font-size:12.5px;">Обновить</button>
+      </div>
+      <div class="st-cards" id="statCards"></div>
+      <div class="st-grid2">
+        <div class="panel" id="statShops"></div>
+        <div class="panel" id="statTop"></div>
+      </div>
+      <div class="st-grid2" style="margin-top:14px;">
+        <div class="panel" id="statRestock"></div>
+        <div class="panel" id="statPayroll"></div>
+      </div>
+      <div class="panel" id="statQuality" style="margin-top:14px;"></div>
     </section>
     <section id="tab-tasks" style="display:none">
       <style>
@@ -4283,6 +4317,164 @@
       📲 Чтобы работать как в приложении: нажмите «Поделиться» внизу Safari → «На экран Домой».</div>`;
   }
 
+  // ================= Статистика =================
+  // Все цифры считает сервер по заказам и Справочнику. Там, где данных не хватает
+  // (нет себестоимости или расценки), честно пишем об этом, а не подгоняем прибыль.
+  let statsData = null;
+  let statPeriod = "30";
+
+  function statDays(n){
+    const to = new Date();
+    const from = new Date(); from.setDate(from.getDate() - (n-1));
+    return [from.toISOString().slice(0,10), to.toISOString().slice(0,10)];
+  }
+
+  async function loadStats(){
+    document.getElementById("statCards").innerHTML = `<div class="panel" style="grid-column:1/-1; text-align:center; color:var(--ink-soft);">Считаю...</div>`;
+    if(!document.getElementById("statFrom").value){
+      const [f,tt] = statDays(30);
+      document.getElementById("statFrom").value = f;
+      document.getElementById("statTo").value = tt;
+    }
+    const p = new URLSearchParams({
+      from: document.getElementById("statFrom").value,
+      to: document.getElementById("statTo").value
+    });
+    const shop = document.getElementById("statShop").value;
+    if(shop) p.set("shop", shop);
+    try{
+      statsData = await api("/stats?" + p.toString());
+      renderStats();
+    }catch(e){
+      document.getElementById("statCards").innerHTML = `<div class="panel" style="grid-column:1/-1; color:var(--red);">Не получилось: ${esc(e.message)}</div>`;
+    }
+  }
+
+  function statDelta(v){
+    if(v === 0) return `<span style="color:var(--ink-soft);">без изменений</span>`;
+    return v > 0 ? `<span class="st-up">↑ ${v}%</span>` : `<span class="st-down">↓ ${Math.abs(v)}%</span>`;
+  }
+
+  function renderStats(){
+    const d = statsData;
+    const c = d.current;
+
+    document.getElementById("statPeriods").innerHTML = [
+      {k:"7", l:"7 дней"}, {k:"30", l:"30 дней"}, {k:"90", l:"90 дней"}
+    ].map(x=>`<button class="pill ${statPeriod===x.k?"active":""}" data-sp="${x.k}">${x.l}</button>`).join("");
+    document.getElementById("statPeriods").querySelectorAll("[data-sp]").forEach(b=>
+      b.addEventListener("click", ()=>{
+        statPeriod = b.dataset.sp;
+        const [f,tt] = statDays(Number(b.dataset.sp));
+        document.getElementById("statFrom").value = f;
+        document.getElementById("statTo").value = tt;
+        loadStats();
+      }));
+
+    const shopSel = document.getElementById("statShop");
+    if(shopSel.options.length <= 1){
+      shopSel.innerHTML = `<option value="">Все магазины</option>` +
+        c.byShop.map(s=>`<option value="${esc(s.shop)}">${esc(s.shop)}</option>`).join("");
+    }
+
+    document.getElementById("statCards").innerHTML = `
+      <div class="st-card">
+        <div class="st-lbl">Выручка</div>
+        <div class="st-big">${money(c.revenue)} ₸</div>
+        <div class="st-sub">${statDelta(d.delta.revenue)} к прошлому периоду (${money(d.previous.revenue)} ₸)</div>
+      </div>
+      <div class="st-card">
+        <div class="st-lbl">Чистая прибыль</div>
+        <div class="st-big" style="color:${c.profit >= 0 ? "var(--green)" : "var(--red)"};">${money(c.profit)} ₸</div>
+        <div class="st-sub">маржа ${c.margin}% · ${statDelta(d.delta.profit)}</div>
+      </div>
+      <div class="st-card">
+        <div class="st-lbl">Заказов</div>
+        <div class="st-big">${c.orders}</div>
+        <div class="st-sub">${money(c.units)} шт · ${statDelta(d.delta.orders)}</div>
+      </div>
+      <div class="st-card">
+        <div class="st-lbl">Расходы</div>
+        <div class="st-big">${money(c.cost + c.labor)} ₸</div>
+        <div class="st-sub">материалы ${money(c.cost)} · работа ${money(c.labor)}</div>
+      </div>`;
+
+    const maxShop = Math.max(1, ...c.byShop.map(s=>s.revenue));
+    document.getElementById("statShops").innerHTML = `
+      <div class="panel-label">Заработано по магазинам</div>
+      ${c.byShop.length ? c.byShop.map(s=>`
+        <div style="margin-bottom:12px;">
+          <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:4px;">
+            <b>${esc(s.shop)}</b>
+            <span>${money(s.revenue)} ₸ <span style="color:var(--ink-soft);">· прибыль ${money(s.profit)}</span></span>
+          </div>
+          <div class="st-bar"><span style="width:${Math.round(s.revenue/maxShop*100)}%;"></span></div>
+          <div style="font-size:11.5px; color:var(--ink-soft); margin-top:3px;">${s.orders} заказов · ${money(s.units)} шт</div>
+        </div>`).join("") : `<div style="color:var(--ink-soft); font-size:12.5px;">За период продаж не было</div>`}`;
+
+    const tp = d.topProduct;
+    document.getElementById("statTop").innerHTML = `
+      <div class="panel-label">Товар периода</div>
+      ${tp ? `<div style="font-size:15px; font-weight:600;">${esc(tp.name)}</div>
+        <div style="font-size:12.5px; color:var(--ink-soft); margin-bottom:10px;">
+          ${esc(tp.article||"")} · продано ${money(tp.units)} шт на ${money(tp.revenue)} ₸ · прибыль ${money(tp.profit)} ₸</div>` : ""}
+      <div class="panel-label" style="margin-top:6px;">Топ по выручке</div>
+      <table style="width:100%;"><tbody>
+        ${d.topByRevenue.map((p,i)=>`<tr>
+          <td style="width:22px; color:var(--ink-soft);">${i+1}</td>
+          <td>${esc(p.name)}<div style="font-size:11px; color:var(--ink-soft);">${esc(p.article||"")}</div></td>
+          <td class="num">${money(p.units)} шт</td>
+          <td class="num"><b>${money(p.revenue)} ₸</b></td>
+        </tr>`).join("") || `<tr><td style="color:var(--ink-soft); font-size:12.5px;">Нет данных</td></tr>`}
+      </tbody></table>`;
+
+    const totalToMake = d.restock.reduce((s,x)=>s + x.toMake, 0);
+    const totalLabor = d.restock.reduce((s,x)=>s + x.toMake * x.laborRate, 0);
+    document.getElementById("statRestock").innerHTML = `
+      <div class="panel-label">Что стоит сшить на запас</div>
+      <div style="font-size:12px; color:var(--ink-soft); margin-bottom:8px;">
+        Расчёт по темпу продаж за период на 30 дней вперёд, минус то, что уже лежит на складе. Это подсказка, а не приказ.</div>
+      ${d.restock.length ? `<table style="width:100%;"><thead><tr>
+          <th>Товар</th><th class="num">Продано</th><th class="num">На складе</th><th class="num">Сшить</th><th class="num">Работа, ₸</th>
+        </tr></thead><tbody>
+        ${d.restock.map(x=>`<tr>
+          <td>${esc(x.name)}<div style="font-size:11px; color:var(--ink-soft);">${esc(x.article)}</div></td>
+          <td class="num">${money(x.soldUnits)}</td>
+          <td class="num">${money(x.inStock)}</td>
+          <td class="num"><b style="color:var(--amber);">${money(x.toMake)}</b></td>
+          <td class="num">${x.laborRate ? money(x.toMake * x.laborRate) : `<span style="color:var(--red); font-size:11px;">нет расценки</span>`}</td>
+        </tr>`).join("")}
+        </tbody></table>
+        <div style="text-align:right; margin-top:8px; font-size:13px;">Итого сшить: <b>${money(totalToMake)} шт</b> · работа <b>${money(totalLabor)} ₸</b></div>`
+        : `<div style="color:var(--ink-soft); font-size:12.5px;">Запасов хватает — шить сверх заказов не нужно</div>`}`;
+
+    const p2 = d.payroll;
+    document.getElementById("statPayroll").innerHTML = `
+      <div class="panel-label">Зарплата за период</div>
+      <table style="width:100%;"><tbody>
+        <tr><td>Начислено всего</td><td class="num"><b>${money(p2.accrued)} ₸</b></td></tr>
+        <tr><td>Выплачено</td><td class="num">${money(p2.paid)} ₸</td></tr>
+        <tr><td>К выплате (принято)</td><td class="num" style="color:var(--green);">${money(p2.payable)} ₸</td></tr>
+        <tr><td>Отложено (не принято)</td><td class="num" style="color:var(--amber);">${money(p2.pending)} ₸</td></tr>
+        <tr><td>Работ</td><td class="num">${p2.works}</td></tr>
+      </tbody></table>`;
+
+    const q = d.dataQuality;
+    const problems = [];
+    if(q.ordersWithoutCatalog) problems.push(`${q.ordersWithoutCatalog} заказов с товарами, которых нет в Справочнике — их себестоимость и работа не учтены`);
+    if(q.itemsWithoutCost) problems.push(`${q.itemsWithoutCost} товаров без себестоимости — прибыль по ним завышена`);
+    if(q.itemsWithoutRate) problems.push(`${q.itemsWithoutRate} товаров без расценки труда — работа не посчитана`);
+    document.getElementById("statQuality").innerHTML = problems.length
+      ? `<div class="panel-label" style="color:var(--red);">Насколько цифрам можно верить</div>
+         <div style="font-size:12.5px; line-height:1.8;">${problems.map(x=>"• " + esc(x)).join("<br>")}
+         <div style="margin-top:8px; color:var(--ink-soft);">Пока эти поля не заполнены в Справочнике, прибыль считается по неполным данным.</div></div>`
+      : `<div style="font-size:12.5px; color:var(--green);">✓ Себестоимость и расценки заполнены — цифрам можно верить</div>`;
+  }
+
+  document.getElementById("statRefresh").addEventListener("click", loadStats);
+  ["statFrom","statTo","statShop"].forEach(id=>
+    document.getElementById(id).addEventListener("change", ()=>{ statPeriod = ""; loadStats(); }));
+
   // ================= Доска задач =================
   // Бытовые поручения: купить, сделать, съездить. Специально отдельно от
   // «Производства» — там работа по заказам и деньги, тут зарплата не считается.
@@ -4974,6 +5166,13 @@
         <b>Основная швея</b> выбирается сверху один раз — дальше кнопка сразу пишет её имя, выбирать каждый раз не нужно.<br>
         <b>На запас:</b> кнопка «Сделать на запас» — изделие встаёт на склад, начисление создаётся, но платить сразу не обязаны.`
     },
+    stats: {
+      title: "Статистика — сколько заработали и что шить",
+      body: `<b>Откуда цифры:</b> выручка — из заказов, себестоимость и расценка труда — из Справочника по артикулу.<br>
+        <b>Чистая прибыль</b> = выручка − материалы − работа. Сравнение идёт с таким же прошлым периодом: 30 дней против предыдущих 30.<br>
+        <b>«Что стоит сшить на запас»</b> считается по темпу продаж на 30 дней вперёд минус остатки на складе.<br>
+        <b>Важно:</b> внизу написано, скольким товарам не хватает себестоимости и расценки. Пока они пустые, прибыль завышена — цифра будет честной только после заполнения Справочника.`
+    },
     tasks: {
       title: "Задачи — поручения сотрудникам",
       body: `<b>Зачем:</b> чтобы не держать в голове и не объяснять голосом: купить нитки, доделать партию, съездить на склад.<br>
@@ -5423,7 +5622,7 @@
     b.addEventListener("click", ()=>{
       document.querySelectorAll(".tab-btn").forEach(x=>x.classList.remove("active"));
       b.classList.add("active");
-      ["orders","kaspiOrders","claims","price","catalog","salary","production","tasks","monitor","kaspi","audit","users"].forEach(t=> document.getElementById("tab-"+t).style.display = (t===b.dataset.tab)?"":"none");
+      ["orders","kaspiOrders","claims","price","catalog","salary","production","tasks","monitor","stats","kaspi","audit","users"].forEach(t=> document.getElementById("tab-"+t).style.display = (t===b.dataset.tab)?"":"none");
       if(b.dataset.tab === "orders") applyContour();
       if(b.dataset.tab === "catalog") loadCatalog();
       if(b.dataset.tab === "price") { loadPriceCompanies().catch(()=>{}).then(loadPriceTab); }
@@ -5431,6 +5630,7 @@
       if(b.dataset.tab === "salary") loadSalary();
       if(b.dataset.tab === "tasks") loadTasks();
       if(b.dataset.tab === "monitor") loadMonitor();
+      if(b.dataset.tab === "stats") loadStats();
       if(b.dataset.tab === "kaspiOrders") renderKaspiOrders();
       if(b.dataset.tab === "claims") { if(!kaspiOrders.length) renderKaspiOrders().then(renderClaims); else renderClaims(); }
       if(b.dataset.tab === "kaspi") { loadKaspiSettings(); loadOrderNumbering(); }
@@ -5847,10 +6047,12 @@
         if(!deadline) return "—";
         const dueDayStart = new Date(deadline); dueDayStart.setHours(0,0,0,0);
         const todayStart = new Date(); todayStart.setHours(0,0,0,0);
-        const isUrgent = dueDayStart <= todayStart && !["completed","cancelled","cancelledDelivery","returns"].includes(o.stage);
-        return isUrgent
-          ? `<span class="o2-urgent"><svg class="o2-icon" style="width:14px;height:14px;" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> ${fmtDateTime(deadline)}</span>`
-          : fmtDateTime(deadline);
+        const done = ["completed","cancelled","cancelledDelivery","returns"].includes(o.stage);
+        const daysLeft = Math.round((dueDayStart - todayStart) / 86400000);
+        // Сегодня и просрочено — красным, завтра — оранжевым: чтобы успеть собрать
+        if(!done && daysLeft <= 0) return `<span class="o2-urgent"><svg class="o2-icon" style="width:14px;height:14px;" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> ${fmtDateTime(deadline)}</span>`;
+        if(!done && daysLeft === 1) return `<span style="color:#B45309; font-weight:600; background:#FEF3C7; padding:2px 8px; border-radius:6px; white-space:nowrap;" title="Завтра последний день">⏳ ${fmtDateTime(deadline)}</span>`;
+        return fmtDateTime(deadline);
       }
       if(key==="price") return o.totalPrice ? esc(o.totalPrice)+" ₸" : "—";
       if(key==="status"){
