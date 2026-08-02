@@ -881,7 +881,7 @@
     <section id="tab-production" style="display:none">
       <div class="toolbar">
         <button class="btn amber" id="btnStockProduction" title="То же окно, что «Положить на склад» в разделе Склад">+ Сшить на запас</button>
-        <label style="font-size:12.5px;"><input type="checkbox" id="prodShowResolved"> Показывать решённые</label>
+
         <button class="btn secondary" id="btnManageEmployees" style="margin-left:auto;">Сотрудники</button>
       </div>
       <div id="prodStats" style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:14px;"></div>
@@ -897,10 +897,14 @@
           <select id="prodDefaultEmployee" style="min-width:160px;"></select>
         </span>
       </div>
-      <div class="panel" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-        <input type="text" id="prodSearch" placeholder="Поиск по артикулу или названию..." style="flex:1; min-width:220px;">
-        <select id="prodShopFilter" style="min-width:150px;"><option value="">Все магазины</option></select>
-        <span id="prodCount" style="font-size:12.5px; color:var(--ink-soft);"></span>
+      <div class="panel">
+        <div class="pill-row" id="prodSteps"></div>
+        <div class="panel-divider"></div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+          <input type="text" id="prodSearch" placeholder="Номер заказа, артикул или название..." style="flex:1; min-width:220px;">
+          <select id="prodShopFilter" style="min-width:150px;"><option value="">Все магазины</option></select>
+          <span id="prodCount" style="font-size:12.5px; color:var(--ink-soft);"></span>
+        </div>
       </div>
       <div class="panel" id="prodBulkBar" style="display:none; align-items:center; gap:10px; flex-wrap:wrap; background:var(--navy); color:#fff;">
         <b id="prodBulkCount" style="font-size:13.5px;">Выбрано: 0</b>
@@ -910,6 +914,7 @@
         <button class="btn secondary" id="prodBulkSpread" style="padding:6px 12px; font-size:12.5px;">🎲 Распределить поровну</button>
         <button class="btn secondary" id="prodBulkStock" style="padding:6px 12px; font-size:12.5px;">📦 Списать с остатков</button>
         <button class="btn secondary" id="prodBulkReturn" style="padding:6px 12px; font-size:12.5px;">↩️ Перекрыть возвратом</button>
+        <button class="btn secondary" id="prodBulkArchive" style="padding:6px 12px; font-size:12.5px;">🗄 В архив</button>
         <button class="btn secondary" id="prodBulkClear" style="padding:6px 12px; font-size:12.5px; margin-left:auto;">Снять выбор</button>
       </div>
       <div id="prodList"></div>
@@ -5931,75 +5936,42 @@
     });
   }
 
-  // ---------- Производство ----------
-  // Каждый новый заказ уже создаёт запись автоматически (на сервере, при
-  // синхронизации). Здесь — только интерфейс принятия решения по ней.
-  let productionItems = [];
   let employeesList = [];
-  let payrollByProduction = {};
+
+  // ================= Производство =================
+  // Экран построен вокруг одного вопроса: «что делать прямо сейчас».
+  // Поэтому вкладки — это шаги, а не абстрактные статусы, и на каждой
+  // строке одна главная кнопка, а не набор одинаковых иконок.
+  const PROD_STEPS = [
+    { key:"pending",    label:"Ждут решения",   color:"#B45309", bg:"#FEF3C7", hint:"выберите, откуда берём товар" },
+    { key:"published",  label:"У забивщиков",   color:"#7C3AED", bg:"#EDE9FE", hint:"ждём, кто возьмёт" },
+    { key:"in_work",    label:"В работе",       color:"#2563EB", bg:"#DBEAFE", hint:"забивщик шьёт" },
+    { key:"reported",   label:"Сдано",          color:"#7C3AED", bg:"#EDE9FE", hint:"подтвердите работу" },
+    { key:"accepted",   label:"К выплате",      color:"#166534", bg:"#DCFCE7", hint:"деньги ждут выплаты" },
+    { key:"paid",       label:"Оплачено",       color:"#4B5563", bg:"#F3F4F6", hint:"" },
+    { key:"from_stock", label:"Со склада",      color:"#4B5563", bg:"#F3F4F6", hint:"без оплаты" },
+    { key:"covered",    label:"Перекрыто",      color:"#4B5563", bg:"#F3F4F6", hint:"без оплаты" },
+    { key:"archived",   label:"Архив",          color:"#6B7280", bg:"#F3F4F6", hint:"" }
+  ];
+  const PROD_STEP = Object.fromEntries(PROD_STEPS.map(s=>[s.key, s]));
+
+  let prodData = { items: [], counts: {} };
+  let prodStep = localStorage.getItem("prodStep") || "pending";
   let selectedProdIds = new Set();
-
-  async function loadProduction(){
-    try{
-      const showResolved = document.getElementById("prodShowResolved").checked;
-      productionItems = await api("/production" + (showResolved ? "" : "?resolved=false"));
-      employeesList = await api("/employees");
-      // Начисления показываем прямо здесь, чтобы не бегать в «Зарплату»
-      // проверять, ушли ли деньги за эту работу
-      if(!catalogItems.length){ try{ catalogItems = await api("/catalog"); }catch(e){} }
-      await loadProdDefaultEmployee();
-      payrollByProduction = {};
-      try{
-        const entries = await api("/payroll/entries");
-        entries.forEach(e=>{ if(e.productionId) payrollByProduction[e.productionId] = e; });
-      }catch(e){ /* модуль зарплаты ещё не залит — производство должно работать и без него */ }
-      renderProduction();
-    }catch(e){
-      document.getElementById("prodList").innerHTML = `<div style="color:var(--red);padding:20px;">Ошибка загрузки: ${esc(e.message)}</div>`;
-    }
-  }
-  document.getElementById("prodShowResolved").addEventListener("change", loadProduction);
-
-  function decisionLabel(d){
-    if(d==="stock") return "📦 Списано с остатков";
-    if(d==="assigned") return "👤 Назначен исполнитель";
-    if(d==="return_offset") return "↩️ Перекрыто возвратом";
-    return "Ждёт решения";
-  }
-
-  function prodRate(article){
-    const it = catalogItems.find(x=>x.article === article);
-    return it && it.laborRate ? Number(it.laborRate) : 0;
-  }
-  const PROD_DECISION = {
-    stock:         { label:"Списано с остатков", color:"#4B5563", bg:"#F3F4F6" },
-    assigned:      { label:"В работе",           color:"#2563EB", bg:"#DBEAFE" },
-    return_offset: { label:"Перекрыто возвратом", color:"#7C3AED", bg:"#EDE9FE" }
-  };
-
   let prodDefaultEmployeeId = null, prodDefaultEmployeeName = "";
 
-  // Вместо сухого статуса — прямая подсказка: на каком шаге строка и что дальше.
-  // За программой сидят разные люди, каждый должен понимать без объяснений.
-  function prodStepCell(p, entry){
-    if(!p.decision && p.published) return `<b style="color:#7C3AED; font-size:12px;">Шаг 1 из 3 · у забивщиков</b>
-      <div style="font-size:11.5px; color:var(--ink-soft);">ждём, кто возьмёт себе</div>`;
-    if(!p.decision) return `<b style="color:var(--amber); font-size:12px;">Шаг 1 из 3</b>
-      <div style="font-size:11.5px; color:var(--ink-soft);">решить, откуда берём, или отправить забивщикам</div>`;
-    if(p.decision === "stock") return `<span style="color:#4B5563; font-size:12px;">Списано со склада</span>
-      <div style="font-size:11px; color:var(--ink-soft);">без оплаты — работа оплачена, когда шили на запас</div>`;
-    if(p.decision === "return_offset") return `<span style="color:#7C3AED; font-size:12px;">Перекрыто возвратом</span>
-      <div style="font-size:11px; color:var(--ink-soft);">без оплаты — товар вернулся, заново не шили</div>`;
-    if(!entry) return `<b style="color:var(--red); font-size:12px;">Начисления нет</b>
-      <div style="font-size:11.5px; color:var(--ink-soft);">нажмите 👤, чтобы назначить заново</div>`;
-    if(entry.status === "pending" && entry.reportedDone) return `<b style="color:#7C3AED; font-size:12px;">Шаг 2 из 3 · сдано</b>
-      <div style="font-size:11.5px; color:var(--ink-soft);">${esc(entry.reportedBy || "забивщик")} отметил готово${entry.reportedWeight ? `, вес ${money(entry.reportedWeight)} кг` : ""} — подтвердите</div>`;
-    if(entry.status === "pending") return `<b style="color:var(--navy); font-size:12px;">Шаг 2 из 3</b>
-      <div style="font-size:11.5px; color:var(--ink-soft);">отметить «Сделали», когда готово</div>`;
-    if(entry.status === "payable") return `<b style="color:var(--green); font-size:12px;">Шаг 3 из 3</b>
-      <div style="font-size:11.5px; color:var(--ink-soft);">выплатить в «Зарплате»${entry.acceptedBy ? " · принял " + esc(entry.acceptedBy) : ""}</div>`;
-    return `<span style="color:#4B5563; font-size:12px;">Оплачено</span>
-      <div style="font-size:11px; color:var(--ink-soft);">${esc((entry.paidAt||"").slice(0,10))}</div>`;
+  async function loadProduction(){
+    const body = document.getElementById("prodList");
+    body.innerHTML = `<div class="panel" style="text-align:center; color:var(--ink-soft);">Загрузка...</div>`;
+    try{
+      if(!employeesList.length){ try{ employeesList = await api("/employees"); }catch(e){} }
+      await loadProdDefaultEmployee();
+      const withArchived = prodStep === "archived" ? "?archived=1" : "";
+      prodData = await api("/dispatch/list" + withArchived);
+      renderProduction();
+    }catch(e){
+      body.innerHTML = `<div class="panel" style="color:var(--red);">Ошибка загрузки: ${esc(e.message)}</div>`;
+    }
   }
 
   async function loadProdDefaultEmployee(){
@@ -6016,45 +5988,72 @@
     }
   }
 
-  function prodVisibleItems(){
+  function prodVisible(){
     const q = (document.getElementById("prodSearch").value || "").trim().toLowerCase();
     const shop = document.getElementById("prodShopFilter").value;
-    return productionItems.filter(p=>{
-      const okShop = !shop || (p.order && p.order.shop) === shop || p.shop === shop;
-      const okQ = !q || String(p.article||"").toLowerCase().includes(q) || String(p.productName||"").toLowerCase().includes(q);
-      return okShop && okQ;
+    return prodData.items.filter(p=>{
+      if(p.step !== prodStep) return false;
+      if(shop && p.shop !== shop) return false;
+      if(q && !(String(p.article||"").toLowerCase().includes(q)
+             || String(p.productName||"").toLowerCase().includes(q)
+             || String(p.number||"").includes(q))) return false;
+      return true;
     });
   }
 
   function renderProduction(){
-    const pending = productionItems.filter(p=>!p.decision).length;
-    const list = prodVisibleItems();
+    const counts = prodData.counts || {};
+    const waiting = counts.pending || 0;
+    const inWork = (counts.in_work || 0) + (counts.published || 0);
+    const toConfirm = counts.reported || 0;
+    const money$ = prodData.items.filter(p=>["in_work","published","reported"].includes(p.step))
+      .reduce((s,p)=>s + p.amount, 0);
 
-    // Итог по видимым строкам: сколько работы и на какую сумму по расценкам
-    const workItems = list.filter(p=>p.decision === "assigned" || !p.decision);
-    const sumWork = workItems.reduce((s,p)=> s + prodRate(p.article) * (Number(p.quantity)||1), 0);
     document.getElementById("prodStats").innerHTML = `
-      <div class="panel" style="border-left:4px solid var(--amber); margin:0; min-width:190px;">
+      <div class="panel" style="border-left:4px solid var(--amber); margin:0; min-width:180px;">
         <div style="font-size:11px; text-transform:uppercase; color:var(--ink-soft);">Ждут решения</div>
-        <div style="font-family:var(--serif); font-size:22px;">${pending}</div>
+        <div style="font-family:var(--serif); font-size:22px;">${waiting}</div>
+        <div style="font-size:11.5px; color:var(--ink-soft);">решите, откуда берём</div>
       </div>
-      <div class="panel" style="border-left:4px solid var(--navy); margin:0; min-width:230px;">
-        <div style="font-size:11px; text-transform:uppercase; color:var(--ink-soft);">Работы по расценкам</div>
-        <div style="font-family:var(--serif); font-size:22px;">${money(sumWork)} ₸</div>
-        <div style="font-size:11.5px; color:var(--ink-soft);">${workItems.length} позиций в производстве</div>
+      <div class="panel" style="border-left:4px solid #7C3AED; margin:0; min-width:180px;">
+        <div style="font-size:11px; text-transform:uppercase; color:var(--ink-soft);">Надо подтвердить</div>
+        <div style="font-family:var(--serif); font-size:22px; color:${toConfirm ? "#7C3AED" : "inherit"};">${toConfirm}</div>
+        <div style="font-size:11.5px; color:var(--ink-soft);">забивщики сдали работу</div>
+      </div>
+      <div class="panel" style="border-left:4px solid var(--navy); margin:0; min-width:200px;">
+        <div style="font-size:11px; text-transform:uppercase; color:var(--ink-soft);">В работе сейчас</div>
+        <div style="font-family:var(--serif); font-size:22px;">${inWork}</div>
+        <div style="font-size:11.5px; color:var(--ink-soft);">на ${money(money$)} ₸ по расценкам</div>
       </div>`;
 
-    const shops = Array.from(new Set(productionItems.map(p=>(p.order && p.order.shop) || p.shop).filter(Boolean))).sort();
+    // Вкладки-шаги со счётчиками: сразу видно, где скопилось
+    document.getElementById("prodSteps").innerHTML = PROD_STEPS.map(s=>{
+      const n = counts[s.key] || 0;
+      if(!n && !["pending","reported","archived"].includes(s.key)) return "";
+      return `<button class="pill ${prodStep===s.key?"active":""}" data-pstep="${s.key}">${s.label} <span class="count">${n}</span></button>`;
+    }).join("");
+    document.getElementById("prodSteps").querySelectorAll("[data-pstep]").forEach(b=>
+      b.addEventListener("click", ()=>{
+        prodStep = b.dataset.pstep;
+        localStorage.setItem("prodStep", prodStep);
+        selectedProdIds.clear();
+        loadProduction();
+      }));
+
+    const shops = Array.from(new Set(prodData.items.map(p=>p.shop).filter(Boolean))).sort();
     const shopSel = document.getElementById("prodShopFilter");
     const prevShop = shopSel.value;
     shopSel.innerHTML = `<option value="">Все магазины</option>` + shops.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join("");
     shopSel.value = prevShop;
-    document.getElementById("prodCount").textContent = `Показано ${list.length} из ${productionItems.length}`;
+
+    const list = prodVisible();
+    const step = PROD_STEP[prodStep] || PROD_STEPS[0];
+    document.getElementById("prodCount").textContent = `${step.label}: ${list.length}${step.hint ? " · " + step.hint : ""}`;
 
     const wrap = document.getElementById("prodList");
     if(!list.length){
       wrap.innerHTML = `<div class="panel" style="text-align:center; color:var(--ink-soft);">
-        ${productionItems.length ? "Ничего не подходит под фильтр" : "Пусто — новые заказы появятся тут автоматически"}</div>`;
+        ${prodStep === "pending" ? "Всё разобрано — новых заказов не ждёт" : "Пусто"}</div>`;
       updateProdBulkBar();
       return;
     }
@@ -6062,58 +6061,89 @@
     wrap.innerHTML = `<div class="panel" style="padding:0; overflow:hidden;"><div class="tbl-wrap"><table>
       <thead><tr>
         <th style="width:30px;"><input type="checkbox" id="prodSelectAll"></th>
-        <th>Заказ</th><th>Артикул</th><th>Наименование</th>
-        <th class="num">Кол-во</th><th class="num">Расценка</th><th class="num">Сумма</th>
-        <th>На каком шаге</th><th>Исполнитель / зарплата</th><th style="min-width:210px;">Что сделать</th>
+        <th>Заказ</th><th>Товар</th><th class="num">Кол-во</th><th class="num">Сумма</th>
+        <th>Кто делает</th><th style="min-width:260px;">Что сделать</th>
       </tr></thead><tbody>
-      ${list.map(p=>{
-        const qty = Number(p.quantity) || 1;
-        const rate = prodRate(p.article);
-        const d = PROD_DECISION[p.decision];
-        const entry = payrollByProduction[p.id];
-        const emp = employeesList.find(e=>e.id === p.employeeId);
-        return `<tr>
-          <td>${!p.decision ? `<input type="checkbox" class="prod-select" data-id="${esc(p.id)}" ${selectedProdIds.has(p.id)?"checked":""}>` : ""}</td>
-          <td style="white-space:nowrap;">№${esc((p.order&&p.order.displayNumber)||"")}<div style="font-size:11px; color:var(--ink-soft);">${esc((p.order&&p.order.shop)||p.shop||"")}</div></td>
-          <td class="mono" style="font-size:11.5px;">${esc(p.article||"—")}</td>
-          <td>${esc(p.productName||"—")}</td>
-          <td class="num">${money(qty)}</td>
-          <td class="num">${rate ? money(rate) : `<span style="color:var(--red); font-size:11.5px;">нет</span>`}</td>
-          <td class="num">${rate ? `<b>${money(rate*qty)} ₸</b>` : "—"}</td>
-          <td>${prodStepCell(p, entry)}</td>
-          <td style="font-size:12px;">${p.decision === "assigned"
-              ? `${esc(emp ? emp.name : "—")}${entry ? `<div>${payBadge(entry.status)} <b>${money(entry.amount)} ₸</b></div>`
-                                                     : `<div style="color:var(--ink-soft);">начисления нет</div>`}`
-              : "—"}</td>
-          <td style="white-space:nowrap;">
-            ${!p.decision ? `
-              ${p.published
-                ? `<button class="btn secondary prod-unpublish" data-prod-id="${esc(p.id)}" style="padding:4px 8px; font-size:11.5px;" title="Убрать из монитора">📢 в мониторе</button>`
-                : `<button class="btn secondary prod-publish" data-prod-id="${esc(p.id)}" style="padding:4px 8px; font-size:11.5px;" title="Отправить забивщикам">📢 Забивщикам</button>`}
-              <button class="btn amber prod-quick-assign" data-prod-id="${esc(p.id)}" style="padding:4px 10px; font-size:11.5px;">${prodDefaultEmployeeName ? "Шьёт " + esc(prodDefaultEmployeeName) : "Назначить"}</button>
-              <button class="btn secondary prod-action-stock" data-prod-id="${esc(p.id)}" style="padding:4px 8px; font-size:11.5px;" title="Товар уже лежит на складе — зарплата не начисляется, она была уплачена при изготовлении">📦 Со склада · без оплаты</button>
-              <button class="btn secondary prod-action-return" data-prod-id="${esc(p.id)}" style="padding:4px 8px; font-size:11.5px;" title="Закрываем товаром с возврата или отмены — зарплата не начисляется">↩️ Возврат · без оплаты</button>` : ""}
-            ${entry && entry.status === "pending" ? `<button class="btn amber prod-accept" data-entry-id="${esc(entry.id)}" style="padding:4px 12px; font-size:11.5px;">${entry.reportedDone ? "✓ Подтвердить" : "✓ Сделали"}</button>` : ""}
-            ${entry && entry.status !== "paid" ? `<button class="btn secondary prod-reassign" data-entry-id="${esc(entry.id)}" style="padding:4px 8px; font-size:11.5px;" title="Передать другому">👤</button>` : ""}
-            ${p.decision === "assigned" && (!entry || entry.status !== "paid") ? `<button class="btn secondary prod-release" data-prod-id="${esc(p.id)}" style="padding:4px 8px; font-size:11.5px;" title="Вернуть в свободные — забивщик взял по ошибке">↺</button>` : ""}
-          </td>
-        </tr>`;
-      }).join("")}
+      ${list.map(p=>`<tr${p.managerComment ? ' style="border-left:3px solid var(--amber);"' : ""}>
+        <td><input type="checkbox" class="prod-select" data-id="${esc(p.id)}" ${selectedProdIds.has(p.id)?"checked":""}></td>
+        <td style="white-space:nowrap;"><b>№${esc(p.number || "—")}</b>
+          <div style="font-size:11px; color:var(--ink-soft);">${esc(p.shop || "")}</div></td>
+        <td>
+          <div style="font-weight:600;">${esc(p.productName || "—")}</div>
+          <div style="font-size:11px; color:var(--ink-soft);">${esc(p.article || "")}</div>
+          ${p.managerComment ? `<div style="margin-top:4px; font-size:11.5px; background:#FEF3C7; border-radius:6px; padding:3px 8px;">💬 ${esc(p.managerComment)}</div>` : ""}
+        </td>
+        <td class="num">${money(p.qty)}</td>
+        <td class="num">${p.rate ? `<b>${money(p.amount)} ₸</b><div style="font-size:11px; color:var(--ink-soft);">${money(p.rate)} × ${money(p.qty)}</div>` : `<span style="color:var(--red); font-size:11.5px;">нет расценки</span>`}</td>
+        <td style="font-size:12.5px;">
+          ${p.employeeName ? `<b>${esc(p.employeeName)}</b>` : (p.publishedForName ? `<span style="color:#7C3AED;">лично ${esc(p.publishedForName)}</span>` : `<span style="color:var(--ink-soft);">${p.published ? "все забивщики" : "—"}</span>`)}
+          ${p.entry && p.entry.reportedWeight ? `<div style="font-size:11px; color:var(--ink-soft);">вес ${money(p.entry.reportedWeight)} кг</div>` : ""}
+          ${p.entry && p.entry.reportedBy ? `<div style="font-size:11px; color:var(--ink-soft);">сдал ${esc(p.entry.reportedBy)}</div>` : ""}
+        </td>
+        <td style="white-space:nowrap;">${prodActions(p)}</td>
+      </tr>`).join("")}
       </tbody></table></div></div>`;
 
+    bindProdHandlers(list);
+    updateProdBulkBar();
+  }
+
+  // Одна главная кнопка на строку — та, что нужна на этом шаге
+  function prodActions(p){
+    const small = 'style="padding:4px 10px; font-size:11.5px;"';
+    if(p.step === "pending") return `
+      <button class="btn amber prod-quick-assign" data-prod-id="${esc(p.id)}" ${small}>${prodDefaultEmployeeName ? "Шьёт " + esc(prodDefaultEmployeeName) : "Назначить"}</button>
+      <button class="btn secondary prod-publish" data-prod-id="${esc(p.id)}" ${small}>📢 Забивщикам</button>
+      <button class="btn secondary prod-action-stock" data-prod-id="${esc(p.id)}" ${small} title="Товар уже лежит на складе">📦 Со склада</button>
+      <button class="btn secondary prod-action-return" data-prod-id="${esc(p.id)}" ${small} title="Закрыть возвратом">↩️</button>`;
+    if(p.step === "published") return `
+      <button class="btn secondary prod-unpublish" data-prod-id="${esc(p.id)}" ${small}>Убрать из монитора</button>
+      <button class="btn secondary prod-edit" data-prod-id="${esc(p.id)}" ${small}>✎</button>`;
+    if(p.step === "in_work") return `
+      <button class="btn amber prod-accept" data-entry-id="${esc(p.entry.id)}" ${small}>✓ Работа сделана</button>
+      <button class="btn secondary prod-release" data-prod-id="${esc(p.id)}" ${small} title="Вернуть в свободные">↺</button>
+      <button class="btn secondary prod-edit" data-prod-id="${esc(p.id)}" ${small}>✎</button>`;
+    if(p.step === "reported") return `
+      <button class="btn amber prod-accept" data-entry-id="${esc(p.entry.id)}" ${small}>✓ Подтвердить</button>
+      <button class="btn secondary prod-release" data-prod-id="${esc(p.id)}" ${small}>↺</button>`;
+    if(p.step === "accepted") return `<span style="font-size:12px; color:var(--green);">ждёт выплаты в «Зарплате»</span>
+      <button class="btn secondary prod-archive" data-prod-id="${esc(p.id)}" ${small}>В архив</button>`;
+    if(p.step === "archived") return `<button class="btn secondary prod-unarchive" data-prod-id="${esc(p.id)}" ${small}>Вернуть из архива</button>`;
+    return `<button class="btn secondary prod-archive" data-prod-id="${esc(p.id)}" ${small}>В архив</button>`;
+  }
+
+  function bindProdHandlers(list){
+    const wrap = document.getElementById("prodList");
     wrap.querySelectorAll(".prod-select").forEach(cb=>cb.addEventListener("change", ()=>{
       if(cb.checked) selectedProdIds.add(cb.dataset.id); else selectedProdIds.delete(cb.dataset.id);
       updateProdBulkBar();
     }));
-    const selectAll = document.getElementById("prodSelectAll");
-    if(selectAll){
-      const pendingList = list.filter(p=>!p.decision);
-      selectAll.checked = pendingList.length > 0 && pendingList.every(p=>selectedProdIds.has(p.id));
-      selectAll.addEventListener("change", ()=>{
-        pendingList.forEach(p=>{ if(selectAll.checked) selectedProdIds.add(p.id); else selectedProdIds.delete(p.id); });
+    const all = document.getElementById("prodSelectAll");
+    if(all){
+      all.checked = list.length > 0 && list.every(p=>selectedProdIds.has(p.id));
+      all.addEventListener("change", ()=>{
+        list.forEach(p=>{ if(all.checked) selectedProdIds.add(p.id); else selectedProdIds.delete(p.id); });
         renderProduction();
       });
     }
+    wrap.querySelectorAll(".prod-action-stock").forEach(b=>b.addEventListener("click", ()=>resolveProduction(b.dataset.prodId, "stock")));
+    wrap.querySelectorAll(".prod-action-return").forEach(b=>b.addEventListener("click", ()=>resolveProduction(b.dataset.prodId, "return_offset")));
+    wrap.querySelectorAll(".prod-accept").forEach(b=>b.addEventListener("click", ()=>acceptPayEntry(b.dataset.entryId, loadProduction)));
+
+    wrap.querySelectorAll(".prod-quick-assign").forEach(b=>b.addEventListener("click", async ()=>{
+      let employeeId = prodDefaultEmployeeId;
+      if(!employeeId){
+        if(!employeesList.length){ try{ employeesList = await api("/employees"); }catch(e){} }
+        if(!employeesList.length){ toast("Сначала добавьте сотрудников"); return; }
+        const names = employeesList.map((e,i)=>`${i+1}. ${e.name}`).join("\\n");
+        const pick = prompt(`Кто шьёт? Введите номер:\\n${names}`);
+        const idx = parseInt(pick, 10) - 1;
+        if(!(idx >= 0 && idx < employeesList.length)) return;
+        employeeId = employeesList[idx].id;
+      }
+      await resolveProduction(b.dataset.prodId, "assigned", { employeeId });
+    }));
+
     wrap.querySelectorAll(".prod-publish").forEach(b=>b.addEventListener("click", async ()=>{
       const target = await askPublishTarget();
       if(!target) return;
@@ -6124,42 +6154,70 @@
       }catch(e){ toast("Не получилось: " + e.message); }
     }));
     wrap.querySelectorAll(".prod-unpublish").forEach(b=>b.addEventListener("click", async ()=>{
-      try{
-        await api("/dispatch/unpublish", {method:"POST", body: JSON.stringify({ids:[b.dataset.prodId]})});
-        toast("Убрано из монитора");
-        loadProduction();
-      }catch(e){ toast("Не получилось: " + e.message); }
+      try{ await api("/dispatch/unpublish", {method:"POST", body: JSON.stringify({ids:[b.dataset.prodId]})}); loadProduction(); }
+      catch(e){ toast("Не получилось: " + e.message); }
     }));
-    wrap.querySelectorAll(".prod-quick-assign").forEach(b=>b.addEventListener("click", async ()=>{
-      let employeeId = prodDefaultEmployeeId;
-      if(!employeeId){
-        if(!employeesList.length){ try{ employeesList = await api("/employees"); }catch(e){} }
-        if(!employeesList.length){ toast("Сначала добавьте сотрудников кнопкой «Сотрудники»"); return; }
-        const names = employeesList.map((e,i)=>`${i+1}. ${e.name}`).join("\n");
-        const pick = prompt(`Кто шьёт? Введите номер:\n${names}`);
-        const idx = parseInt(pick, 10) - 1;
-        if(!(idx >= 0 && idx < employeesList.length)) return;
-        employeeId = employeesList[idx].id;
-      }
-      await resolveProduction(b.dataset.prodId, "assigned", { employeeId });
-    }));
-    wrap.querySelectorAll(".prod-action-stock").forEach(b=>b.addEventListener("click", ()=>resolveProduction(b.dataset.prodId, "stock")));
-    wrap.querySelectorAll(".prod-action-return").forEach(b=>b.addEventListener("click", ()=>resolveProduction(b.dataset.prodId, "return_offset")));
-    wrap.querySelectorAll(".prod-accept").forEach(b=>b.addEventListener("click", ()=>acceptPayEntry(b.dataset.entryId, loadProduction)));
-    wrap.querySelectorAll(".prod-reassign").forEach(b=>b.addEventListener("click", ()=>reassignEntry(b.dataset.entryId, loadProduction)));
     wrap.querySelectorAll(".prod-release").forEach(b=>b.addEventListener("click", async ()=>{
-      if(!confirm("Вернуть заказ в свободные?\n\nНачисление по нему отменится, заказ снова появится у забивщиков.")) return;
+      if(!confirm("Вернуть заказ в свободные? Начисление отменится.")) return;
       try{
         const r = await api("/dispatch/release", {method:"POST", body: JSON.stringify({ids:[b.dataset.prodId]})});
-        toast(r.released ? "Заказ снова свободен" : "Не удалось — работа уже оплачена");
+        toast(r.released ? "Заказ снова свободен" : "Работа уже оплачена");
         loadProduction();
       }catch(e){ toast("Не получилось: " + e.message); }
     }));
-    updateProdBulkBar();
+    wrap.querySelectorAll(".prod-archive").forEach(b=>b.addEventListener("click", ()=>archiveProduction([b.dataset.prodId], true)));
+    wrap.querySelectorAll(".prod-unarchive").forEach(b=>b.addEventListener("click", ()=>archiveProduction([b.dataset.prodId], false)));
+
+    wrap.querySelectorAll(".prod-edit").forEach(b=>b.addEventListener("click", async ()=>{
+      const p = prodData.items.find(x=>x.id === b.dataset.prodId);
+      const qty = prompt(`Количество для «${p.productName}»:`, String(p.qty));
+      if(qty === null) return;
+      const comment = prompt("Комментарий (виден забивщику):", p.managerComment || "");
+      try{
+        await api("/dispatch/item/" + p.id, {method:"PUT", body: JSON.stringify({
+          quantity: parseFloat(qty) || p.qty, comment: comment === null ? undefined : comment
+        })});
+        toast("Изменено, сумма пересчитана");
+        loadProduction();
+      }catch(e){ toast("Не получилось: " + e.message); }
+    }));
   }
 
-  // Панель массовых действий: одно решение сразу для многих строк — раньше
-  // приходилось тыкать каждую карточку отдельно
+  // Кому отправляем заказ и что передать на словах
+  async function askPublishTarget(){
+    if(!employeesList.length){ try{ employeesList = await api("/employees"); }catch(e){} }
+    const names = employeesList.map((e,i)=>`${i+1}. ${e.name}`).join("\n");
+    const who = prompt(`Кому отправить?\n\n0 — всем, заберёт кто первый\n${names}\n\nВведите номер:`, "0");
+    if(who === null) return null;
+    const idx = parseInt(who, 10);
+    const employeeId = idx > 0 && idx <= employeesList.length ? employeesList[idx-1].id : null;
+    const comment = prompt("Комментарий забивщику (можно оставить пустым):", "") || "";
+    return { employeeId, comment };
+  }
+
+  // Передать работу другому человеку: сумма едет вместе с ней
+  async function reassignEntry(entryId, after){
+    if(!employeesList.length){ try{ employeesList = await api("/employees"); }catch(e){} }
+    const names = employeesList.map((e,i)=>`${i+1}. ${e.name}`).join("\n");
+    const pick = prompt(`Кому передать работу? Введите номер:\n${names}`);
+    const idx = parseInt(pick, 10) - 1;
+    if(!(idx >= 0 && idx < employeesList.length)) return;
+    try{
+      const r = await api("/payroll/entries/" + entryId, { method:"PUT", body: JSON.stringify({ employeeId: employeesList[idx].id })});
+      toast(`Работа передана: ${r.employeeName}`);
+      if(after) await after();
+    }catch(e){ toast("Не получилось: " + e.message); }
+  }
+
+  async function archiveProduction(ids, toArchive){
+    try{
+      const r = await api("/dispatch/archive", {method:"POST", body: JSON.stringify({ids, archived: toArchive})});
+      toast(toArchive ? `В архив: ${r.count}` : `Возвращено: ${r.count}`);
+      selectedProdIds.clear();
+      loadProduction();
+    }catch(e){ toast("Не получилось: " + e.message); }
+  }
+
   function updateProdBulkBar(){
     const bar = document.getElementById("prodBulkBar");
     if(!bar) return;
@@ -6174,59 +6232,18 @@
     document.getElementById("prodBulkCount").textContent = `Выбрано: ${n}`;
   }
 
-  // Кому отправляем и что передать на словах. Раньше уходило всем и молча.
-  async function askPublishTarget(){
-    if(!employeesList.length){ try{ employeesList = await api("/employees"); }catch(e){} }
-    const names = employeesList.map((e,i)=>`${i+1}. ${e.name}`).join("\n");
-    const who = prompt(`Кому отправить?\n\n0 — всем, заберёт кто первый\n${names}\n\nВведите номер:`, "0");
-    if(who === null) return null;
-    const idx = parseInt(who, 10);
-    const employeeId = idx > 0 && idx <= employeesList.length ? employeesList[idx-1].id : null;
-    const comment = prompt("Комментарий забивщику (можно оставить пустым):", "") || "";
-    return { employeeId, comment };
-  }
-
-  async function reassignEntry(entryId, after){
-    if(!employeesList.length){ try{ employeesList = await api("/employees"); }catch(e){} }
-    const names = employeesList.map((e,i)=>`${i+1}. ${e.name}`).join("\n");
-    const pick = prompt(`Кому передать работу? Введите номер:\n${names}`);
-    const idx = parseInt(pick, 10) - 1;
-    if(!(idx >= 0 && idx < employeesList.length)) return;
-    try{
-      const r = await api("/payroll/entries/" + entryId, { method:"PUT", body: JSON.stringify({ employeeId: employeesList[idx].id })});
-      toast(`Работа передана: ${r.employeeName}`);
-      if(after) await after();
-    }catch(e){ toast("Не получилось: " + e.message); }
-  }
-  // Что с деньгами по этой работе: сколько начислено и на каком шаге
-  function renderProdPayroll(p){
-    const e = payrollByProduction[p.id];
-    if(!e) return `<span style="color:var(--ink-soft);">начисление не создано</span>
-      <button class="btn secondary prod-accrue" data-prod-id="${p.id}" style="margin-left:auto; padding:4px 10px; font-size:12px;">Начислить зарплату</button>`;
-    if(e.needsRate) return `<span style="color:var(--red);">Не задана расценка труда в Справочнике — начислить нельзя</span>`;
-    const s = PAY_STATUS[e.status] || PAY_STATUS.pending;
-    return `<span style="color:${s.color}; background:${s.bg}; padding:2px 9px; border-radius:20px; font-weight:600;">${s.label}</span>
-      <span>${money(e.amount)} ₸ <span style="color:var(--ink-soft);">(${money(e.qty)} × ${money(e.rate)})</span></span>
-      ${e.status === "pending" ? `<button class="btn amber prod-accept" data-entry-id="${esc(e.id)}" style="margin-left:auto; padding:4px 12px; font-size:12px;">Работа принята</button>` : ""}`;
-  }
-
   async function resolveProduction(prodId, decision, extra){
     try{
       await api("/production/"+prodId+"/resolve", {method:"POST", body:JSON.stringify({decision, ...(extra||{})})});
-      // Назначили исполнителя — сразу заводим начисление, чтобы работа не
-      // потерялась. К выплате оно встанет только после «Работа принята».
       if(decision === "assigned"){
         try{
           const r = await api("/payroll/from-production/" + prodId, {method:"POST"});
-          toast(r.needsRate
-            ? "Исполнитель назначен, но расценка труда не заполнена в Справочнике"
-            : `Исполнитель назначен, начислено ${money(r.amount)} ₸ (ждёт приёмки)`);
-        }catch(e){ toast("Исполнитель назначен, но начисление не создалось: " + e.message); }
+          toast(r.needsRate ? "Назначено, но расценка не заполнена в Справочнике"
+                            : `Назначено, начислено ${money(r.amount)} ₸ (ждёт приёмки)`);
+        }catch(e){ toast("Назначено, но начисление не создалось: " + e.message); }
       } else toast("Решение сохранено");
-      await loadProduction();
-    }catch(e){
-      toast("Ошибка: "+(e.message==="no_stock" ? "на складе не нашлось подходящего товара" : e.message));
-    }
+      loadProduction();
+    }catch(e){ toast("Не получилось: " + e.message); }
   }
 
   // ---------- Управление сотрудниками ----------
@@ -6243,6 +6260,12 @@
   });
   document.getElementById("prodShopFilter").addEventListener("change", renderProduction);
   document.getElementById("prodBulkClear").addEventListener("click", ()=>{ selectedProdIds.clear(); renderProduction(); });
+  document.getElementById("prodBulkArchive").addEventListener("click", ()=>{
+    const ids = Array.from(selectedProdIds);
+    if(!ids.length) return;
+    if(!confirm(`Убрать в архив ${ids.length} позиций? Начисления и история останутся.`)) return;
+    archiveProduction(ids, true);
+  });
 
   async function prodBulkResolve(decision, extra, label){
     const ids = Array.from(selectedProdIds);
@@ -6301,6 +6324,24 @@
       toast(`Отправлено (${r.forName || "всем"}): ${r.published}${r.skipped ? `, пропущено: ${r.skipped}` : ""}`);
     }catch(e){ toast("Не получилось: " + e.message); }
   });
+  async function prodBulkResolve(decision, extra, label){
+    const ids = Array.from(selectedProdIds);
+    if(!ids.length) return;
+    if(!confirm(`${label} — для ${ids.length} позиций?`)) return;
+    let ok = 0; const errors = [];
+    for(const id of ids){
+      try{
+        await api("/production/"+id+"/resolve", {method:"POST", body:JSON.stringify({decision, ...(extra||{})})});
+        if(decision === "assigned"){
+          try{ await api("/payroll/from-production/" + id, {method:"POST"}); }catch(e){ errors.push(e.message); }
+        }
+        ok++;
+      }catch(e){ errors.push(e.message); }
+    }
+    selectedProdIds.clear();
+    await loadProduction();
+    toast(errors.length ? `Готово: ${ok}, ошибок: ${errors.length}` : `Готово: ${ok} позиций`);
+  }
   document.getElementById("prodBulkStock").addEventListener("click", ()=>prodBulkResolve("stock", null, "Списать с остатков"));
   document.getElementById("prodBulkReturn").addEventListener("click", ()=>prodBulkResolve("return_offset", null, "Перекрыть возвратом"));
   document.getElementById("btnManageEmployees").addEventListener("click", async ()=>{
