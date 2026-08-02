@@ -547,6 +547,11 @@ export function ensureSchema() {
   // GTIN — штрихкод товара (EAN-13). Нужен для маркировки и Kaspi,
   // заполняется вручную, поэтому пустые надо видеть сразу
   safeAddColumn("price_items", "gtin TEXT");
+  // Полные затраты: доставка в тенге за штуку и налог с комиссией в процентах
+  // от розницы. Раньше они сидели внутри себестоимости молча, и было непонятно,
+  // из чего она сложилась.
+  safeAddColumn("price_items", "delivery_cost REAL");
+  safeAddColumn("price_items", "tax_percent REAL");
 
   safeAddColumn("price_items", "labor_rate REAL");     // РАСЦЕНКА ТРУДА — ставка за 1 шт, читает раздел "Зарплата"
   safeAddColumn("price_items", "material_cost REAL");  // Затраты на материал
