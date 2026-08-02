@@ -581,6 +581,10 @@
         <div class="o2-table-toolbar">
           <span class="o2-count" id="o2OrdersCount"></span>
           <div style="display:flex; gap:8px;">
+            <button class="o2-btn-ghost" id="btnExportOrdersXls">
+              <svg class="o2-icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Экспорт в Excel
+            </button>
             <button class="o2-btn-ghost" id="btnPrintKaspiList">
               <svg class="o2-icon" viewBox="0 0 24 24"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
               Печать
@@ -835,6 +839,14 @@
         </div>
       </div>
 
+      <div class="panel" style="margin-top:16px; padding:0; overflow:hidden;">
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border-bottom:1px solid var(--line); flex-wrap:wrap; gap:8px;">
+          <b style="font-size:14px;">Выплаты по месяцам</b>
+          <button class="btn secondary" id="btnExportSalary" style="padding:5px 12px; font-size:12px;">Выгрузить в Excel</button>
+        </div>
+        <div class="tbl-wrap"><table><thead id="monthsHead"></thead><tbody id="monthsBody"></tbody></table></div>
+      </div>
+
       <div class="panel" style="margin-top:16px;">
         <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
           <b style="font-size:14px;">Работы</b>
@@ -956,7 +968,8 @@
         <button class="btn secondary" id="statRefresh" style="padding:6px 12px; font-size:12.5px;">Обновить</button>
       </div>
       <div class="st-cards" id="statCards"></div>
-      <div class="st-grid2">
+      <div class="panel" id="statDynamics"></div>
+      <div class="st-grid2" style="margin-top:14px;">
         <div class="panel" id="statShops"></div>
         <div class="panel" id="statTop"></div>
       </div>
@@ -4551,6 +4564,30 @@
         <div class="st-sub">материалы ${money(c.cost)} · работа ${money(c.labor)}</div>
       </div>`;
 
+    // Динамика по месяцам: столбиками, чтобы видеть провалы и рост, а не только итог
+    const byMonth = new Map();
+    c.byDay.forEach(d=>{
+      const k = d.date.slice(0,7);
+      byMonth.set(k, Math.round((byMonth.get(k) || 0) + d.sum));
+    });
+    const MN = ["январь","февраль","март","апрель","май","июнь","июль","август","сентябрь","октябрь","ноябрь","декабрь"];
+    const months = Array.from(byMonth.entries()).sort();
+    const maxM = Math.max(1, ...months.map(m=>m[1]));
+    const avgCheck = c.orders ? Math.round(c.revenue / c.orders) : 0;
+    document.getElementById("statDynamics").innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+        <div class="panel-label" style="margin:0;">Выручка по месяцам</div>
+        <div style="font-size:12.5px; color:var(--ink-soft);">Средний чек: <b style="color:var(--ink);">${money(avgCheck)} ₸</b> · заказов ${c.orders}</div>
+      </div>
+      ${months.length ? `<div style="display:flex; align-items:flex-end; gap:10px; height:130px; margin-top:14px;">
+        ${months.map(([k,v])=>`
+          <div style="flex:1; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; height:100%;">
+            <div style="font-size:11.5px; font-weight:600; margin-bottom:4px; white-space:nowrap;">${money(v)}</div>
+            <div title="${esc(k)}: ${money(v)} ₸" style="width:100%; max-width:70px; background:var(--amber); border-radius:6px 6px 0 0; height:${Math.max(4, Math.round(v/maxM*90))}%;"></div>
+            <div style="font-size:11px; color:var(--ink-soft); margin-top:5px;">${esc(MN[parseInt(k.slice(5,7),10)-1] || k)}</div>
+          </div>`).join("")}
+      </div>` : `<div style="font-size:12.5px; color:var(--ink-soft); margin-top:8px;">За период продаж не было</div>`}`;
+
     const maxShop = Math.max(1, ...c.byShop.map(s=>s.revenue));
     document.getElementById("statShops").innerHTML = `
       <div class="panel-label">Заработано по магазинам</div>
@@ -4802,6 +4839,7 @@
 
     if(!employeesList.length){ try{ employeesList = await api("/employees"); }catch(e){} }
     loadSalaryWorks();
+    loadSalaryMonths();
   }
 
   // ---------- Перенос из старой системы ----------
@@ -4954,6 +4992,85 @@
     });
   }
 
+  // ---------- Выплаты по месяцам ----------
+  let monthsData = null;
+  async function loadSalaryMonths(){
+    try{
+      monthsData = await api("/payroll/by-months");
+    }catch(e){
+      document.getElementById("monthsBody").innerHTML = `<tr><td style="padding:14px; color:var(--red);">${esc(e.message)}</td></tr>`;
+      return;
+    }
+    const d = monthsData;
+    const people = d.people;
+    document.getElementById("monthsHead").innerHTML =
+      `<tr><th>Месяц</th>${people.map(p=>`<th class="num">${esc(p)}</th>`).join("")}<th class="num">Всего</th></tr>`;
+
+    // Свежие месяцы сверху: чаще смотрят последний, а не январь
+    const monthsDesc = d.months.slice().reverse();
+    const maxMonth = Math.max(1, ...monthsDesc.map(m=>m.total));
+    const rows = monthsDesc.map(m=>`<tr>
+        <td><b>${esc(m.label)}</b>
+          <div class="st-bar" style="height:5px; margin-top:4px; background:#E5E7EB; border-radius:3px; overflow:hidden;">
+            <span style="display:block; height:100%; width:${Math.round(m.total/maxMonth*100)}%; background:var(--amber);"></span></div></td>
+        ${people.map(p=>`<td class="num">${m.byPerson[p]
+            ? `<a href="#" data-mcell="${esc(m.key)}|${esc(p)}" style="color:var(--navy);">${money(m.byPerson[p])}</a>`
+            : "—"}</td>`).join("")}
+        <td class="num"><b>${money(m.total)}</b></td>
+      </tr>`).join("");
+
+    const debtByName = Object.fromEntries(d.debts.map(x=>[x.name, x.sum]));
+    const debtRow = `<tr style="background:#FDF3F1;">
+        <td><b style="color:var(--red);">Долг (не выплачено)</b></td>
+        ${people.map(p=>`<td class="num" style="color:var(--red); font-weight:600;">${debtByName[p] ? money(debtByName[p]) : "—"}</td>`).join("")}
+        <td class="num"><b style="color:var(--red);">${money(d.totals.debt)}</b></td>
+      </tr>`;
+    const totalRow = `<tr style="background:#F0EAD9;">
+        <td><b>Выплачено всего</b></td>
+        ${people.map(p=>`<td class="num"><b>${money(d.months.reduce((s,m)=>s + (m.byPerson[p]||0), 0))}</b></td>`).join("")}
+        <td class="num"><b>${money(d.totals.paid)}</b></td>
+      </tr>`;
+
+    document.getElementById("monthsBody").innerHTML = (rows || "") + totalRow + debtRow +
+      (d.totals.undistributed ? `<tr><td colspan="${people.length+2}" style="font-size:12px; color:var(--ink-soft);">
+        Не разнесено по людям: ${money(d.totals.undistributed)} ₸ — у этих работ не указан исполнитель</td></tr>` : "");
+
+    // Клик по сумме показывает, из каких работ она сложилась
+    document.getElementById("monthsBody").querySelectorAll("[data-mcell]").forEach(a=>{
+      a.addEventListener("click", async (e)=>{
+        e.preventDefault();
+        const [monthKey, personName] = a.dataset.mcell.split("|");
+        const emp = employeesList.find(x=>x.name === personName);
+        if(!emp){ toast("Сотрудник не найден"); return; }
+        payEntriesEmployee = emp.id;
+        payEntriesFilter = "paid";
+        payEntriesMonth = monthKey;
+        document.getElementById("payEntriesOverlay").classList.add("show");
+        await renderPayEntries();
+      });
+    });
+  }
+
+  document.getElementById("btnExportSalary").addEventListener("click", ()=>{
+    if(!monthsData){ toast("Данные ещё не загрузились"); return; }
+    const people = monthsData.people;
+    const rows = monthsData.months.map(m=>{
+      const o = { "Месяц": m.label };
+      people.forEach(p=>o[p] = m.byPerson[p] || "");
+      o["Всего"] = m.total;
+      return o;
+    });
+    const debtByName = Object.fromEntries(monthsData.debts.map(x=>[x.name, x.sum]));
+    const debtRow = { "Месяц": "ДОЛГ (не выплачено)" };
+    people.forEach(p=>debtRow[p] = debtByName[p] || "");
+    debtRow["Всего"] = monthsData.totals.debt;
+    rows.push(debtRow);
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "По месяцам");
+    XLSX.writeFile(wb, `зарплата_по_месяцам_${new Date().toISOString().slice(0,10)}.xlsx`);
+  });
+
   // ---------- Все работы: список с артикулами и разнесением по людям ----------
   let workStatusFilter = "";
   let workRows = [];
@@ -5050,12 +5167,16 @@
   async function openPayEntries(employeeId){
     payEntriesEmployee = employeeId;
     payEntriesFilter = "";
+    payEntriesMonth = null;
     document.getElementById("payEntriesOverlay").classList.add("show");
     await renderPayEntries();
   }
+  let payEntriesMonth = null;
   async function renderPayEntries(){
-    const emp = (salarySummary?.employees || []).find(e=>e.employeeId === payEntriesEmployee);
-    document.getElementById("payEntriesTitle").textContent = "Начисления — " + (emp ? emp.name : "");
+    const emp = (salarySummary?.employees || []).find(e=>e.employeeId === payEntriesEmployee)
+      || employeesList.find(e=>e.id === payEntriesEmployee);
+    document.getElementById("payEntriesTitle").textContent = "Начисления — " + (emp ? emp.name : "")
+      + (payEntriesMonth ? ` · ${payEntriesMonth}` : "");
     const wrap = document.getElementById("payEntriesBody");
     wrap.innerHTML = `<div style="padding:14px; color:var(--ink-soft);">Загрузка...</div>`;
     document.getElementById("payEntriesFilters").innerHTML = [
@@ -5069,7 +5190,12 @@
       rows = await api(`/payroll/entries?employeeId=${encodeURIComponent(payEntriesEmployee)}` + (payEntriesFilter ? `&status=${payEntriesFilter}` : ""));
     }catch(e){ wrap.innerHTML = `<div style="padding:14px; color:var(--red);">${esc(e.message)}</div>`; return; }
 
+    // Если пришли по клику из месяца — оставляем только его работы
+    if(payEntriesMonth){
+      rows = rows.filter(e=>String(e.paidAt || e.acceptedAt || e.createdAt || "").slice(0,7) === payEntriesMonth);
+    }
     if(!rows.length){ wrap.innerHTML = `<div style="padding:18px; text-align:center; color:var(--ink-soft);">Начислений нет</div>`; return; }
+    const monthSum = rows.reduce((s,e)=>s + e.amount, 0);
     wrap.innerHTML = `<table style="width:100%;"><thead><tr>
         <th>Работа</th><th>Откуда</th><th class="num">Кол-во</th><th class="num">Расценка</th><th class="num">Сумма</th><th>Статус</th><th></th>
       </tr></thead><tbody>
@@ -5084,7 +5210,9 @@
           ${e.status === "pending" ? `<button class="btn amber" style="padding:3px 9px; font-size:11.5px;" data-accept="${esc(e.id)}">Работа принята</button>` : ""}
           ${e.status !== "paid" && e.status !== "cancelled" ? `<button class="btn secondary" style="padding:3px 9px; font-size:11.5px;" data-cancel="${esc(e.id)}">✕</button>` : ""}
         </td>
-      </tr>`).join("")}</tbody></table>`;
+      </tr>`).join("")}</tbody>
+      <tfoot><tr><td colspan="4"></td><td class="num"><b>${money(monthSum)} ₸</b></td><td colspan="2"></td></tr></tfoot>
+      </table>`;
 
     wrap.querySelectorAll("[data-accept]").forEach(b=>b.addEventListener("click", ()=>acceptPayEntry(b.dataset.accept, renderPayEntries)));
     wrap.querySelectorAll("[data-cancel]").forEach(b=>b.addEventListener("click", async ()=>{
@@ -5102,7 +5230,10 @@
       loadSalary();
     }catch(e){ toast(e.message); }
   }
-  document.getElementById("payEntriesClose").addEventListener("click", ()=>document.getElementById("payEntriesOverlay").classList.remove("show"));
+  document.getElementById("payEntriesClose").addEventListener("click", ()=>{
+    document.getElementById("payEntriesOverlay").classList.remove("show");
+    payEntriesMonth = null; // сброс, иначе следующий заход покажет обрезанный список
+  });
 
   // ---------- Выплата ----------
   async function openPayout(employeeId){
@@ -5960,18 +6091,22 @@
     });
   });
 
+  // sort — по какому полю сортировать при клике на заголовок.
+  // Раньше порядок был жёстко по номеру, и найти нужное среди сотни заказов тяжело.
   const KCOL_DEFS = [
     {key:"photo", label:"Фото"},
-    {key:"num", label:"№"},
-    {key:"code", label:"Kaspi код"},
-    {key:"shop", label:"Магазин"},
-    {key:"name", label:"Наименование"},
-    {key:"courier", label:"Дата передачи курьеру"},
-    {key:"price", label:"Сумма"},
-    {key:"status", label:"Статус"},
-    {key:"delivery", label:"Доставка"},
+    {key:"num", label:"№", sort:"displayNumber", numeric:true},
+    {key:"code", label:"Kaspi код", sort:"kaspiCode"},
+    {key:"shop", label:"Магазин", sort:"shop"},
+    {key:"name", label:"Наименование", sort:"productName"},
+    {key:"courier", label:"Дата передачи курьеру", sort:"courierTransmissionPlanningDate"},
+    {key:"price", label:"Сумма", sort:"totalPrice", numeric:true},
+    {key:"status", label:"Статус", sort:"stage"},
+    {key:"delivery", label:"Доставка", sort:"deliveryState"},
     {key:"waybill", label:"Накладная"}
   ];
+  let kaspiSortKey = localStorage.getItem("kaspiSortKey") || "displayNumber";
+  let kaspiSortDir = Number(localStorage.getItem("kaspiSortDir")) || 1;
 
   // Карточки-показатели вверху "Заказов" — по образцу референса: активные,
   // нужно собрать (предзаказ+упаковка), передано, доставлено/завершено
@@ -6082,6 +6217,8 @@
     if(!catalogItems.length){ try{ catalogItems = await api("/catalog"); }catch(e){} }
 
     kaspiOrders.forEach(o=>{ o.stage = classifyStage(o); });
+    // Начисления нужны, чтобы в выгрузке были исполнитель и статус оплаты
+    try{ window.__payrollByOrder = (await api("/payroll/entries")).filter(e=>e.orderId); }catch(e){ window.__payrollByOrder = []; }
     renderKaspiStatCards();
 
     // Фильтр по магазинам — чекбоксы, можно выбрать 1, 2 или все сразу
@@ -6178,7 +6315,21 @@
 
     // заголовок таблицы по видимым колонкам
     const cols = KCOL_DEFS.filter(c=>kaspiVisibleCols[c.key]);
-    document.getElementById("kaspiOrdersHead").innerHTML = `<tr><th style="width:32px;"><input type="checkbox" class="o2-check" id="kaspiSelectAllCheckbox"></th>`+cols.map(c=>`<th>${c.label}</th>`).join("")+"<th></th></tr>";
+    document.getElementById("kaspiOrdersHead").innerHTML = `<tr><th style="width:32px;"><input type="checkbox" class="o2-check" id="kaspiSelectAllCheckbox"></th>`
+      + cols.map(c=>{
+          if(!c.sort) return `<th>${c.label}</th>`;
+          const active = kaspiSortKey === c.sort;
+          return `<th data-ksort="${c.sort}" style="cursor:pointer; user-select:none;">${c.label}${active ? (kaspiSortDir === 1 ? " ▲" : " ▼") : ""}</th>`;
+        }).join("") + "<th></th></tr>";
+    document.querySelectorAll("#kaspiOrdersHead th[data-ksort]").forEach(th=>{
+      th.addEventListener("click", ()=>{
+        const key = th.dataset.ksort;
+        if(kaspiSortKey === key) kaspiSortDir *= -1; else { kaspiSortKey = key; kaspiSortDir = 1; }
+        localStorage.setItem("kaspiSortKey", kaspiSortKey);
+        localStorage.setItem("kaspiSortDir", String(kaspiSortDir));
+        renderKaspiOrders(false);
+      });
+    });
 
     let list = kaspiOrders.slice().filter(o=>kaspiShopFilter.has(o.shop));
     if(kaspiStageMultiSelect.size) list = list.filter(o=>kaspiStageMultiSelect.has(o.stage));
@@ -6193,7 +6344,15 @@
         String(o.shop||"").toLowerCase().includes(q)
       );
     }
-    list.sort((a,b)=>(a.displayNumber||0)-(b.displayNumber||0));
+    const numericSort = (KCOL_DEFS.find(c=>c.sort === kaspiSortKey) || {}).numeric;
+    list.sort((a,b)=>{
+      let x = a[kaspiSortKey], y = b[kaspiSortKey];
+      if(numericSort) return ((Number(x)||0) - (Number(y)||0)) * kaspiSortDir;
+      x = String(x == null ? "" : x); y = String(y == null ? "" : y);
+      if(!x && y) return 1;          // пустые всегда внизу
+      if(x && !y) return -1;
+      return x.localeCompare(y, "ru", { numeric:true }) * kaspiSortDir;
+    });
 
     const body = document.getElementById("kaspiOrdersBody");
     const catalogPhotoByArticle = {};
@@ -6409,6 +6568,35 @@
       await renderKaspiOrders();
     };
   }
+
+  // Выгрузка в том же виде, что ваша таблица: № IN, Заказ, Компания,
+  // наим-е, сумма, кол-во, Статус, БезОплаты, Оплата
+  document.getElementById("btnExportOrdersXls").addEventListener("click", ()=>{
+    if(!kaspiOrders.length){ toast("Нет заказов для выгрузки"); return; }
+    const payByOrder = {};
+    (window.__payrollByOrder || []).forEach(e=>{ payByOrder[e.orderId] = e; });
+    const rows = kaspiOrders.map(o=>{
+      const pay = payByOrder[o.id];
+      return {
+        "№ IN": o.displayNumber || "",
+        "Заказ": o.kaspiCode || "",
+        "Компания": o.shop || "",
+        "наим-е": o.productName || "",
+        "Сумма": pay ? pay.amount : "",
+        "кол-во": o.qty || 1,
+        "Статус": stageDef(o.stage).label,
+        "БезОплаты": pay ? (pay.employeeName || "") : "",
+        "Оплата": pay ? (pay.status === "paid" ? "выплачено" : pay.status === "payable" ? "к выплате" : "отложено") : "",
+        "Дата заказа": (o.createdAt || "").slice(0,10),
+        "Сумма заказа": o.totalPrice || ""
+      };
+    });
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Заказы");
+    XLSX.writeFile(wb, `заказы_${new Date().toISOString().slice(0,10)}.xlsx`);
+    toast(`Выгружено заказов: ${rows.length}`);
+  });
 
   document.getElementById("btnPrintKaspiList").addEventListener("click", ()=>{
     let list = kaspiOrders.slice().filter(o=>kaspiShopFilter.has(o.shop));
