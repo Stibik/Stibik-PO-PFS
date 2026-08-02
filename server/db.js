@@ -538,6 +538,9 @@ export function ensureSchema() {
   // Метка переноса из старой системы: чтобы повторный импорт не задвоил деньги
   safeAddColumn("payroll_entries", "legacy_key TEXT");
   safeAddColumn("payroll_entries", "reported_done INTEGER DEFAULT 0");
+  // Вес наполнителя, который забивщик указывает при сдаче: по нему потом
+  // списывается общий запас наполнителя
+  safeAddColumn("payroll_entries", "reported_weight REAL");
   safeAddColumn("payroll_entries", "reported_at TEXT");
   safeAddColumn("payroll_entries", "reported_by TEXT");
 
@@ -581,6 +584,10 @@ export function ensureSchema() {
   safeAddColumn("production", "published INTEGER DEFAULT 0");
   safeAddColumn("production", "published_at TEXT");
   safeAddColumn("production", "published_by TEXT");
+  // Заказ можно отправить конкретному человеку, а не всем: тогда в мониторе
+  // его увидит только он. Пусто — значит забирает кто первый успел.
+  safeAddColumn("production", "published_for TEXT");
+  safeAddColumn("production", "manager_comment TEXT");
 
   // ── Богаче поля для "Остатков" ──
   safeAddColumn("warehouse_stock", "location TEXT");   // место хранения (свободный текст)
