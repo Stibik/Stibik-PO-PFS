@@ -4840,7 +4840,15 @@
           return -1;
         };
         const cNum = findCol("№ in","номер","№"), cCode = findCol("заказ"), cShop = findCol("компания","магазин");
-        const cName = findCol("наим"), cExec = findCol("исполнит"), cPay = findCol("оплат"), cQty = findCol("кол-во");
+        const cName = findCol("наим"), cQty = findCol("кол-во");
+        // Колонка исполнителя в разных версиях файла называлась по-разному:
+        // «Исполнитель», «БезОплаты», «Мастер». Ищем по всем вариантам.
+        const cExec = findCol("исполнит","безоплат","мастер","швея","кто дел");
+        // Колонка кода выплаты — та, что называется «Оплата», но НЕ «БезОплаты»
+        let cPay = -1;
+        for(let i=0;i<head.length;i++){
+          if(head[i].includes("оплат") && !head[i].includes("без") && i !== cExec){ cPay = i; break; }
+        }
         // Сумма — колонка без заголовка сразу после наименования
         let cAmount = -1;
         for(let i=0;i<head.length;i++){
@@ -4882,6 +4890,8 @@
         <div>Заказов не найдено: <b>${p.notMatched}</b></div>
         <div>Уже выплачено: <b>${money(p.paidSum)} ₸</b></div>
         <div>Останется долг: <b style="color:var(--red);">${money(p.debtSum)} ₸</b></div>
+        <div style="grid-column:1/-1;">Перекрыто возвратом или отменой: <b>${p.covered || 0}</b>
+          <span style="color:var(--ink-soft);">— работу не делали заново, зарплата не начисляется</span></div>
       </div>
       ${p.notMatched ? `<div style="font-size:11.5px; color:var(--ink-soft); margin-top:8px;">
         Не найдены, например: ${esc(p.unmatchedExamples.join(", "))}. Обычно это старые заказы, которых нет в системе — их номера просто не проставятся.</div>` : ""}
@@ -4894,8 +4904,9 @@
           <td>${e.exists ? "есть" : "будет заведён"}</td></tr>`).join("")}</tbody></table>
       </div>
       <div style="margin-top:12px; font-size:12.5px;">
-        <label style="display:block;"><input type="checkbox" id="legacyDoNumbers" checked> Проставить номера заказов</label>
+        <label style="display:block;"><input type="checkbox" id="legacyDoNumbers" checked> Проставить номера заказов из файла</label>
         <label style="display:block;"><input type="checkbox" id="legacyDoSalary" checked> Завести сотрудников и зарплату</label>
+        <label style="display:block;"><input type="checkbox" id="legacyDoRenumber" checked> Перенумеровать остальные заказы подряд (тестовые на 600 и 5000)</label>
       </div>`;
     document.getElementById("legacyActions").innerHTML =
       `<button class="btn amber" id="legacyApply">Залить в программу</button>`;
@@ -4911,13 +4922,28 @@
             salary: document.getElementById("legacyDoSalary").checked
           }
         })});
+        // Остальные заказы (тестовые и свежие) ставим в общий ряд после файла
+        let renumber = null;
+        if(document.getElementById("legacyDoRenumber").checked && r.maxNumberFromFile){
+          try{
+            renumber = await api("/legacy-import/renumber", {method:"POST", body: JSON.stringify({
+              startFrom: r.maxNumberFromFile + 1,
+              keepOrderIds: r.matchedOrderIds || []
+            })});
+          }catch(e){ toast("Номера из файла проставлены, но перенумерация не прошла: " + e.message); }
+        }
         document.getElementById("legacyBody").innerHTML = `<div style="font-size:13.5px; line-height:1.8;">
           <b style="color:var(--green);">Готово.</b><br>
           Номеров проставлено: <b>${r.numbersUpdated}</b><br>
+          ${renumber ? `Перенумеровано остальных: <b>${renumber.count}</b> (с ${r.maxNumberFromFile + 1}). Следующий свободный номер: <b>${renumber.nextFree}</b><br>` : ""}
           Сотрудников заведено: <b>${r.employeesCreated}</b><br>
           Начислений создано: <b>${r.entriesCreated}</b>${r.entriesSkipped ? ` (пропущено повторных: ${r.entriesSkipped})` : ""}<br>
+          Помечено «перекрыто возвратом»: <b>${r.coveredMarked || 0}</b><br>
           Выплат перенесено: <b>${r.payoutsCreated}</b> на ${money(r.paidTotal)} ₸<br>
           Осталось должны: <b style="color:var(--red);">${money(r.debtTotal)} ₸</b>
+          ${renumber ? `<div style="margin-top:10px; padding:9px 11px; background:#FEF3C7; border:1px solid #F59E0B; border-radius:8px; font-size:12.5px;">
+            Поставьте счётчики в «Kaspi: настройки» → «Нумерация заказов»: <b>${renumber.nextFree}</b> и <b>${renumber.nextFree + 1}</b> —
+            тогда новые заказы продолжат ряд без задвоения.</div>` : ""}
         </div>`;
         document.getElementById("legacyActions").innerHTML = "";
         loadSalary();
@@ -5440,9 +5466,9 @@
     if(!p.decision) return `<b style="color:var(--amber); font-size:12px;">Шаг 1 из 3</b>
       <div style="font-size:11.5px; color:var(--ink-soft);">решить, откуда берём, или отправить забивщикам</div>`;
     if(p.decision === "stock") return `<span style="color:#4B5563; font-size:12px;">Списано со склада</span>
-      <div style="font-size:11px; color:var(--ink-soft);">делать ничего не нужно</div>`;
+      <div style="font-size:11px; color:var(--ink-soft);">без оплаты — работа оплачена, когда шили на запас</div>`;
     if(p.decision === "return_offset") return `<span style="color:#7C3AED; font-size:12px;">Перекрыто возвратом</span>
-      <div style="font-size:11px; color:var(--ink-soft);">зарплата не начисляется</div>`;
+      <div style="font-size:11px; color:var(--ink-soft);">без оплаты — товар вернулся, заново не шили</div>`;
     if(!entry) return `<b style="color:var(--red); font-size:12px;">Начисления нет</b>
       <div style="font-size:11.5px; color:var(--ink-soft);">нажмите 👤, чтобы назначить заново</div>`;
     if(entry.status === "pending" && entry.reportedDone) return `<b style="color:#7C3AED; font-size:12px;">Шаг 2 из 3 · сдано</b>
@@ -5544,8 +5570,8 @@
                 ? `<button class="btn secondary prod-unpublish" data-prod-id="${esc(p.id)}" style="padding:4px 8px; font-size:11.5px;" title="Убрать из монитора">📢 в мониторе</button>`
                 : `<button class="btn secondary prod-publish" data-prod-id="${esc(p.id)}" style="padding:4px 8px; font-size:11.5px;" title="Отправить забивщикам">📢 Забивщикам</button>`}
               <button class="btn amber prod-quick-assign" data-prod-id="${esc(p.id)}" style="padding:4px 10px; font-size:11.5px;">${prodDefaultEmployeeName ? "Шьёт " + esc(prodDefaultEmployeeName) : "Назначить"}</button>
-              <button class="btn secondary prod-action-stock" data-prod-id="${esc(p.id)}" style="padding:4px 8px; font-size:11.5px;" title="Товар уже есть на складе">📦 Со склада</button>
-              <button class="btn secondary prod-action-return" data-prod-id="${esc(p.id)}" style="padding:4px 8px; font-size:11.5px;" title="Берём из вернувшегося заказа">↩️ Возврат</button>` : ""}
+              <button class="btn secondary prod-action-stock" data-prod-id="${esc(p.id)}" style="padding:4px 8px; font-size:11.5px;" title="Товар уже лежит на складе — зарплата не начисляется, она была уплачена при изготовлении">📦 Со склада · без оплаты</button>
+              <button class="btn secondary prod-action-return" data-prod-id="${esc(p.id)}" style="padding:4px 8px; font-size:11.5px;" title="Закрываем товаром с возврата или отмены — зарплата не начисляется">↩️ Возврат · без оплаты</button>` : ""}
             ${entry && entry.status === "pending" ? `<button class="btn amber prod-accept" data-entry-id="${esc(entry.id)}" style="padding:4px 12px; font-size:11.5px;">${entry.reportedDone ? "✓ Подтвердить" : "✓ Сделали"}</button>` : ""}
             ${entry && entry.status !== "paid" ? `<button class="btn secondary prod-reassign" data-entry-id="${esc(entry.id)}" style="padding:4px 8px; font-size:11.5px;" title="Передать другому">👤</button>` : ""}
           </td>
