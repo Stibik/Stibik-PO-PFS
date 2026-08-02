@@ -543,6 +543,30 @@ export function ensureSchema() {
   safeAddColumn("payroll_entries", "reported_weight REAL");
   safeAddColumn("payroll_entries", "reported_at TEXT");
   safeAddColumn("payroll_entries", "reported_by TEXT");
+  // Кто и когда разнёс работу на человека. Раньше в базе оставался только сам
+  // исполнитель, и спросить «а кто его вписал» было не у кого.
+  safeAddColumn("payroll_entries", "assigned_by TEXT");
+  safeAddColumn("payroll_entries", "assigned_at TEXT");
+  // Архив: строку не удаляем (на ней висят деньги и история), но из рабочих
+  // списков и из подсчёта долга она уходит
+  safeAddColumn("payroll_entries", "archived_at TEXT");
+  safeAddColumn("payroll_entries", "archived_by TEXT");
+
+  // Журнал правок по каждому начислению: кто, когда и что именно поменял.
+  // Отдельной таблицей, а не в общий аудит, чтобы историю строки можно было
+  // показать прямо в карточке работы.
+  db.exec(`CREATE TABLE IF NOT EXISTS payroll_entry_log (
+    id TEXT PRIMARY KEY,
+    entry_id TEXT NOT NULL,
+    at TEXT,
+    user TEXT,
+    action TEXT,        -- assign | edit | archive | unarchive | accept | cancel
+    field TEXT,         -- employee | qty | rate | comment | ...
+    old_value TEXT,
+    new_value TEXT,
+    comment TEXT
+  )`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_payroll_log_entry ON payroll_entry_log(entry_id, at)`);
 
   // Позицию можно убрать в архив: не удаляем (на неё ссылаются заказы и
   // начисления), но из списков и прайса она уходит
