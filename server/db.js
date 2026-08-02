@@ -544,6 +544,9 @@ export function ensureSchema() {
   // Позицию можно убрать в архив: не удаляем (на неё ссылаются заказы и
   // начисления), но из списков и прайса она уходит
   safeAddColumn("price_items", "is_archived INTEGER DEFAULT 0");
+  // GTIN — штрихкод товара (EAN-13). Нужен для маркировки и Kaspi,
+  // заполняется вручную, поэтому пустые надо видеть сразу
+  safeAddColumn("price_items", "gtin TEXT");
 
   safeAddColumn("price_items", "labor_rate REAL");     // РАСЦЕНКА ТРУДА — ставка за 1 шт, читает раздел "Зарплата"
   safeAddColumn("price_items", "material_cost REAL");  // Затраты на материал
