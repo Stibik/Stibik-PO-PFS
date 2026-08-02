@@ -7,6 +7,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import { db, logAudit } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
 
+// Постоянный диск определяем по тому, что путь лежит ВНЕ папки приложения.
+// Раньше проверялся только /var/data, а Render разрешает любую точку
+// монтирования — например /data, и программа зря пугала потерей данных.
+function isPersistent(p) {
+  const s = String(p || "");
+  if (!s.startsWith("/")) return false;
+  return !s.startsWith("/opt/render/project") && !s.startsWith(process.cwd()) && !s.startsWith("/tmp");
+}
+
 const router = express.Router();
 router.use(requireAuth);
 
@@ -186,7 +195,7 @@ router.post("/kaspi-price-to-retail", (req, res) => {
 // Нужна, когда фото «не грузятся» — сразу видно, дело в правах или в другом.
 router.get("/photos-status", (req, res) => {
   const dir = process.env.UPLOAD_DIR || path.join(__dirname, "..", "uploads");
-  const result = { dir, exists: false, writable: false, files: 0, sizeMb: 0, onPersistentDisk: dir.startsWith("/var/data") };
+  const result = { dir, exists: false, writable: false, files: 0, sizeMb: 0, onPersistentDisk: isPersistent(dir) };
   try {
     result.exists = fs.existsSync(dir);
     if (result.exists) {
@@ -274,9 +283,17 @@ router.delete("/:id", (req, res) => {
 // материалы/расценки/группы для многих товаров разом, загружаем обратно".
 // Сопоставление по article (SKU). НЕ создаёт новые позиции и не трогает
 // kaspi_* поля — только уже существующие строки и только ручные колонки.
-router.post("/bulk-update", (req, res) => {
+router.post("/bulk-update", async (req, res) => {
   const items = Array.isArray(req.body?.items) ? req.body.items : [];
   if (!items.length) return res.status(400).json({ error: "empty_items", message: "Список пуст" });
+
+  // Перед массовой загрузкой делаем снимок базы: если файл окажется кривым,
+  // можно откатиться одной кнопкой, а не восстанавливать вручную
+  let snapshot = null;
+  try {
+    const mod = await import("./backup.js");
+    if (typeof mod.makeSnapshot === "function") snapshot = mod.makeSnapshot("передЗагрузкойСправочника");
+  } catch (e) { /* модуль копий не залит — загрузку всё равно делаем */ }
 
   const map = {
     printName: "name", category: "type", subgroup: "subgroup",
@@ -306,14 +323,23 @@ router.post("/bulk-update", (req, res) => {
 
     const updates = [];
     const params = [];
+    // ГЛАВНОЕ ПРАВИЛО: пустая ячейка в файле ничего не стирает.
+    // Иначе выгрузил файл, заполнил один столбец, загрузил — и всё остальное
+    // обнулилось. Чтобы очистить поле, есть карточка товара.
     for (const [jsKey, col] of Object.entries(map)) {
-      if (Object.prototype.hasOwnProperty.call(it, jsKey)) {
-        updates.push(`${col} = ?`);
-        let v = it[jsKey];
-        if (numericFields.has(jsKey) && v !== null && v !== "") v = Number(v) || 0;
-        if (numericFields.has(jsKey) && (v === "" || v === undefined)) v = null;
-        params.push(v);
-      }
+      if (!Object.prototype.hasOwnProperty.call(it, jsKey)) continue;
+      let v = it[jsKey];
+      const isEmpty = v === null || v === undefined || String(v).trim() === "";
+      if (isEmpty) continue;
+      if (numericFields.has(jsKey)) v = Number(v) || 0;
+      updates.push(`${col} = ?`);
+      params.push(v);
+    }
+    // «В прайсе» — колонка с «да»/«нет», её пустое значение тоже не трогаем
+    if (Object.prototype.hasOwnProperty.call(it, "showInPrice") && it.showInPrice !== null && it.showInPrice !== undefined && String(it.showInPrice).trim() !== "") {
+      const yes = /^(да|yes|1|true|\+|показывать)$/i.test(String(it.showInPrice).trim());
+      updates.push("show_in_price = ?");
+      params.push(yes ? 1 : 0);
     }
     if (updates.length) {
       params.push(existing.id);
@@ -323,7 +349,7 @@ router.post("/bulk-update", (req, res) => {
   }
   logAudit({ user: req.session.username, action: "catalog_bulk_update",
              comment: `~${updated}, новых ${created}${notFound ? `, не найдено ${notFound}` : ""}` });
-  res.json({ updated, created, notFound });
+  res.json({ updated, created, notFound, snapshot });
 });
 
 export default router;
