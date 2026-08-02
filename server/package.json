@@ -1,6 +1,6 @@
 {
   "name": "order-tracker-server",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "description": "Учёт заказов и прайса — сервер",
   "main": "server.js",
   "type": "module",
@@ -16,6 +16,7 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "express-session": "^1.19.0",
+    "jsdom": "^30.0.1",
     "multer": "^2.2.0",
     "pdfkit": "^0.19.1"
   }
