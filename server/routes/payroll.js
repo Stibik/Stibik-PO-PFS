@@ -41,6 +41,7 @@ function entryToJson(e) {
     status: e.status,
     comment: e.comment,
     reportedDone: !!e.reported_done,
+    reportedWeight: e.reported_weight,
     reportedAt: e.reported_at,
     reportedBy: e.reported_by,
     acceptedAt: e.accepted_at,
