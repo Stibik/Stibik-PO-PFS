@@ -201,13 +201,17 @@ router.post("/apply", (req, res) => {
       const id = uid("pay");
       db.prepare(`INSERT INTO payroll_entries
         (id, employee_id, order_id, shop, article, product_name, qty, rate, amount, kind, status,
-         comment, accepted_at, accepted_by, created_by, created_at, legacy_key, reported_done)
-        VALUES (?,?,?,?,?,?,1,?,?,'order',?,?,?,?,?,?,?,0)`)
+         comment, accepted_at, accepted_by, created_by, created_at, legacy_key, reported_done,
+         assigned_by, assigned_at)
+        VALUES (?,?,?,?,?,?,1,?,?,'order',?,?,?,?,?,?,?,0,?,?)`)
         .run(id, employeeId, order ? order.id : null, str(raw.shop, 20) || (order ? order.shop : null),
              str(raw.article, 60), str(raw.name, 200), amount, amount,
              paid ? "paid" : "payable",
              `Перенос из старой системы${paid ? `, выплата ${paid.label}` : ""}`,
-             now, req.session.username, req.session.username, now, legacyKey);
+             now, req.session.username, req.session.username, now, legacyKey,
+             // Автор разноски для перенесённых строк — тот, кто делал перенос:
+             // иначе у половины базы графа «кто разнёс» осталась бы пустой
+             "перенос: " + req.session.username, now);
       // Дату выплаты проставляем из файла, иначе всё свалится в текущий месяц
       if (paidAt) db.prepare("UPDATE payroll_entries SET paid_at = ? WHERE id = ?").run(paidAt, id);
       stats.entriesCreated++;
