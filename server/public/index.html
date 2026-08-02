@@ -5490,8 +5490,8 @@
       </tr>`;
 
     document.getElementById("monthsBody").innerHTML = (rows || "") + totalRow + debtRow +
-      (d.totals.undistributed ? `<tr><td colspan="${people.length+2}" style="font-size:12px; color:var(--ink-soft);">
-        Не разнесено по людям: ${money(d.totals.undistributed)} ₸ — у этих работ не указан исполнитель</td></tr>` : "");
+      (d.totals.undistributedCount ? `<tr><td colspan="${people.length+2}" style="font-size:12px; color:var(--red);">
+        ⚠️ Без разноски: ${d.totals.undistributedCount} работ — не указан исполнитель. Это надо разнести (не долг).</td></tr>` : "");
 
     // Клик по сумме показывает, из каких работ она сложилась
     document.getElementById("monthsBody").querySelectorAll("[data-mcell]").forEach(a=>{
@@ -5539,7 +5539,7 @@
 
   const WORK_FILTERS = [
     { k:"",           l:"Все" },
-    { k:"unassigned", l:"Не разнесено" },
+    { k:"unassigned", l:"Без разноски" },
     { k:"pending",    l:"Отложено" },
     { k:"payable",    l:"К выплате" },
     { k:"paid",       l:"Выплачено" },
@@ -5627,7 +5627,7 @@
     const total = rows.reduce((s,r)=>s + r.amount, 0);
     const unassigned = rows.filter(r=>!r.employeeId || r.employeeIsService);
     document.getElementById("workCount").innerHTML = `Работ: <b>${rows.length}</b>` +
-      (unassigned.length ? ` · <span style="color:var(--red);">не разнесено: ${unassigned.length}</span>` : "");
+      (unassigned.length ? ` · <span style="color:var(--red);">без разноски: ${unassigned.length}</span>` : "");
     document.getElementById("workTotal").innerHTML = `Итого по расценкам: <b>${money(total)} ₸</b>`;
 
     const body = document.getElementById("workBody");
@@ -5648,7 +5648,7 @@
         : `<span style="color:var(--ink-soft); font-size:11.5px;">${r.kind === "stock" ? "на запас" : "без заказа"}</span>`;
       const who = (r.employeeName && !r.employeeIsService)
         ? esc(r.employeeName) + (r.assignedBy ? `<div style="font-size:10.5px; color:var(--ink-soft);">разнёс: ${esc(r.assignedBy)}</div>` : "")
-        : `<span style="color:var(--red); font-weight:600;" title="Работа не разнесена — непонятно, кому платить">не разнесено</span>` +
+        : `<span style="color:var(--red); font-weight:600;" title="Работа без разноски — не указан исполнитель">Без разноски</span>` +
           (r.employeeIsService ? `<div style="font-size:10.5px; color:var(--ink-soft);">из старой таблицы: ${esc(r.employeeName)}</div>` : "");
       return `
       <tr${r.archivedAt ? ' style="opacity:0.65;"' : ""}>
@@ -5671,7 +5671,7 @@
 
     // Итоги внизу — как в вашем файле: отдельно то, что ещё предстоит выплатить
     foot.innerHTML = `<tr style="font-weight:700;">
-        <td colspan="5" style="padding:10px 12px;">ИТОГО: ${rows.length} работ${unassigned.length ? `, не разнесено ${unassigned.length}` : ""}</td>
+        <td colspan="5" style="padding:10px 12px;">ИТОГО: ${rows.length} работ${unassigned.length ? `, без разноски ${unassigned.length}` : ""}</td>
         <td class="num">${money(rows.reduce((s,r)=>s + r.qty, 0))}</td>
         <td></td>
         <td class="num">${money(total)} ₸</td>
@@ -5774,7 +5774,7 @@
 
     if(!employeesList.length){ try{ employeesList = await api("/employees"); }catch(e){} }
     document.getElementById("workEdit_employee").innerHTML =
-      `<option value="">— не разнесено —</option>` +
+      `<option value="">— Без разноски —</option>` +
       employeesList.map(e=>`<option value="${esc(e.id)}" ${e.id===r.employeeId?"selected":""}>${esc(e.name)}</option>`).join("");
     document.getElementById("workEdit_qty").value = r.qty;
     document.getElementById("workEdit_rate").value = r.rate;
@@ -8579,12 +8579,16 @@
       ordersFilterStatus = "problem";
       renderOrders(false);
     }});
-    // Не разнесённые работы: сумма посчитана, но непонятно, кому платить
+    // Работы без разноски: у них не указан исполнитель. Напоминаем про ШТУКИ,
+    // а не про деньги — задача разнести работу по людям, а не «долг».
     try{
       const months = await api("/payroll/by-months");
-      if(months.totals && months.totals.undistributed > 0){
-        alerts.push({ text:`Не разнесено по людям: ${money(months.totals.undistributed)} ₸`, go:()=>{
+      if(months.totals && months.totals.undistributedCount > 0){
+        alerts.push({ text:`Без разноски: ${months.totals.undistributedCount} работ — укажите исполнителя`, go:()=>{
           document.querySelector('.tab-btn[data-tab="salary"]').click();
+          workStatusFilter = "unassigned";
+          workSelected.clear();
+          loadSalaryWorks();
         }});
       }
       const debtSum = (months.debts || []).reduce((s,d)=>s + d.sum, 0);
