@@ -1031,6 +1031,7 @@
     <section id="tab-users" style="display:none">
       <div class="toolbar">
         <button class="btn amber" id="btnAddUser">+ Новый пользователь</button>
+        <button class="btn secondary" id="btnDemoUsers" title="Швея и трое забивщиков — чтобы проверить работу с телефона">📱 Тестовые доступы</button>
       </div>
       <div class="tbl-wrap">
         <table>
@@ -1627,6 +1628,21 @@
     <div class="modal-actions">
       <div id="legacyActions"></div>
       <button class="btn secondary" id="legacyClose">Закрыть</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="demoUsersOverlay">
+  <div class="modal" style="max-width:560px;">
+    <h3>Тестовые доступы</h3>
+    <div style="font-size:12.5px; color:var(--ink-soft); margin-bottom:10px;">
+      Заведены швея и трое забивщиков. Пароли простые — это тестовые учётки,
+      после проверки их можно отключить кнопкой «Отключить» в списке пользователей.
+    </div>
+    <div id="demoUsersBody"></div>
+    <div class="modal-actions">
+      <div></div>
+      <button class="btn amber" id="demoUsersClose">Готово</button>
     </div>
   </div>
 </div>
@@ -5140,7 +5156,7 @@
         <td class="num">${money(r.qty)}</td>
         <td class="num">${r.needsRate ? `<span style="color:var(--red); font-size:11.5px;">не задана</span>` : money(r.rate)}</td>
         <td class="num"><b>${money(r.amount)} ₸</b></td>
-        <td>${esc(r.employeeName || "—")}</td>
+        <td>${r.employeeName ? esc(r.employeeName) : `<span style="color:var(--red); font-weight:600;" title="Работа не разнесена — непонятно, кому платить">не разнесено</span>`}</td>
         <td>${payBadge(r.status)}</td>
         <td style="white-space:nowrap;">
           ${r.status === "pending" ? `<button class="btn amber" style="padding:3px 10px; font-size:11.5px;" data-wacc="${esc(r.id)}">Принята</button>` : ""}
@@ -7750,6 +7766,20 @@
       ordersFilterStatus = "problem";
       renderOrders(false);
     }});
+    // Не разнесённые работы: сумма посчитана, но непонятно, кому платить
+    try{
+      const months = await api("/payroll/by-months");
+      if(months.totals && months.totals.undistributed > 0){
+        alerts.push({ text:`Не разнесено по людям: ${money(months.totals.undistributed)} ₸`, go:()=>{
+          document.querySelector('.tab-btn[data-tab="salary"]').click();
+        }});
+      }
+      const debtSum = (months.debts || []).reduce((s,d)=>s + d.sum, 0);
+      if(debtSum > 0) alerts.push({ text:`К выплате сотрудникам: ${money(debtSum)} ₸`, go:()=>{
+        document.querySelector('.tab-btn[data-tab="salary"]').click();
+      }});
+    }catch(e){ /* нет доступа к зарплате — пропускаем */ }
+
     try{
       const stats = await api("/china-purchases/stats");
       if(stats.counts.overdue) alerts.push({ text:`Просроченных закупок из Китая: ${stats.counts.overdue}`, go:()=>{
@@ -7906,6 +7936,7 @@
   }
   document.getElementById("btnChangePassword").addEventListener("click", ()=>openPasswordForm(false));
   document.getElementById("pw_cancel").addEventListener("click", ()=>document.getElementById("passwordOverlay").classList.remove("show"));
+  document.getElementById("demoUsersClose").addEventListener("click", ()=>document.getElementById("demoUsersOverlay").classList.remove("show"));
   document.getElementById("pw_save").addEventListener("click", async ()=>{
     const oldPassword = document.getElementById("pw_old").value;
     const newPassword = document.getElementById("pw_new").value;
@@ -8110,6 +8141,37 @@
       loadUsers();
     }catch(e){ document.getElementById("us_error").textContent = e.message; }
   });
+  // Тестовые доступы: чтобы проверить приложение с телефона от лица каждого,
+  // не заводя четверых руками и не придумывая пароли
+  document.getElementById("btnDemoUsers").addEventListener("click", async ()=>{
+    if(!confirm("Создать тестовые доступы: швея и трое забивщиков?\n\nЕсли они уже есть — пароли будут сброшены на простые.")) return;
+    try{
+      const r = await api("/auth/demo-users", {method:"POST"});
+      await loadUsers();
+      const link = location.origin;
+      const text = r.users.map(u=>`${u.role === "manager" ? "Швея" : "Забивщик"}: ${u.username} / ${u.password}`).join("\n");
+      document.getElementById("demoUsersBody").innerHTML = r.users.map(u=>`
+        <div style="display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--line);">
+          <div style="flex:1;">
+            <b>${esc(u.employee)}</b>
+            <div style="font-size:12px; color:var(--ink-soft);">логин <b>${esc(u.username)}</b> · пароль <b>${esc(u.password)}</b> · ${esc(u.status)}</div>
+          </div>
+          <a class="btn secondary" style="padding:4px 10px; font-size:11.5px; text-decoration:none;" target="_blank" rel="noopener"
+             href="https://wa.me/?text=${encodeURIComponent("Тест PFS\nСсылка: " + link + "\nЛогин: " + u.username + "\nПароль: " + u.password)}">WhatsApp</a>
+        </div>`).join("") + `
+        <div style="margin-top:12px; font-size:12.5px; color:var(--ink-soft);">
+          Откройте ${esc(link)} на телефоне и войдите любым логином. Забивщик видит только «Мои заказы»,
+          швея — производство и задачи. Чтобы переключиться, выйдите через меню аккаунта.
+        </div>
+        <button class="btn secondary" id="demoCopy" style="margin-top:10px; padding:5px 12px; font-size:12px;">Скопировать все логины</button>`;
+      document.getElementById("demoCopy").addEventListener("click", async ()=>{
+        try{ await navigator.clipboard.writeText(link + "\n\n" + text); toast("Скопировано"); }
+        catch(e){ toast("Не удалось скопировать"); }
+      });
+      document.getElementById("demoUsersOverlay").classList.add("show");
+    }catch(e){ toast("Не получилось: " + e.message); }
+  });
+
   document.getElementById("btnAddUser").addEventListener("click", async ()=>{
     if(!permMeta){ try{ permMeta = await api("/auth/permissions-meta"); }catch(e){} }
     if(!employeesList.length){ try{ employeesList = await api("/employees"); }catch(e){} }
