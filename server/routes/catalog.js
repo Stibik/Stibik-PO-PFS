@@ -46,6 +46,7 @@ function rowToCatalogItem(row) {
     syncedAt: row.kaspi_synced_at,
     showInPrice: row.show_in_price !== 0, // по умолчанию true (в базе default 1)
     isArchived: row.is_archived === 1,
+    gtin: row.gtin,
     sortOrder: row.sort_order || 0,
     createdAt: row.created_at
   };
@@ -224,7 +225,7 @@ router.put("/:id", (req, res) => {
   const map = {
     printName: "name", category: "type", subgroup: "subgroup",
     material: "material", color: "color", height: "height", diameter: "diameter",
-    weight: "weight", mount: "mount", note: "note", photo: "photo",
+    weight: "weight", mount: "mount", note: "note", photo: "photo", gtin: "gtin",
     laborRate: "labor_rate", materialCost: "material_cost", miscCost: "misc_cost", ragsCost: "rags_cost",
     costPrice: "cost", retailPrice: "retail", sortOrder: "sort_order"
   };
@@ -280,7 +281,7 @@ router.post("/bulk-update", (req, res) => {
   const map = {
     printName: "name", category: "type", subgroup: "subgroup",
     material: "material", color: "color", height: "height", diameter: "diameter",
-    weight: "weight", mount: "mount", note: "note",
+    weight: "weight", mount: "mount", note: "note", gtin: "gtin",
     laborRate: "labor_rate", materialCost: "material_cost", miscCost: "misc_cost", ragsCost: "rags_cost",
     costPrice: "cost", retailPrice: "retail"
   };
