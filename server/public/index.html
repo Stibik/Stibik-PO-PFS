@@ -354,6 +354,11 @@
 </div>
 
 <div id="app" style="display:none">
+  <div id="impersonateBar" style="display:none; background:#7C3AED; color:#fff; padding:8px 16px; font-size:13px;
+       align-items:center; gap:12px; flex-wrap:wrap;">
+    <span>🧪 Вы смотрите приложение как <b id="impersonateWho"></b></span>
+    <button class="btn amber" id="btnSwitchBack" style="padding:4px 12px; font-size:12.5px; margin-left:auto;">Вернуться в админа</button>
+  </div>
   <header class="top">
     <div class="hdr-left">
       <div class="hdr-logo">PFS</div>
@@ -397,6 +402,7 @@
     <button class="tab-btn" data-tab="tasks">Задачи</button>
     <button class="tab-btn" data-tab="monitor">Мои заказы</button>
     <button class="tab-btn" data-tab="stats">Статистика</button>
+    <button class="tab-btn" data-tab="roletest" id="tabRoleTest">🧪 Тест ролей</button>
     <button class="tab-btn" data-tab="kaspi">Kaspi: настройки</button>
     <button class="tab-btn admin-only" data-tab="audit">Журнал</button>
     <button class="tab-btn admin-only" data-tab="users">Пользователи</button>
@@ -967,6 +973,29 @@
         <span id="mnCount" style="font-size:12.5px; color:var(--ink-soft);"></span>
       </div>
       <div id="mnList"></div>
+    </section>
+    <section id="tab-roletest" style="display:none">
+      <style>
+        #tab-roletest .rt-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:12px;}
+        #tab-roletest .rt-card{border:1px solid var(--line); border-radius:12px; padding:14px; background:#fff; text-align:left;
+          cursor:pointer; font-size:14px; transition:border-color .15s, transform .05s;}
+        #tab-roletest .rt-card:hover{border-color:var(--amber);}
+        #tab-roletest .rt-card:active{transform:scale(.99);}
+        #tab-roletest .rt-card.current{border-color:var(--green); background:#F0FDF4;}
+        #tab-roletest .rt-role{font-size:12px; color:var(--ink-soft); margin-top:3px;}
+        @media (max-width:700px){
+          #tab-roletest .rt-grid{grid-template-columns:1fr;}
+          #tab-roletest .rt-card{padding:18px; font-size:16px;}
+        }
+      </style>
+      <div class="panel" style="background:#F7FAFF; border-color:#CFE0F5;">
+        <b style="font-size:14px;">Быстрое переключение ролей</b>
+        <div style="font-size:12.5px; color:var(--ink-soft); margin-top:4px;">
+          Нажмите на человека — приложение сразу покажется его глазами, без выхода и пароля.
+          Вернуться в администратора можно в любой момент кнопкой сверху. Всё переключения пишутся в Журнал.
+        </div>
+      </div>
+      <div class="rt-grid" id="rtList"></div>
     </section>
     <section id="tab-stats" style="display:none">
       <style>
@@ -6387,7 +6416,7 @@
     b.addEventListener("click", ()=>{
       document.querySelectorAll(".tab-btn").forEach(x=>x.classList.remove("active"));
       b.classList.add("active");
-      ["orders","kaspiOrders","claims","price","catalog","salary","production","warehouse","tasks","monitor","stats","kaspi","audit","users"].forEach(t=> document.getElementById("tab-"+t).style.display = (t===b.dataset.tab)?"":"none");
+      ["orders","kaspiOrders","claims","price","catalog","salary","production","warehouse","tasks","monitor","stats","roletest","kaspi","audit","users"].forEach(t=> document.getElementById("tab-"+t).style.display = (t===b.dataset.tab)?"":"none");
       if(b.dataset.tab === "orders") applyContour();
       if(b.dataset.tab === "catalog") loadCatalog();
       if(b.dataset.tab === "price") { loadPriceCompanies().catch(()=>{}).then(loadPriceTab); }
@@ -6397,6 +6426,7 @@
       if(b.dataset.tab === "tasks") loadTasks();
       if(b.dataset.tab === "monitor") loadMonitor();
       if(b.dataset.tab === "stats") loadStats();
+      if(b.dataset.tab === "roletest") loadRoleTest();
       if(b.dataset.tab === "kaspiOrders") renderKaspiOrders();
       if(b.dataset.tab === "claims") { if(!kaspiOrders.length) renderKaspiOrders().then(renderClaims); else renderClaims(); }
       if(b.dataset.tab === "kaspi") { loadKaspiSettings(); loadOrderNumbering(); }
@@ -8361,6 +8391,57 @@
     }finally{ btn.disabled = false; }
   });
 
+  // ---------- Тестовое переключение ролей ----------
+  // Чтобы проверить с телефона, как всё выглядит у швеи и забивщиков,
+  // не выходя из системы и не вводя пароли по кругу.
+  const RT_ROLE_HINT = {
+    admin: "видит всё",
+    manager: "заказы, производство, зарплата",
+    warehouse: "приход и заказы",
+    stitcher: "только «Мои заказы»"
+  };
+
+  async function loadRoleTest(){
+    const wrap = document.getElementById("rtList");
+    wrap.innerHTML = `<div class="panel" style="color:var(--ink-soft);">Загрузка...</div>`;
+    try{
+      const rows = await api("/auth/switch-targets");
+      wrap.innerHTML = rows.map(u=>`
+        <button class="rt-card ${u.current ? "current" : ""}" data-rt="${esc(u.username)}" ${u.current ? "disabled" : ""}>
+          <b>${esc(u.employeeName || u.username)}</b>
+          <div class="rt-role">${esc(u.roleLabel)} · ${esc(RT_ROLE_HINT[u.role] || "")}</div>
+          <div class="rt-role">логин ${esc(u.username)}${u.current ? " · вы сейчас здесь" : ""}</div>
+        </button>`).join("");
+      wrap.querySelectorAll("[data-rt]").forEach(b=>b.addEventListener("click", ()=>switchRole(b.dataset.rt)));
+    }catch(e){
+      wrap.innerHTML = `<div class="panel" style="color:var(--red);">Не получилось: ${esc(e.message)}</div>`;
+    }
+  }
+
+  async function switchRole(username){
+    try{
+      await api("/auth/switch/" + encodeURIComponent(username), {method:"POST"});
+      toast("Переключаюсь...");
+      setTimeout(()=>location.reload(), 400);
+    }catch(e){ toast("Не получилось: " + e.message); }
+  }
+
+  document.getElementById("btnSwitchBack").addEventListener("click", async ()=>{
+    try{
+      await api("/auth/switch-back", {method:"POST"});
+      setTimeout(()=>location.reload(), 300);
+    }catch(e){ toast("Не получилось: " + e.message); }
+  });
+
+  function applyImpersonation(who){
+    const bar = document.getElementById("impersonateBar");
+    bar.style.display = who ? "flex" : "none";
+    document.getElementById("impersonateWho").textContent = document.getElementById("whoami").textContent || "";
+    // Вкладка теста доступна и во время примерки — иначе не переключиться дальше
+    const tab = document.getElementById("tabRoleTest");
+    if(tab) tab.style.display = (myRole === "admin" || who) ? "" : "none";
+  }
+
   // ---------- Смена пароля ----------
   let passwordForced = false;
   function openPasswordForm(forced){
@@ -8411,6 +8492,13 @@
     });
     let firstVisible = null;
     document.querySelectorAll(".tab-btn").forEach(btn=>{
+      // Вкладку теста показываем администратору и тому, кто сейчас в чужой роли
+      if(btn.dataset.tab === "roletest"){
+        const show = myRole === "admin" || window.__impersonating;
+        btn.style.display = show ? "" : "none";
+        if(show && !firstVisible) firstVisible = firstVisible;
+        return;
+      }
       const perm = TAB_PERMISSION[btn.dataset.tab];
       const allowed = !perm || can(perm);
       btn.style.display = allowed ? "" : "none";
@@ -8419,6 +8507,7 @@
     // Если открытая вкладка стала недоступной — переключаемся на первую разрешённую
     const active = document.querySelector(".tab-btn.active");
     if(firstVisible && (!active || active.style.display === "none")) firstVisible.click();
+    applyImpersonation(window.__impersonating);
   }
 
   // ---------- Журнал действий (админ) ----------
@@ -8625,6 +8714,7 @@
       myRole = me.role;
       myPermissions = me.permissions || [];
       myEmployeeId = me.employeeId || null;
+      window.__impersonating = me.impersonating || null;
       if(me.mustChangePassword) setTimeout(()=>openPasswordForm(true), 400);
       setCurrentUser(me.username, me.role, me.roleLabel);
       applyRoleUI();
