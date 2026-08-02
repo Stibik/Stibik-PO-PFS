@@ -854,7 +854,9 @@
           <input type="text" id="workSearch" placeholder="Артикул или название..." style="flex:1; min-width:200px;">
           <select id="workEmployee" style="min-width:160px;"><option value="">Все сотрудники</option></select>
           <select id="workShop" style="min-width:140px;"><option value="">Все магазины</option></select>
+          <select id="workMonth" style="min-width:150px;"><option value="">Все месяцы</option></select>
           <button class="btn secondary" id="workReset" style="padding:5px 12px; font-size:12px;">Сбросить</button>
+          <button class="btn secondary" id="workExport" style="padding:5px 12px; font-size:12px;">Выгрузить в Excel</button>
         </div>
         <div class="panel-divider"></div>
         <div class="pill-row" id="workStatusFilters"></div>
@@ -4541,6 +4543,8 @@
           ${i.orderNumber ? `<div class="mn-order">№${esc(i.orderNumber)}${i.shop ? ` <span class="mn-shop">${esc(i.shop)}</span>` : ""}</div>` : ""}
           <div class="mn-title">${esc(i.productName || i.article || "—")}</div>
           <div class="mn-meta">${esc(i.article || "")} · ${money(i.qty)} шт${i.reportedWeight ? ` · вес ${money(i.reportedWeight)} кг` : ""}</div>
+          ${i.forMe ? `<div class="mn-meta"><span style="color:#fff; background:#7C3AED; padding:2px 9px; border-radius:20px; font-weight:600;">лично вам</span></div>` : ""}
+          ${i.managerComment ? `<div style="margin-top:6px; background:#FEF3C7; border:1px solid #F59E0B; border-radius:8px; padding:7px 10px; font-size:12.5px;">💬 ${esc(i.managerComment)}</div>` : ""}
           <div class="mn-meta"><span style="color:${s.color}; background:${s.bg}; padding:2px 9px; border-radius:20px; font-weight:600;">${s.label}</span></div>
         </div>
         <div style="text-align:right;">
@@ -5477,6 +5481,17 @@
     let rows = workRows;
     if(prevShop === "__stock__") rows = rows.filter(r=>r.kind === "stock");
 
+    // Месяц берём по дате выплаты, а для невыплаченных — по дате работы
+    const monthOf = (r)=>String(r.paidAt || r.acceptedAt || r.createdAt || "").slice(0,7);
+    const MN = ["январь","февраль","март","апрель","май","июнь","июль","август","сентябрь","октябрь","ноябрь","декабрь"];
+    const monthSel = document.getElementById("workMonth");
+    const allMonths = Array.from(new Set(workRows.map(monthOf).filter(Boolean))).sort().reverse();
+    const prevMonth = monthSel.value;
+    monthSel.innerHTML = `<option value="">Все месяцы</option>` +
+      allMonths.map(m=>`<option value="${m}">${MN[parseInt(m.slice(5,7),10)-1] || m} ${m.slice(0,4)}</option>`).join("");
+    monthSel.value = prevMonth;
+    if(prevMonth) rows = rows.filter(r=>monthOf(r) === prevMonth);
+
     const total = rows.reduce((s,r)=>s + r.amount, 0);
     document.getElementById("workCount").textContent = `Работ: ${rows.length}`;
     document.getElementById("workTotal").innerHTML = `Итого по расценкам: <b>${money(total)} ₸</b>`;
@@ -5503,6 +5518,7 @@
         </td>
       </tr>`).join("");
 
+    window.__workRowsShown = rows;
     body.querySelectorAll("[data-wacc]").forEach(b=>b.addEventListener("click", ()=>acceptPayEntry(b.dataset.wacc, loadSalaryWorks)));
     body.querySelectorAll("[data-wre]").forEach(b=>b.addEventListener("click", ()=>reassignEntry(b.dataset.wre, async ()=>{ await loadSalaryWorks(); loadSalary(); })));
   }
@@ -5513,10 +5529,35 @@
       if(id === "workShop" && el.value === "__stock__") renderSalaryWorks(); else loadSalaryWorks();
     });
   });
+  document.getElementById("workMonth").addEventListener("change", renderSalaryWorks);
+  // Выгрузка в том же виде, что ваш файл, — чтобы можно было сверить построчно
+  document.getElementById("workExport").addEventListener("click", ()=>{
+    const rows = window.__workRowsShown || [];
+    if(!rows.length){ toast("Нечего выгружать"); return; }
+    const STATUS = { pending:"отложено", payable:"к выплате", paid:"выплачено" };
+    const data = rows.map(r=>({
+      "Артикул": r.article || "",
+      "наим-е": r.productName || "",
+      "Сумма": r.amount,
+      "кол-во": r.qty,
+      "Вес, кг": r.reportedWeight || "",
+      "Исполнитель": r.employeeName || "не разнесено",
+      "Оплата": r.status === "paid" ? String(r.paidAt || "").slice(0,10) : STATUS[r.status] || r.status,
+      "Откуда": r.kind === "stock" ? "на запас" : (r.shop || "заказ"),
+      "Дата работы": String(r.createdAt || "").slice(0,10)
+    }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Работы");
+    XLSX.writeFile(wb, `работы_${new Date().toISOString().slice(0,10)}.xlsx`);
+    toast(`Выгружено строк: ${data.length}`);
+  });
+
   document.getElementById("workReset").addEventListener("click", ()=>{
     document.getElementById("workSearch").value = "";
     document.getElementById("workEmployee").value = "";
     document.getElementById("workShop").value = "";
+    document.getElementById("workMonth").value = "";
     workStatusFilter = "";
     loadSalaryWorks();
   });
@@ -6074,9 +6115,11 @@
       });
     }
     wrap.querySelectorAll(".prod-publish").forEach(b=>b.addEventListener("click", async ()=>{
+      const target = await askPublishTarget();
+      if(!target) return;
       try{
-        await api("/dispatch/publish", {method:"POST", body: JSON.stringify({ids:[b.dataset.prodId]})});
-        toast("Отправлено забивщикам — появится у них в мониторе");
+        const r = await api("/dispatch/publish", {method:"POST", body: JSON.stringify({ids:[b.dataset.prodId], ...target})});
+        toast(`Отправлено: ${r.forName || "всем"}`);
         loadProduction();
       }catch(e){ toast("Не получилось: " + e.message); }
     }));
@@ -6129,6 +6172,18 @@
       employeesList.map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join("");
     sel.value = prev || prodDefaultEmployeeId || "";
     document.getElementById("prodBulkCount").textContent = `Выбрано: ${n}`;
+  }
+
+  // Кому отправляем и что передать на словах. Раньше уходило всем и молча.
+  async function askPublishTarget(){
+    if(!employeesList.length){ try{ employeesList = await api("/employees"); }catch(e){} }
+    const names = employeesList.map((e,i)=>`${i+1}. ${e.name}`).join("\n");
+    const who = prompt(`Кому отправить?\n\n0 — всем, заберёт кто первый\n${names}\n\nВведите номер:`, "0");
+    if(who === null) return null;
+    const idx = parseInt(who, 10);
+    const employeeId = idx > 0 && idx <= employeesList.length ? employeesList[idx-1].id : null;
+    const comment = prompt("Комментарий забивщику (можно оставить пустым):", "") || "";
+    return { employeeId, comment };
   }
 
   async function reassignEntry(entryId, after){
@@ -6237,11 +6292,13 @@
   document.getElementById("prodBulkPublish").addEventListener("click", async ()=>{
     const ids = Array.from(selectedProdIds);
     if(!ids.length) return;
+    const target = await askPublishTarget();
+    if(!target) return;
     try{
-      const r = await api("/dispatch/publish", {method:"POST", body: JSON.stringify({ids})});
+      const r = await api("/dispatch/publish", {method:"POST", body: JSON.stringify({ids, ...target})});
       selectedProdIds.clear();
       await loadProduction();
-      toast(`Отправлено забивщикам: ${r.published}${r.skipped ? `, пропущено уже решённых: ${r.skipped}` : ""}`);
+      toast(`Отправлено (${r.forName || "всем"}): ${r.published}${r.skipped ? `, пропущено: ${r.skipped}` : ""}`);
     }catch(e){ toast("Не получилось: " + e.message); }
   });
   document.getElementById("prodBulkStock").addEventListener("click", ()=>prodBulkResolve("stock", null, "Списать с остатков"));
