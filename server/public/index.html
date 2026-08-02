@@ -649,7 +649,7 @@
       </div>
       <div class="tbl-wrap">
         <table>
-          <thead><tr><th></th><th>SKU</th><th>Название (Kaspi)</th><th>Название для печати</th><th>Группа</th><th>GTIN</th><th>Розница</th><th title="Показывать товар в прайс-листе">В прайсе</th><th title="Чего не хватает для работы">Готовность</th><th></th></tr></thead>
+          <thead><tr><th></th><th>SKU</th><th>Название (Kaspi)</th><th>Название для печати</th><th>Группа</th><th>GTIN</th><th class="num">Розница</th><th class="num" title="Розница минус все затраты">Маржа</th><th title="Показывать товар в прайс-листе">В прайсе</th><th title="Чего не хватает для работы">Готовность</th><th></th></tr></thead>
           <tbody id="catalogBody"><tr><td colspan="9" style="text-align:center;color:var(--ink-soft);padding:20px;">Справочник пуст — нажмите «Импорт из Kaspi», чтобы загрузить файл выгрузки активных товаров</td></tr></tbody>
         </table>
       </div>
@@ -695,8 +695,11 @@
           <div><label>Затраты на материал, ₸</label><input id="ci_materialCost" type="number" step="1"></div>
           <div><label>Прочие затраты, ₸</label><input id="ci_miscCost" type="number" step="1"></div>
           <div><label>Ветошь, ₸</label><input id="ci_ragsCost" type="number" step="1"></div>
-          <div><label>Себестоимость итого, ₸</label><input id="ci_costPrice" type="number" step="1"></div>
+          <div><label>Доставка, ₸ за шт</label><input id="ci_deliveryCost" type="number" step="1"></div>
+          <div><label>Налог и комиссия, % от розницы</label><input id="ci_taxPercent" type="number" step="0.1" placeholder="напр. 12"></div>
           <div><label>Розница, ₸</label><input id="ci_retailPrice" type="number" step="1"></div>
+          <div class="full" id="ci_costBox" style="background:#F7FAFF; border:1px solid #CFE0F5; border-radius:8px; padding:10px 12px;"></div>
+          <div><label>Себестоимость итого, ₸ <span style="color:var(--ink-soft); font-weight:400;">(считается сама)</span></label><input id="ci_costPrice" type="number" step="0.01"></div>
           <div class="full"><label>Заметка</label><textarea id="ci_note" style="width:100%"></textarea></div>
         </div>
         <div class="modal-actions">
@@ -1936,9 +1939,13 @@
       "В прайсе": it.showInPrice === false ? "нет" : "да",
       "Расценка труда": it.laborRate??"",
       "Затраты на материал": it.materialCost??"",
+      "Доставка": it.deliveryCost??"",
+      "Налог %": it.taxPercent??"",
       "Прочие затраты": it.miscCost??"",
       "Ветошь": it.ragsCost??"",
       "Себестоимость": it.costPrice??"",
+      "Маржа тг": (()=>{ const m = catalogMargin(it); return m ? Math.round(m.sum) : ""; })(),
+      "Маржа %": (()=>{ const m = catalogMargin(it); return m ? m.pct : ""; })(),
       "Розница": it.retailPrice??"",
       "Заметка": it.note||"",
       "Цена Kaspi (справка)": it.kaspiPrice||"",
@@ -1982,6 +1989,8 @@
           showInPrice: r["В прайсе"] === undefined ? null : String(r["В прайсе"]||"").trim(),
           laborRate: numOrNull(r["Расценка труда"]),
           materialCost: numOrNull(r["Затраты на материал"]),
+          deliveryCost: numOrNull(r["Доставка"]),
+          taxPercent: numOrNull(r["Налог %"]),
           miscCost: numOrNull(r["Прочие затраты"]),
           ragsCost: numOrNull(r["Ветошь"]),
           costPrice: numOrNull(r["Себестоимость"]),
@@ -2075,6 +2084,35 @@
       return v === null || v === undefined || v === "" || v === 0;
     });
   }
+  // Маржа считается по тем же правилам, что в карточке: розница минус
+  // себестоимость. Низкая — подсвечиваем строку, чтобы не проглядеть.
+  const MARGIN_LOW = 15, MARGIN_WARN = 25;
+  function catalogMargin(it){
+    const retail = Number(it.retailPrice) || 0;
+    if(!retail) return null;
+    let cost = Number(it.costPrice) || 0;
+    if(!cost){
+      cost = ["materialCost","miscCost","ragsCost","laborRate","deliveryCost"].reduce((s,k)=>s + (Number(it[k])||0), 0)
+        + retail * (Number(it.taxPercent)||0) / 100;
+    }
+    if(!cost) return null;
+    const sum = retail - cost;
+    return { sum, pct: Math.round(sum / retail * 100) };
+  }
+  function catalogMarginCell(it){
+    const m = catalogMargin(it);
+    if(!m) return `<span style="color:var(--ink-soft);">—</span>`;
+    const color = m.pct < MARGIN_LOW ? "var(--red)" : m.pct < MARGIN_WARN ? "#B45309" : "var(--green)";
+    return `<span style="color:${color}; font-weight:600;" title="Розница минус все затраты">${money(m.sum)} ₸<div style="font-size:11px;">${m.pct}%</div></span>`;
+  }
+  function catalogRowStyle(it){
+    const m = catalogMargin(it);
+    if(!m) return "";
+    if(m.pct < MARGIN_LOW) return "background:#FDF3F1;";
+    if(m.pct < MARGIN_WARN) return "background:#FFFBEB;";
+    return "";
+  }
+
   function catalogReadiness(it){
     const miss = catalogMissing(it);
     if(!miss.length) return `<span style="color:var(--green);" title="Всё заполнено">✓ готов</span>`;
@@ -2144,7 +2182,7 @@
       return;
     }
     body.innerHTML = pageItems.map((it)=>`
-      <tr style="${it.isArchived ? "opacity:.5;" : ""}">
+      <tr style="${it.isArchived ? "opacity:.5;" : ""}${catalogRowStyle(it)}">
         <td>${it.photo?`<img class="thumb" src="${esc(it.photo)}">`:`<div class="thumb-empty">—</div>`}</td>
         <td class="mono" style="font-size:11.5px;">${esc(it.article)}${it.isArchived ? `<div style="font-size:10px; color:var(--ink-soft);">в архиве</div>` : ""}</td>
         <td>${esc(it.kaspiName||"—")}</td>
@@ -2152,6 +2190,7 @@
         <td>${esc(it.category||"—")}</td>
         <td>${it.gtin ? `<span class="mono" style="font-size:11.5px;">${esc(it.gtin)}</span>` : `<span title="GTIN не заполнен" style="color:var(--red);">●</span>`}</td>
         <td class="num">${it.retailPrice ? money(it.retailPrice)+" ₸" : `<span style="color:var(--red);">●</span>`}</td>
+        <td class="num">${catalogMarginCell(it)}</td>
         <td><label style="cursor:pointer;" title="Показывать в прайсе"><input type="checkbox" class="cat-inprice" data-id="${esc(it.id)}" ${it.showInPrice !== false ? "checked" : ""}></label></td>
         <td>${catalogReadiness(it)}</td>
         <td style="white-space:nowrap;">
@@ -2433,11 +2472,14 @@
     document.getElementById("ci_materialCost").value = it.materialCost ?? "";
     document.getElementById("ci_miscCost").value = it.miscCost ?? "";
     document.getElementById("ci_ragsCost").value = it.ragsCost ?? "";
+    document.getElementById("ci_deliveryCost").value = it.deliveryCost ?? "";
+    document.getElementById("ci_taxPercent").value = it.taxPercent ?? "";
     document.getElementById("ci_costPrice").value = it.costPrice ?? "";
     document.getElementById("ci_retailPrice").value = it.retailPrice ?? "";
     document.getElementById("ci_note").value = it.note || "";
     currentCatalogPhoto = it.photo || null;
     updateCatalogPhotoPreview();
+    recalcCatalogCost(false);
 
     catalogItemOverlay.classList.add("show");
   };
@@ -2507,6 +2549,40 @@
     }
   }
 
+  // Себестоимость складывается на глазах: видно каждую составляющую и маржу.
+  // Раньше в поле стояло число непонятно откуда — теперь понятно, из чего.
+  const CI_COST_PARTS = [
+    { id:"ci_materialCost", label:"материал" },
+    { id:"ci_miscCost",     label:"прочие" },
+    { id:"ci_ragsCost",     label:"ветошь" },
+    { id:"ci_laborRate",    label:"работа" },
+    { id:"ci_deliveryCost", label:"доставка" }
+  ];
+  function ciNum(id){ const v = parseFloat(document.getElementById(id).value); return Number.isFinite(v) ? v : 0; }
+
+  function recalcCatalogCost(writeCost){
+    const retail = ciNum("ci_retailPrice");
+    const taxPct = ciNum("ci_taxPercent");
+    const tax = Math.round(retail * taxPct) / 100;
+    const parts = CI_COST_PARTS.map(p=>({ label:p.label, val: ciNum(p.id) })).filter(p=>p.val > 0);
+    const sum = parts.reduce((s,p)=>s + p.val, 0) + tax;
+    const cost = Math.round(sum * 100) / 100;
+    if(writeCost) document.getElementById("ci_costPrice").value = cost;
+
+    const margin = retail - cost;
+    const marginPct = retail ? Math.round(margin / retail * 100) : 0;
+    const color = !retail ? "var(--ink-soft)" : marginPct < 15 ? "var(--red)" : marginPct < 25 ? "#B45309" : "var(--green)";
+    const formula = parts.map(p=>`${p.label} ${money(p.val)}`).join(" + ") + (tax ? ` + налог ${money(tax)}` : "");
+    document.getElementById("ci_costBox").innerHTML = `
+      <div style="font-size:12.5px;">Себестоимость: ${esc(formula) || "не заполнено"} = <b>${money(cost)} ₸</b></div>
+      <div style="font-size:13.5px; margin-top:6px;">Розница ${money(retail)} − затраты ${money(cost)} =
+        <b style="color:${color};">${money(margin)} ₸ · маржа ${marginPct}%</b>
+        ${retail && marginPct < 15 ? ` <span style="color:var(--red);">— слишком низкая</span>` : ""}</div>`;
+  }
+  ["ci_materialCost","ci_miscCost","ci_ragsCost","ci_laborRate","ci_deliveryCost","ci_taxPercent","ci_retailPrice"]
+    .forEach(id=>document.getElementById(id).addEventListener("input", ()=>recalcCatalogCost(true)));
+  document.getElementById("ci_costPrice").addEventListener("input", ()=>recalcCatalogCost(false));
+
   document.getElementById("catalogItemCancelBtn").addEventListener("click", ()=>{
     catalogItemOverlay.classList.remove("show");
   });
@@ -2533,6 +2609,8 @@
       materialCost: numOrNull("ci_materialCost"),
       miscCost: numOrNull("ci_miscCost"),
       ragsCost: numOrNull("ci_ragsCost"),
+      deliveryCost: numOrNull("ci_deliveryCost"),
+      taxPercent: numOrNull("ci_taxPercent"),
       costPrice: numOrNull("ci_costPrice"),
       retailPrice: numOrNull("ci_retailPrice"),
     };
