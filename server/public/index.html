@@ -649,7 +649,7 @@
       </div>
       <div class="tbl-wrap">
         <table>
-          <thead><tr><th></th><th>SKU</th><th>Название (Kaspi)</th><th>Название для печати</th><th>Группа</th><th>GTIN</th><th>Розница</th><th title="Чего не хватает для работы">Готовность</th><th></th></tr></thead>
+          <thead><tr><th></th><th>SKU</th><th>Название (Kaspi)</th><th>Название для печати</th><th>Группа</th><th>GTIN</th><th>Розница</th><th title="Показывать товар в прайс-листе">В прайсе</th><th title="Чего не хватает для работы">Готовность</th><th></th></tr></thead>
           <tbody id="catalogBody"><tr><td colspan="9" style="text-align:center;color:var(--ink-soft);padding:20px;">Справочник пуст — нажмите «Импорт из Kaspi», чтобы загрузить файл выгрузки активных товаров</td></tr></tbody>
         </table>
       </div>
@@ -1554,6 +1554,15 @@
     </div>
 
     <div style="border-top:1px solid var(--line); margin-top:16px; padding-top:12px;">
+      <div style="font-weight:600; font-size:13px; margin-bottom:4px;">Автоматические копии (откат)</div>
+      <div style="font-size:12px; color:var(--ink-soft); margin-bottom:8px;">
+        Программа сама сохраняет копию базы перед массовой загрузкой справочника и переносом данных. Хранятся последние 20.
+      </div>
+      <div id="snapshotList" style="max-height:180px; overflow:auto; font-size:12.5px;"></div>
+      <button class="btn secondary" id="btnMakeSnapshot" style="padding:5px 12px; font-size:12px; margin-top:8px;">Сделать копию сейчас</button>
+    </div>
+
+    <div style="border-top:1px solid var(--line); margin-top:16px; padding-top:12px;">
       <div style="font-weight:600; font-size:13px; margin-bottom:4px;">Восстановить базу из копии</div>
       <div style="font-size:12px; color:var(--ink-soft); margin-bottom:10px;">
         Заменяет все данные на те, что в файле: заказы, номера, товары, зарплату, пользователей.
@@ -1924,6 +1933,7 @@
       "Вес кг": it.weight??"",
       "Крепление": it.mount||"",
       "GTIN": it.gtin||"",
+      "В прайсе": it.showInPrice === false ? "нет" : "да",
       "Расценка труда": it.laborRate??"",
       "Затраты на материал": it.materialCost??"",
       "Прочие затраты": it.miscCost??"",
@@ -1969,6 +1979,7 @@
           weight: numOrNull(r["Вес кг"]),
           mount: String(r["Крепление"]||"").trim(),
           gtin: String(r["GTIN"]||"").trim(),
+          showInPrice: r["В прайсе"] === undefined ? null : String(r["В прайсе"]||"").trim(),
           laborRate: numOrNull(r["Расценка труда"]),
           materialCost: numOrNull(r["Затраты на материал"]),
           miscCost: numOrNull(r["Прочие затраты"]),
@@ -1981,6 +1992,9 @@
         const result = await api("/catalog/bulk-update", {method:"POST", body:JSON.stringify({items})});
         await loadCatalog();
         toast(`Обновлено: ${result.updated}${result.created?`, заведено новых: ${result.created}`:""}${result.notFound?`, пропущено: ${result.notFound}`:""}`);
+        document.getElementById("catalogImportInfo").innerHTML =
+          `Обновлено ${result.updated}, новых ${result.created||0}. Пустые ячейки файла ничего не стёрли.`
+          + (result.snapshot ? ` <span style="color:var(--green);">Копия базы перед загрузкой сохранена</span> — откат в меню аккаунта → «Резервная копия».` : "");
       }catch(err){
         console.error(err);
         toast("Ошибка: "+(err.message||"не удалось прочитать файл"));
@@ -2138,11 +2152,24 @@
         <td>${esc(it.category||"—")}</td>
         <td>${it.gtin ? `<span class="mono" style="font-size:11.5px;">${esc(it.gtin)}</span>` : `<span title="GTIN не заполнен" style="color:var(--red);">●</span>`}</td>
         <td class="num">${it.retailPrice ? money(it.retailPrice)+" ₸" : `<span style="color:var(--red);">●</span>`}</td>
+        <td><label style="cursor:pointer;" title="Показывать в прайсе"><input type="checkbox" class="cat-inprice" data-id="${esc(it.id)}" ${it.showInPrice !== false ? "checked" : ""}></label></td>
         <td>${catalogReadiness(it)}</td>
         <td style="white-space:nowrap;">
           <button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__openCatalogItem('${it.id}')">Изменить</button>
         </td>
       </tr>`).join("");
+
+    // Галочку «в прайсе» можно щёлкать прямо в списке, не открывая карточку
+    body.querySelectorAll(".cat-inprice").forEach(cb=>{
+      cb.addEventListener("change", async ()=>{
+        try{
+          await api("/catalog/" + cb.dataset.id, {method:"PUT", body: JSON.stringify({showInPrice: cb.checked})});
+          const it = catalogItems.find(x=>x.id === cb.dataset.id);
+          if(it) it.showInPrice = cb.checked;
+          toast(cb.checked ? "Товар будет в прайсе" : "Товар убран из прайса");
+        }catch(e){ toast("Не получилось: " + e.message); cb.checked = !cb.checked; }
+      });
+    });
 
     renderCatalogPager(visible.length, pages);
   }
@@ -7447,6 +7474,7 @@
     box.innerHTML = "Загрузка...";
     try{
       const i = await api("/backup/info");
+      renderSnapshots();
       const mb = (n)=> (n/1048576).toFixed(1) + " МБ";
       box.innerHTML = `
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px 14px;">
@@ -7466,6 +7494,36 @@
     }catch(e){ box.innerHTML = `<span style="color:var(--red);">${esc(e.message)}</span>`; }
   });
   document.getElementById("backupClose").addEventListener("click", ()=>document.getElementById("backupOverlay").classList.remove("show"));
+
+  async function renderSnapshots(){
+    const el = document.getElementById("snapshotList");
+    try{
+      const r = await api("/backup/snapshots");
+      el.innerHTML = r.snapshots.length
+        ? r.snapshots.map(s=>`
+          <div style="display:flex; align-items:center; gap:10px; padding:5px 0; border-bottom:1px solid var(--line);">
+            <div style="flex:1;">${esc((s.createdAt||"").slice(0,16).replace("T"," "))}
+              <div style="color:var(--ink-soft); font-size:11px;">${esc(s.name.replace(/\.sqlite$/,""))} · ${(s.size/1048576).toFixed(1)} МБ</div></div>
+            <button class="btn danger" style="padding:3px 10px; font-size:11.5px;" data-roll="${esc(s.name)}">Откатить</button>
+          </div>`).join("")
+        : `<div style="color:var(--ink-soft);">Пока копий нет — появятся после первой массовой загрузки</div>`;
+      el.querySelectorAll("[data-roll]").forEach(b=>b.addEventListener("click", async ()=>{
+        if(!confirm(`Откатить базу на состояние «${b.dataset.roll}»?\n\nВсё, что сделано после этой копии, пропадёт. Текущее состояние тоже сохранится копией.`)) return;
+        try{
+          await api("/backup/rollback", {method:"POST", body: JSON.stringify({name: b.dataset.roll})});
+          alert("Откат выполнен. Сервис перезапускается — подождите полминуты и обновите страницу.");
+          setTimeout(()=>location.reload(), 25000);
+        }catch(e){ toast("Не получилось: " + e.message); }
+      }));
+    }catch(e){ el.innerHTML = `<span style="color:var(--ink-soft);">Копии недоступны: ${esc(e.message)}</span>`; }
+  }
+  document.getElementById("btnMakeSnapshot").addEventListener("click", async ()=>{
+    try{
+      await api("/backup/snapshot", {method:"POST", body: JSON.stringify({reason:"ручная"})});
+      toast("Копия создана");
+      renderSnapshots();
+    }catch(e){ toast("Не получилось: " + e.message); }
+  });
 
   document.getElementById("btnRestore").addEventListener("click", ()=>document.getElementById("restoreInput").click());
   document.getElementById("restoreInput").addEventListener("change", async (e)=>{
