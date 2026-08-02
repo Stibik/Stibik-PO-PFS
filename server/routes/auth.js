@@ -194,6 +194,46 @@ router.post("/users/:id/toggle-active", requireAdmin, (req, res) => {
   res.json({ ok: true, isActive: !!to });
 });
 
+// Тестовые доступы одной кнопкой: швея и трое забивщиков.
+// Нужны, чтобы проверить работу с телефона от лица каждого, не заводя вручную.
+router.post("/demo-users", requireAdmin, (req, res) => {
+  const now = new Date().toISOString();
+  const demo = [
+    { username: "shveya", password: "shveya1", role: "manager", employee: "Швея (тест)",
+      perms: ["production", "tasks", "monitor", "orders", "catalog"] },
+    { username: "zabiv1", password: "zabiv1", role: "stitcher", employee: "Забивщик 1 (тест)", perms: ["monitor"] },
+    { username: "zabiv2", password: "zabiv2", role: "stitcher", employee: "Забивщик 2 (тест)", perms: ["monitor"] },
+    { username: "zabiv3", password: "zabiv3", role: "stitcher", employee: "Забивщик 3 (тест)", perms: ["monitor"] }
+  ];
+
+  const created = [];
+  for (const d of demo) {
+    // Сотрудник нужен, чтобы работа и зарплата падали на конкретного человека
+    let emp = db.prepare("SELECT id FROM employees WHERE name = ?").get(d.employee);
+    if (!emp) {
+      const eid = "emp_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      db.prepare("INSERT INTO employees (id, name, created_at) VALUES (?,?,?)").run(eid, d.employee, now);
+      emp = { id: eid };
+    }
+    const existing = db.prepare("SELECT id FROM users WHERE username = ?").get(d.username);
+    if (existing) {
+      // Пароль сбрасываем, чтобы вы всегда могли зайти, но менять его не заставляем
+      db.prepare(`UPDATE users SET password_hash = ?, role = ?, permissions = ?, employee_id = ?,
+                  is_active = 1, must_change_password = 0 WHERE id = ?`)
+        .run(bcrypt.hashSync(d.password, 10), d.role, JSON.stringify(d.perms), emp.id, existing.id);
+      created.push({ ...d, employeeId: emp.id, status: "обновлён" });
+    } else {
+      const id = "u_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      db.prepare(`INSERT INTO users (id, username, password_hash, role, permissions, employee_id, is_active, must_change_password, created_at)
+                  VALUES (?,?,?,?,?,?,1,0,?)`)
+        .run(id, d.username, bcrypt.hashSync(d.password, 10), d.role, JSON.stringify(d.perms), emp.id, now);
+      created.push({ ...d, employeeId: emp.id, status: "создан" });
+    }
+  }
+  logAudit({ user: req.session.username, action: "create_demo_users", comment: created.map(c => c.username).join(", ") });
+  res.json({ ok: true, users: created.map(c => ({ username: c.username, password: c.password, role: c.role, employee: c.employee, status: c.status })) });
+});
+
 router.delete("/users/:id", requireAdmin, (req, res) => {
   if (req.params.id === req.session.userId) {
     return res.status(400).json({ error: "cannot_delete_self" });
