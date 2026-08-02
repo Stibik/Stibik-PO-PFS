@@ -74,13 +74,9 @@ router.post("/release", (req, res) => {
 // Свой список производства: отдаём всё нужное разом — заказ, начисление,
 // кому отправлено, комментарий, архив. Раньше приходилось собирать
 // из нескольких запросов и часть полей вообще не доходила до экрана.
-router.get("/list", (req, res) => {
-  const withArchived = req.query.archived === "1";
-  const rows = db.prepare(`SELECT * FROM production
-                           ${withArchived ? "" : "WHERE archived_at IS NULL"}
-                           ORDER BY created_at DESC LIMIT 1000`).all();
-
-  const items = rows.map(p => {
+// Одна строка производства → то, что видит экран. Вынесено в функцию,
+// чтобы теми же правилами считать и список, и счётчики на кнопках.
+function toItem(p) {
     const order = p.order_id ? db.prepare("SELECT display_number, shop, qty, kaspi_code, product_name FROM orders WHERE id = ?").get(p.order_id) : null;
     const entry = db.prepare("SELECT * FROM payroll_entries WHERE production_id = ? AND status != 'cancelled'").get(p.id);
     const emp = p.employee_id ? db.prepare("SELECT name FROM employees WHERE id = ?").get(p.employee_id) : null;
@@ -118,9 +114,25 @@ router.get("/list", (req, res) => {
         reportedWeight: entry.reported_weight, acceptedBy: entry.accepted_by
       } : null
     };
-  });
+}
 
-  const counts = items.reduce((acc, i) => { acc[i.step] = (acc[i.step] || 0) + 1; return acc; }, {});
+router.get("/list", (req, res) => {
+  const withArchived = req.query.archived === "1";
+  // Счётчики на кнопках должны показывать всё, что есть в базе, а не только
+  // текущую выборку. Раньше они считались по уже отфильтрованным строкам,
+  // поэтому «Архив» в обычном режиме всегда показывал 0, хотя там что-то лежало.
+  const allRows = db.prepare("SELECT * FROM production ORDER BY created_at DESC LIMIT 5000").all();
+  // Собираем один раз и потом только фильтруем: toItem дёргает базу пять раз
+  // на строку, а прогонять его дважды по всему производству — лишняя нагрузка
+  const allItems = allRows.map(toItem);
+  const items = allItems.filter(i => withArchived ? !!i.archivedAt : !i.archivedAt);
+
+  // Счётчики — по всем строкам производства, чтобы «Архив» и остальные шаги
+  // показывали настоящие числа, а не только то, что попало в текущий фильтр
+  const counts = allItems.reduce((acc, i) => {
+    acc[i.step] = (acc[i.step] || 0) + 1;
+    return acc;
+  }, {});
   res.json({ items, counts, total: items.length });
 });
 
