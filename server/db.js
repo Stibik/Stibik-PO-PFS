@@ -535,6 +535,8 @@ export function ensureSchema() {
   safeAddColumn("users", "last_login_at TEXT");
   safeAddColumn("users", "last_login_ip TEXT");
   // Забивщик отмечает «готово», менеджер подтверждает — только тогда к выплате
+  // Метка переноса из старой системы: чтобы повторный импорт не задвоил деньги
+  safeAddColumn("payroll_entries", "legacy_key TEXT");
   safeAddColumn("payroll_entries", "reported_done INTEGER DEFAULT 0");
   safeAddColumn("payroll_entries", "reported_at TEXT");
   safeAddColumn("payroll_entries", "reported_by TEXT");
