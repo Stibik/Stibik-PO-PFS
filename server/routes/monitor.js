@@ -98,12 +98,19 @@ router.post("/take/:productionId", (req, res) => {
 
   const exists = db.prepare("SELECT id FROM payroll_entries WHERE production_id = ? AND status != 'cancelled'").get(prod.id);
   if (!exists) {
+    // Заказ взят самим забивщиком — он же и автор разноски, поэтому
+    // assigned_by заполняем сразу, а не оставляем пустым
+    const entryId = uid("pay");
     db.prepare(`INSERT INTO payroll_entries
-      (id, employee_id, production_id, order_id, shop, article, product_name, qty, rate, amount, kind, status, created_by, created_at, reported_done)
-      VALUES (?,?,?,?,?,?,?,?,?,?,'order','pending',?,?,0)`)
-      .run(uid("pay"), employeeId, prod.id, prod.order_id, prod.shop || order?.shop || null,
+      (id, employee_id, production_id, order_id, shop, article, product_name, qty, rate, amount, kind, status, created_by, created_at, reported_done, assigned_by, assigned_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,'order','pending',?,?,0,?,?)`)
+      .run(entryId, employeeId, prod.id, prod.order_id, prod.shop || order?.shop || null,
            prod.article, prod.product_name, qty, rate, Math.round(rate * qty * 100) / 100,
-           req.session.username, now);
+           req.session.username, now, req.session.username, now);
+    const empName = db.prepare("SELECT name FROM employees WHERE id = ?").get(employeeId)?.name || "";
+    db.prepare(`INSERT INTO payroll_entry_log (id, entry_id, at, user, action, field, old_value, new_value, comment)
+                VALUES (?,?,?,?,'assign','employee','не разнесено',?,?)`)
+      .run(uid("plog"), entryId, now, req.session.username, empName, "Взял заказ в мониторе");
   }
   logAudit({ user: req.session.username, action: "monitor_take", orderId: prod.order_id, comment: prod.product_name || prod.article });
   res.json({ ok: true });
