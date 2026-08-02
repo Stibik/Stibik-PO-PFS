@@ -1238,6 +1238,24 @@
   </div>
 </div>
 
+<div class="overlay" id="empPickOverlay">
+  <div class="modal" style="max-width:460px;">
+    <h3 id="empPickTitle">Кто шьёт?</h3>
+    <div id="empPickList" style="display:flex; flex-direction:column; gap:8px; margin-top:12px;"></div>
+    <div id="empPickCommentWrap" style="margin-top:12px; display:none;">
+      <label>Комментарий забивщику (необязательно)</label>
+      <input type="text" id="empPickComment" style="width:100%;" placeholder="Например: срочно, до пятницы">
+    </div>
+    <div style="font-size:11.5px; color:var(--ink-soft); margin-top:12px;">
+      Лишних из списка убирайте кнопкой «Сотрудники» — там же добавляются новые.
+    </div>
+    <div class="modal-actions">
+      <div></div>
+      <div><button class="btn secondary" id="empPickCancel">Отмена</button></div>
+    </div>
+  </div>
+</div>
+
 <div class="overlay" id="workEditOverlay">
   <div class="modal" style="max-width:620px;">
     <h3>Работа по заказу</h3>
@@ -5260,8 +5278,8 @@
       return;
     }
     body.innerHTML = salarySummary.employees.map(e=>`
-      <tr>
-        <td><b>${esc(e.name)}</b></td>
+      <tr${e.isService ? ' style="opacity:.6;"' : ""}>
+        <td><b>${esc(e.name)}</b>${e.isService ? `<div style="font-size:10.5px; color:var(--ink-soft);">пометка из старой таблицы, в итог не входит</div>` : ""}</td>
         <td class="num">${e.pendingSum ? `${money(e.pendingSum)} ₸<div style="font-size:11px; color:var(--ink-soft);">${e.pendingCount} раб.${e.pendingStockSum ? ` · на запас ${money(e.pendingStockSum)} ₸` : ""}</div>` : "—"}</td>
         <td class="num">${e.payableSum ? `<b style="color:var(--green);">${money(e.payableSum)} ₸</b><div style="font-size:11px; color:var(--ink-soft);">${e.payableCount} раб.</div>` : "—"}</td>
         <td class="num">${e.payoutsSum ? money(e.payoutsSum) + " ₸" : "—"}</td>
@@ -5607,7 +5625,7 @@
 
     const sumBy = (f)=>rows.filter(f).reduce((s,r)=>s + r.amount, 0);
     const total = rows.reduce((s,r)=>s + r.amount, 0);
-    const unassigned = rows.filter(r=>!r.employeeId);
+    const unassigned = rows.filter(r=>!r.employeeId || r.employeeIsService);
     document.getElementById("workCount").innerHTML = `Работ: <b>${rows.length}</b>` +
       (unassigned.length ? ` · <span style="color:var(--red);">не разнесено: ${unassigned.length}</span>` : "");
     document.getElementById("workTotal").innerHTML = `Итого по расценкам: <b>${money(total)} ₸</b>`;
@@ -5628,9 +5646,10 @@
         ? `<span class="mono" style="font-size:11.5px;">${esc(r.kaspiCode)}</span>` +
           (r.orderDate ? `<div style="font-size:11px; color:var(--ink-soft);">${esc(String(r.orderDate).slice(0,10))}</div>` : "")
         : `<span style="color:var(--ink-soft); font-size:11.5px;">${r.kind === "stock" ? "на запас" : "без заказа"}</span>`;
-      const who = r.employeeName
+      const who = (r.employeeName && !r.employeeIsService)
         ? esc(r.employeeName) + (r.assignedBy ? `<div style="font-size:10.5px; color:var(--ink-soft);">разнёс: ${esc(r.assignedBy)}</div>` : "")
-        : `<span style="color:var(--red); font-weight:600;" title="Работа не разнесена — непонятно, кому платить">не разнесено</span>`;
+        : `<span style="color:var(--red); font-weight:600;" title="Работа не разнесена — непонятно, кому платить">не разнесено</span>` +
+          (r.employeeIsService ? `<div style="font-size:10.5px; color:var(--ink-soft);">из старой таблицы: ${esc(r.employeeName)}</div>` : "");
       return `
       <tr${r.archivedAt ? ' style="opacity:0.65;"' : ""}>
         <td><input type="checkbox" data-wsel="${esc(r.id)}" ${workSelected.has(r.id)?"checked":""}></td>
@@ -6401,17 +6420,23 @@
     if(p.step === "pending") return `
       <button class="btn amber prod-quick-assign" data-prod-id="${esc(p.id)}" ${small}>${prodDefaultEmployeeName ? "Шьёт " + esc(prodDefaultEmployeeName) : "Назначить"}</button>
       <button class="btn secondary prod-publish" data-prod-id="${esc(p.id)}" ${small}>📢 Забивщикам</button>
-      <button class="btn secondary prod-action-stock" data-prod-id="${esc(p.id)}" ${small} title="Товар уже лежит на складе">📦 Со склада</button>
-      <button class="btn secondary prod-action-return" data-prod-id="${esc(p.id)}" ${small} title="Закрыть возвратом">↩️</button>`;
+      <button class="btn secondary prod-action-stock" data-prod-id="${esc(p.id)}" ${small} title="Товар уже лежит на складе">📦 Со склада</button>`;
     if(p.step === "published") return `
       <button class="btn secondary prod-unpublish" data-prod-id="${esc(p.id)}" ${small}>Убрать из монитора</button>
       <button class="btn secondary prod-edit" data-prod-id="${esc(p.id)}" ${small}>✎</button>`;
-    if(p.step === "in_work") return `
+    // У «в работе» и «сдано» начисление может отсутствовать: так бывает, если
+    // работу освободили или строка приехала из старой системы. Раньше здесь
+    // читалось p.entry.id и вся вкладка падала с «Cannot read properties of null».
+    if(p.step === "in_work") return p.entry ? `
       <button class="btn amber prod-accept" data-entry-id="${esc(p.entry.id)}" ${small}>✓ Работа сделана</button>
       <button class="btn secondary prod-release" data-prod-id="${esc(p.id)}" ${small} title="Вернуть в свободные">↺</button>
-      <button class="btn secondary prod-edit" data-prod-id="${esc(p.id)}" ${small}>✎</button>`;
-    if(p.step === "reported") return `
+      <button class="btn secondary prod-edit" data-prod-id="${esc(p.id)}" ${small}>✎</button>` : `
+      <button class="btn amber prod-fix-entry" data-prod-id="${esc(p.id)}" ${small} title="По заказу нет начисления — создать его по расценке из Справочника">⚠️ Создать начисление</button>
+      <button class="btn secondary prod-release" data-prod-id="${esc(p.id)}" ${small} title="Вернуть в свободные">↺</button>`;
+    if(p.step === "reported") return p.entry ? `
       <button class="btn amber prod-accept" data-entry-id="${esc(p.entry.id)}" ${small}>✓ Подтвердить</button>
+      <button class="btn secondary prod-release" data-prod-id="${esc(p.id)}" ${small}>↺</button>` : `
+      <button class="btn amber prod-fix-entry" data-prod-id="${esc(p.id)}" ${small}>⚠️ Создать начисление</button>
       <button class="btn secondary prod-release" data-prod-id="${esc(p.id)}" ${small}>↺</button>`;
     if(p.step === "accepted") return `<span style="font-size:12px; color:var(--green);">ждёт выплаты в «Зарплате»</span>
       <button class="btn secondary prod-archive" data-prod-id="${esc(p.id)}" ${small}>В архив</button>`;
@@ -6435,18 +6460,22 @@
     }
     wrap.querySelectorAll(".prod-action-stock").forEach(b=>b.addEventListener("click", ()=>resolveProduction(b.dataset.prodId, "stock")));
     wrap.querySelectorAll(".prod-action-return").forEach(b=>b.addEventListener("click", ()=>resolveProduction(b.dataset.prodId, "return_offset")));
+    // Починка строки, у которой пропало начисление: пересоздаём по расценке из Справочника
+    wrap.querySelectorAll(".prod-fix-entry").forEach(b=>b.addEventListener("click", async ()=>{
+      try{
+        const r = await api("/payroll/from-production/" + b.dataset.prodId, { method:"POST" });
+        toast(r.rateFound === false ? "Начисление создано, но расценка в Справочнике не заполнена" : "Начисление создано");
+        loadProduction();
+      }catch(e){ toast("Не получилось: " + e.message); }
+    }));
     wrap.querySelectorAll(".prod-accept").forEach(b=>b.addEventListener("click", ()=>acceptPayEntry(b.dataset.entryId, loadProduction)));
 
     wrap.querySelectorAll(".prod-quick-assign").forEach(b=>b.addEventListener("click", async ()=>{
       let employeeId = prodDefaultEmployeeId;
       if(!employeeId){
-        if(!employeesList.length){ try{ employeesList = await api("/employees"); }catch(e){} }
-        if(!employeesList.length){ toast("Сначала добавьте сотрудников"); return; }
-        const names = employeesList.map((e,i)=>`${i+1}. ${e.name}`).join("\\n");
-        const pick = prompt(`Кто шьёт? Введите номер:\\n${names}`);
-        const idx = parseInt(pick, 10) - 1;
-        if(!(idx >= 0 && idx < employeesList.length)) return;
-        employeeId = employeesList[idx].id;
+        const pick = await pickEmployee({ title: "Кто шьёт?" });
+        if(!pick || !pick.employeeId) return;
+        employeeId = pick.employeeId;
       }
       await resolveProduction(b.dataset.prodId, "assigned", { employeeId });
     }));
@@ -6490,27 +6519,65 @@
     }));
   }
 
+  const SERVICE_EMPLOYEE_NAMES = new Set(["не определено","не определен","не определён","без оплаты",
+    "перекрыто","перекрыт","возврат","отмена","пропустим","хз","-","—"]);
+  const isServiceName = (n)=>SERVICE_EMPLOYEE_NAMES.has(String(n||"").toLowerCase().trim());
+
+  // Выбор исполнителя списком кнопок. Раньше здесь был системный prompt,
+  // и в нём вместо переносов строк печаталось «\n1. Андрей\n2. ...» —
+  // перенос был экранирован дважды, поэтому список читался как каша.
+  function pickEmployee({ title = "Кто шьёт?", allowAll = false, withComment = false } = {}){
+    return new Promise(async (resolve)=>{
+      if(!employeesList.length){ try{ employeesList = await api("/employees"); }catch(e){} }
+      const ov = document.getElementById("empPickOverlay");
+      const list = document.getElementById("empPickList");
+      document.getElementById("empPickTitle").textContent = title;
+      document.getElementById("empPickCommentWrap").style.display = withComment ? "" : "none";
+      document.getElementById("empPickComment").value = "";
+
+      if(!employeesList.length){
+        list.innerHTML = `<div style="color:var(--ink-soft);">Сотрудников пока нет — добавьте их кнопкой «Сотрудники».</div>`;
+      }else{
+        const btn = (val, label, style)=>`<button class="btn ${style}" data-emp="${esc(val)}"
+          style="text-align:left; padding:10px 14px; font-size:14px;">${label}</button>`;
+        // «не определено», «Без оплаты» и прочие пометки из старой таблицы —
+        // это не люди, назначать на них работу нельзя
+        const people = employeesList.filter(e=>!isServiceName(e.name));
+        list.innerHTML = (allowAll ? btn("__all__", "📣 Всем — заберёт кто первый", "amber") : "") +
+          (people.length ? people.map(e=>btn(e.id, esc(e.name), "secondary")).join("")
+                         : `<div style="color:var(--ink-soft);">Настоящих сотрудников в списке нет — добавьте кнопкой «Сотрудники».</div>`);
+      }
+
+      const onClick = (ev)=>{
+        const b = ev.target.closest("[data-emp]");
+        if(!b) return;
+        finish({ employeeId: b.dataset.emp === "__all__" ? null : b.dataset.emp,
+                 comment: document.getElementById("empPickComment").value.trim() });
+      };
+      const onCancel = ()=>finish(null);
+      function finish(result){
+        list.removeEventListener("click", onClick);
+        document.getElementById("empPickCancel").removeEventListener("click", onCancel);
+        ov.classList.remove("show");
+        resolve(result);
+      }
+      list.addEventListener("click", onClick);
+      document.getElementById("empPickCancel").addEventListener("click", onCancel);
+      ov.classList.add("show");
+    });
+  }
+
   // Кому отправляем заказ и что передать на словах
   async function askPublishTarget(){
-    if(!employeesList.length){ try{ employeesList = await api("/employees"); }catch(e){} }
-    const names = employeesList.map((e,i)=>`${i+1}. ${e.name}`).join("\n");
-    const who = prompt(`Кому отправить?\n\n0 — всем, заберёт кто первый\n${names}\n\nВведите номер:`, "0");
-    if(who === null) return null;
-    const idx = parseInt(who, 10);
-    const employeeId = idx > 0 && idx <= employeesList.length ? employeesList[idx-1].id : null;
-    const comment = prompt("Комментарий забивщику (можно оставить пустым):", "") || "";
-    return { employeeId, comment };
+    return await pickEmployee({ title: "Кому отправить заказ?", allowAll: true, withComment: true });
   }
 
   // Передать работу другому человеку: сумма едет вместе с ней
   async function reassignEntry(entryId, after){
-    if(!employeesList.length){ try{ employeesList = await api("/employees"); }catch(e){} }
-    const names = employeesList.map((e,i)=>`${i+1}. ${e.name}`).join("\n");
-    const pick = prompt(`Кому передать работу? Введите номер:\n${names}`);
-    const idx = parseInt(pick, 10) - 1;
-    if(!(idx >= 0 && idx < employeesList.length)) return;
+    const pick = await pickEmployee({ title: "Кому передать работу?" });
+    if(!pick || !pick.employeeId) return;
     try{
-      const r = await api("/payroll/entries/" + entryId, { method:"PUT", body: JSON.stringify({ employeeId: employeesList[idx].id })});
+      const r = await api("/payroll/entries/" + entryId, { method:"PUT", body: JSON.stringify({ employeeId: pick.employeeId })});
       toast(`Работа передана: ${r.employeeName}`);
       if(after) await after();
     }catch(e){ toast("Не получилось: " + e.message); }
