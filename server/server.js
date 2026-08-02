@@ -127,6 +127,7 @@ await mountRoute("tasks", "/api/tasks", null);
 await mountRoute("monitor", "/api/monitor", null);
 await mountRoute("dispatch", "/api/dispatch", null);
 await mountRoute("backup", "/api/backup", null);
+await mountRoute("legacyImport", "/api/legacy-import", null);
 
 // Иконки приложения. Нужны именно PNG и ICO: Windows для ярлыка на рабочем
 // столе и Chrome для установки SVG-иконку не берут — получается белый лист.
