@@ -29,14 +29,15 @@ function toCard(prod, entry) {
     amount: Math.round(rate * qty * 100) / 100,
     status: entry ? (entry.status === "paid" ? "paid" : (entry.status === "payable" ? "confirmed" : (entry.reported_done ? "reported" : "in_work"))) : "free",
     reportedAt: entry ? entry.reported_at : null,
+    reportedWeight: entry ? entry.reported_weight : null,
     entryId: entry ? entry.id : null
   };
 }
 
-// Свободные заказы — их видят все забивщики и разбирают сами
+// Свободные заказы — только те, что менеджер отправил в монитор
 router.get("/free", (req, res) => {
-  const rows = db.prepare("SELECT * FROM production WHERE decision IS NULL ORDER BY created_at").all();
-  res.json(rows.map(r => toCard(r, null)));
+  const rows = db.prepare("SELECT * FROM production WHERE decision IS NULL AND published = 1 ORDER BY published_at, created_at").all();
+  res.json(rows.map(r => Object.assign(toCard(r, null), { publishedAt: r.published_at })));
 });
 
 // Мои работы
@@ -111,8 +112,9 @@ router.post("/done/:productionId", (req, res) => {
   if (!entry) return res.status(400).json({ error: "no_entry", message: "По заказу нет начисления — сообщите менеджеру" });
   if (entry.status !== "pending") return res.status(400).json({ error: "already", message: "Работа уже подтверждена менеджером" });
 
-  db.prepare("UPDATE payroll_entries SET reported_done = 1, reported_at = ?, reported_by = ? WHERE id = ?")
-    .run(new Date().toISOString(), req.session.username, entry.id);
+  const weight = num(req.body?.weight);
+  db.prepare("UPDATE payroll_entries SET reported_done = 1, reported_at = ?, reported_by = ?, reported_weight = ? WHERE id = ?")
+    .run(new Date().toISOString(), req.session.username, weight > 0 ? weight : null, entry.id);
   logAudit({ user: req.session.username, action: "monitor_done", orderId: prod.order_id, comment: prod.product_name || prod.article });
   res.json({ ok: true });
 });
