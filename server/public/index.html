@@ -648,10 +648,11 @@
       </div>
       <div class="tbl-wrap">
         <table>
-          <thead><tr><th></th><th>SKU</th><th>Название (Kaspi)</th><th>Название для печати</th><th>Группа</th><th>Подраздел</th><th>Розница</th><th>Наличие</th><th></th></tr></thead>
+          <thead><tr><th></th><th>SKU</th><th>Название (Kaspi)</th><th>Название для печати</th><th>Группа</th><th>GTIN</th><th>Розница</th><th title="Чего не хватает для работы">Готовность</th><th></th></tr></thead>
           <tbody id="catalogBody"><tr><td colspan="9" style="text-align:center;color:var(--ink-soft);padding:20px;">Справочник пуст — нажмите «Импорт из Kaspi», чтобы загрузить файл выгрузки активных товаров</td></tr></tbody>
         </table>
       </div>
+      <div id="catalogPager" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:12px;"></div>
     </section>
 
     <!-- CATALOG ITEM MODAL -->
@@ -688,6 +689,7 @@
           <div><label>Диаметр, см</label><input id="ci_diameter" type="number" step="0.1"></div>
           <div><label>Вес, кг</label><input id="ci_weight" type="number" step="0.1"></div>
           <div><label>Крепление/кольцо</label><input id="ci_mount" type="text"></div>
+          <div><label>GTIN / штрихкод</label><input id="ci_gtin" type="text" placeholder="напр. 4870123456789"></div>
           <div><label>Расценка труда, ₸ (для Зарплаты)</label><input id="ci_laborRate" type="number" step="1"></div>
           <div><label>Затраты на материал, ₸</label><input id="ci_materialCost" type="number" step="1"></div>
           <div><label>Прочие затраты, ₸</label><input id="ci_miscCost" type="number" step="1"></div>
@@ -1887,6 +1889,7 @@
       "Диаметр см": it.diameter??"",
       "Вес кг": it.weight??"",
       "Крепление": it.mount||"",
+      "GTIN": it.gtin||"",
       "Расценка труда": it.laborRate??"",
       "Затраты на материал": it.materialCost??"",
       "Прочие затраты": it.miscCost??"",
@@ -1931,6 +1934,7 @@
           diameter: numOrNull(r["Диаметр см"]),
           weight: numOrNull(r["Вес кг"]),
           mount: String(r["Крепление"]||"").trim(),
+          gtin: String(r["GTIN"]||"").trim(),
           laborRate: numOrNull(r["Расценка труда"]),
           materialCost: numOrNull(r["Затраты на материал"]),
           miscCost: numOrNull(r["Прочие затраты"]),
@@ -2008,6 +2012,30 @@
     reader.readAsArrayBuffer(file);
   });
 
+  // Красная точка = поле не заполнено. Так сразу видно, с чем товар ещё нельзя
+  // пустить в прайс или в зарплату, без открывания карточки
+  const CATALOG_REQUIRED = [
+    { key:"printName",  label:"название для печати" },
+    { key:"retailPrice", label:"розница" },
+    { key:"laborRate",  label:"расценка труда" },
+    { key:"gtin",       label:"GTIN" },
+    { key:"photo",      label:"фото" }
+  ];
+  function catalogMissing(it){
+    return CATALOG_REQUIRED.filter(f=>{
+      const v = it[f.key];
+      return v === null || v === undefined || v === "" || v === 0;
+    });
+  }
+  function catalogReadiness(it){
+    const miss = catalogMissing(it);
+    if(!miss.length) return `<span style="color:var(--green);" title="Всё заполнено">✓ готов</span>`;
+    return `<span style="color:var(--red); cursor:help;" title="Не хватает: ${esc(miss.map(m=>m.label).join(", "))}">● ${miss.length}</span>`;
+  }
+
+  let catalogPage = 1;
+  let catalogPageSize = Number(localStorage.getItem("catalogPageSize")) || 25;
+
   function catalogVisibleItems(){
     const q = (document.getElementById("catalogSearch").value || "").trim().toLowerCase();
     const group = document.getElementById("catalogFilterGroup").value;
@@ -2049,7 +2077,13 @@
     gsel.value = prevGroup;
 
     const visible = catalogVisibleItems();
-    document.getElementById("catalogCount").textContent = `Показано ${visible.length} из ${catalogItems.length}`;
+    const pages = Math.max(1, Math.ceil(visible.length / catalogPageSize));
+    if(catalogPage > pages) catalogPage = pages;
+    const pageItems = visible.slice((catalogPage-1)*catalogPageSize, catalogPage*catalogPageSize);
+    const missingCount = visible.filter(it=>catalogMissing(it).length).length;
+    document.getElementById("catalogCount").innerHTML =
+      `Показано ${pageItems.length} из ${visible.length}${visible.length !== catalogItems.length ? ` (всего ${catalogItems.length})` : ""}`
+      + (missingCount ? ` · <span style="color:var(--red);">не дозаполнено: ${missingCount}</span>` : "");
 
     const body = document.getElementById("catalogBody");
     if(!catalogItems.length){
@@ -2058,27 +2092,58 @@
     }
     if(!visible.length){
       body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--ink-soft);padding:20px;">Ничего не найдено по этому фильтру</td></tr>`;
+      document.getElementById("catalogPager").innerHTML = "";
       return;
     }
-    body.innerHTML = visible.map((it)=>`
+    body.innerHTML = pageItems.map((it)=>`
       <tr style="${it.isArchived ? "opacity:.5;" : ""}">
         <td>${it.photo?`<img class="thumb" src="${esc(it.photo)}">`:`<div class="thumb-empty">—</div>`}</td>
         <td class="mono" style="font-size:11.5px;">${esc(it.article)}${it.isArchived ? `<div style="font-size:10px; color:var(--ink-soft);">в архиве</div>` : ""}</td>
         <td>${esc(it.kaspiName||"—")}</td>
         <td>${esc(it.printName||"—")}</td>
         <td>${esc(it.category||"—")}</td>
-        <td>${esc(it.subgroup||"—")}</td>
-        <td class="num">${it.retailPrice ? money(it.retailPrice)+" ₸" : "—"}</td>
-        <td>${it.totalPoints ? it.inStockPoints+"/"+it.totalPoints : "—"}</td>
+        <td>${it.gtin ? `<span class="mono" style="font-size:11.5px;">${esc(it.gtin)}</span>` : `<span title="GTIN не заполнен" style="color:var(--red);">●</span>`}</td>
+        <td class="num">${it.retailPrice ? money(it.retailPrice)+" ₸" : `<span style="color:var(--red);">●</span>`}</td>
+        <td>${catalogReadiness(it)}</td>
         <td style="white-space:nowrap;">
           <button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__openCatalogItem('${it.id}')">Изменить</button>
         </td>
       </tr>`).join("");
+
+    renderCatalogPager(visible.length, pages);
+  }
+
+  // Пагинация: 233 строки одним списком грузятся медленно и листать неудобно
+  function renderCatalogPager(total, pages){
+    const el = document.getElementById("catalogPager");
+    if(!el) return;
+    el.innerHTML = `
+      <span style="font-size:12.5px; color:var(--ink-soft);">Показывать по</span>
+      ${[25,50,100].map(n=>`<button class="pill ${catalogPageSize===n?"active":""}" data-size="${n}">${n}</button>`).join("")}
+      <span style="margin-left:auto; display:flex; align-items:center; gap:8px;">
+        <button class="btn secondary" style="padding:4px 12px; font-size:12px;" data-cpage="prev" ${catalogPage===1?"disabled":""}>← Назад</button>
+        <span style="font-size:12.5px;">Страница ${catalogPage} из ${pages}</span>
+        <button class="btn secondary" style="padding:4px 12px; font-size:12px;" data-cpage="next" ${catalogPage===pages?"disabled":""}>Вперёд →</button>
+      </span>`;
+    el.querySelectorAll("[data-size]").forEach(b=>b.addEventListener("click", ()=>{
+      catalogPageSize = Number(b.dataset.size);
+      localStorage.setItem("catalogPageSize", String(catalogPageSize));
+      catalogPage = 1;
+      renderCatalog();
+    }));
+    el.querySelectorAll("[data-cpage]").forEach(b=>b.addEventListener("click", ()=>{
+      catalogPage += b.dataset.cpage === "next" ? 1 : -1;
+      renderCatalog();
+      document.getElementById("tab-catalog").scrollIntoView({behavior:"smooth", block:"start"});
+    }));
   }
 
   ["catalogSearch","catalogFilterGroup","catalogOnlyIncomplete"].forEach(id=>{
     const el = document.getElementById(id);
-    el.addEventListener(el.tagName === "INPUT" && el.type === "text" ? "input" : "change", renderCatalog);
+    el.addEventListener(el.tagName === "INPUT" && el.type === "text" ? "input" : "change", ()=>{
+      catalogPage = 1;
+      renderCatalog();
+    });
   });
   document.getElementById("catalogShowArchived").addEventListener("change", loadCatalog);
 
@@ -2302,6 +2367,7 @@
     document.getElementById("ci_diameter").value = it.diameter ?? "";
     document.getElementById("ci_weight").value = it.weight ?? "";
     document.getElementById("ci_mount").value = it.mount || "";
+    document.getElementById("ci_gtin").value = it.gtin || "";
     document.getElementById("ci_laborRate").value = it.laborRate ?? "";
     document.getElementById("ci_materialCost").value = it.materialCost ?? "";
     document.getElementById("ci_miscCost").value = it.miscCost ?? "";
@@ -2397,6 +2463,7 @@
       material: document.getElementById("ci_material").value.trim(),
       color: document.getElementById("ci_color").value.trim(),
       mount: document.getElementById("ci_mount").value.trim(),
+      gtin: document.getElementById("ci_gtin").value.trim(),
       note: document.getElementById("ci_note").value.trim(),
       height: numOrNull("ci_height"),
       diameter: numOrNull("ci_diameter"),
