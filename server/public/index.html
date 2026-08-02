@@ -2577,13 +2577,40 @@
   let pricePdfSettings = Object.assign({}, PRICE_PDF_DEFAULTS, priceLoadStored("pricePdfSettings", {}));
   let priceSelected = new Set(priceLoadStored("priceSelectedIds", []));
   let priceFilterCat = null;                 // выбранная в дереве категория (одна)
-  let priceFilterDiams = new Set();
-  let priceFilterMats = new Set();
-  let priceFilterHeights = new Set();
+  const priceFilterSets = { diameter:new Set(), height:new Set(), weight:new Set(), material:new Set() };
   let priceSearchQuery = "";
   let priceTreeOpen = new Set();
   let priceActiveItemId = null;              // товар, показанный в карточке справа
   let priceGroups = [];
+
+  // У разных товаров важны разные характеристики. Медбол меряют весом,
+  // манекен — ростом, грушу — диаметром и высотой. Поэтому и фильтры,
+  // и группировка, и сортировка зависят от раздела, а не одинаковые для всего.
+  const CATEGORY_PROFILES = [
+    { test:/медбол|мяч/i,            filters:["weight","diameter"],            group:["weight"],             sort:["weight","diameter"] },
+    { test:/манекен/i,               filters:["height","weight","material"],   group:["height"],             sort:["height","weight"] },
+    { test:/груш|мешк|бэг|bag|сэнд/i,filters:["diameter","height","material"], group:["diameter","material"],sort:["diameter","height","weight"] },
+    { test:/утяжелит|жилет/i,        filters:["weight"],                       group:["weight"],             sort:["weight"] },
+    { test:/лап|макивар|перчат|экипир/i, filters:["material"],                 group:["material"],           sort:["name"] }
+  ];
+  const DEFAULT_PROFILE = { filters:["diameter","height","weight","material"], group:["diameter","material"], sort:["diameter","height","name"] };
+
+  function priceProfile(){
+    if(!priceFilterCat) return DEFAULT_PROFILE;
+    const found = CATEGORY_PROFILES.find(p=>p.test.test(priceFilterCat));
+    return found || DEFAULT_PROFILE;
+  }
+
+  const ATTR = {
+    diameter: { label:"Диаметр", key:it=>it.diameter ? "Ø " + it.diameter + " см" : "Без диаметра", has:it=>it.diameter != null && it.diameter !== "", numeric:true },
+    height:   { label:"Высота",  key:it=>it.height ? it.height + " см" : "Без высоты",             has:it=>it.height != null && it.height !== "",   numeric:true },
+    weight:   { label:"Вес",     key:it=>it.weight ? it.weight + " кг" : "Без веса",               has:it=>it.weight != null && it.weight !== "",   numeric:true },
+    material: { label:"Материал",key:it=>it.material || "Без материала",                           has:it=>!!it.material,                           numeric:false }
+  };
+  function attrNum(it, name){
+    const v = it[name];
+    return v == null || v === "" ? Number.POSITIVE_INFINITY : Number(v);
+  }
 
   function priceCatKey(it){ return it.category || "Без категории"; }
   function priceDiamKey(it){ return it.diameter ? "Ø " + it.diameter + " см" : "Без диаметра"; }
@@ -2637,9 +2664,9 @@
   }
   function priceVisibleItems(){
     let list = priceScopeItems();
-    if(priceFilterDiams.size) list = list.filter(it=>priceFilterDiams.has(priceDiamKey(it)));
-    if(priceFilterMats.size) list = list.filter(it=>priceFilterMats.has(priceMatKey(it)));
-    if(priceFilterHeights.size) list = list.filter(it=>priceFilterHeights.has(priceHeightKey(it)));
+    for(const [name, set] of Object.entries(priceFilterSets)){
+      if(set.size) list = list.filter(it=>set.has(ATTR[name].key(it)));
+    }
     if(priceSearchQuery){
       const q = priceSearchQuery;
       list = list.filter(it=>
@@ -2673,12 +2700,12 @@
       const arrow = diams.length
         ? `<span class="pz-arrow" data-toggle="${esc(c)}">${open?"▾":"▸"}</span>`
         : `<span class="pz-arrow"></span>`;
-      html += `<div class="pz-node ${priceFilterCat===c && !priceFilterDiams.size ? "active":""}" data-cat="${esc(c)}">
+      html += `<div class="pz-node ${priceFilterCat===c && !priceFilterSets.diameter.size ? "active":""}" data-cat="${esc(c)}">
           ${arrow}<span>${esc(c)}</span><span class="pz-count">${catCounts.get(c)}</span>
         </div>`;
       if(open && diams.length){
         html += `<div class="pz-sub">` + diams.map(d=>
-          `<div class="pz-node ${priceFilterCat===c && priceFilterDiams.has(d) ? "active":""}" data-cat="${esc(c)}" data-diam="${esc(d)}">
+          `<div class="pz-node ${priceFilterCat===c && priceFilterSets.diameter.has(d) ? "active":""}" data-cat="${esc(c)}" data-diam="${esc(d)}">
              <span class="pz-arrow"></span><span>${esc(d)}</span><span class="pz-count">${catDiams.get(c).get(d)}</span>
            </div>`).join("") + `</div>`;
       }
@@ -2698,10 +2725,8 @@
         const cat = node.dataset.cat || null;
         const diam = node.dataset.diam || null;
         priceFilterCat = cat;
-        priceFilterDiams.clear();
-        priceFilterMats.clear();
-        priceFilterHeights.clear();
-        if(diam) priceFilterDiams.add(diam);
+        Object.values(priceFilterSets).forEach(s=>s.clear());
+        if(diam) priceFilterSets.diameter.add(diam);
         if(cat) priceTreeOpen.add(cat);
         renderPriceCatalogTree();
         renderPriceFilters();
@@ -2715,27 +2740,35 @@
   // у товаров текущей категории — иначе не засоряем экран (ТЗ: «фильтры
   // формируются из доступных характеристик»)
   function renderPriceFilters(){
+    const el = document.getElementById("priceFilterRows");
+    if(!priceFilterCat){
+      // Пока раздел не выбран, вываливать все размеры подряд бессмысленно
+      el.innerHTML = `<div class="panel-divider"></div>
+        <div style="font-size:12.5px; color:var(--ink-soft);">
+          👈 Выберите раздел в «Каталоге» слева — тогда появятся фильтры именно по нему:
+          у медболов вес, у манекенов рост, у груш диаметр и высота.</div>`;
+      return;
+    }
+
     const scope = priceScopeItems();
-    const rows = [
-      { label:"Диаметр",  set:priceFilterDiams,   key:priceDiamKey,   has:it=>it.diameter != null && it.diameter !== "", numeric:true },
-      { label:"Материал", set:priceFilterMats,    key:priceMatKey,    has:it=>!!it.material, numeric:false },
-      { label:"Высота",   set:priceFilterHeights, key:priceHeightKey, has:it=>it.height != null && it.height !== "", numeric:true }
-    ];
+    const prof = priceProfile();
     let html = "";
-    rows.forEach((r, ri)=>{
-      if(!scope.some(r.has)) return;
+    prof.filters.forEach(name=>{
+      const a = ATTR[name];
+      if(!a || !scope.some(a.has)) return;
+      const set = priceFilterSets[name];
       const counts = new Map();
-      scope.forEach(it=>{ const k = r.key(it); counts.set(k, (counts.get(k)||0) + 1); });
-      const keys = Array.from(counts.keys()).sort((a,b)=> r.numeric ? (priceNumIn(a)-priceNumIn(b)) : a.localeCompare(b,"ru"));
-      html += `<div class="panel-divider"></div><div class="panel-label">${r.label}</div><div class="pill-row">` +
-        keys.map(k=>`<button class="pill ${r.set.has(k)?"active":""}" data-row="${ri}" data-key="${esc(k)}">${esc(k)} <span class="count">${counts.get(k)}</span></button>`).join("") +
+      scope.forEach(it=>{ const k = a.key(it); counts.set(k, (counts.get(k)||0) + 1); });
+      const keys = Array.from(counts.keys()).sort((x,y)=> a.numeric ? (priceNumIn(x)-priceNumIn(y)) : x.localeCompare(y,"ru"));
+      html += `<div class="panel-divider"></div><div class="panel-label">${a.label}</div><div class="pill-row">` +
+        keys.map(k=>`<button class="pill ${set.has(k)?"active":""}" data-attr="${name}" data-key="${esc(k)}">${esc(k)} <span class="count">${counts.get(k)}</span></button>`).join("") +
         `</div>`;
     });
-    const el = document.getElementById("priceFilterRows");
+    if(!html) html = `<div class="panel-divider"></div><div style="font-size:12.5px; color:var(--ink-soft);">У товаров этого раздела характеристики не заполнены — фильтровать не по чему.</div>`;
     el.innerHTML = html;
     el.querySelectorAll("button[data-key]").forEach(b=>{
       b.addEventListener("click", ()=>{
-        const set = rows[Number(b.dataset.row)].set;
+        const set = priceFilterSets[b.dataset.attr];
         const k = b.dataset.key;
         if(set.has(k)) set.delete(k); else set.add(k);
         renderPriceFilters();
@@ -2746,30 +2779,45 @@
 
   // ---------- Таблица товаров ----------
   function priceBuildGroups(items){
+    const prof = priceProfile();
     const map = new Map();
     for(const it of items){
       const cat = priceCatKey(it);
-      const d = it.diameter ? "Ø " + it.diameter + " см" : "";
-      const m = it.material || "";
-      const key = cat + "||" + d + "||" + m;
-      if(!map.has(key)) map.set(key, { cat, d, m, items: [] });
+      // Из чего складывается заголовок группы, решает профиль раздела:
+      // у медболов это вес, у манекенов рост, у груш диаметр и материал
+      const parts = prof.group.map(name=>ATTR[name] ? ATTR[name].key(it) : "").filter(x=>x && !x.startsWith("Без "));
+      const key = cat + "||" + parts.join("||");
+      if(!map.has(key)) map.set(key, { cat, parts, items: [] });
       map.get(key).items.push(it);
     }
     const groups = Array.from(map.values());
-    groups.forEach(g=>g.items.sort((a,b)=>
-      (a.sortOrder||0)-(b.sortOrder||0) ||
-      (Number(a.height)||0)-(Number(b.height)||0) ||
-      (a.printName||"").localeCompare(b.printName||"","ru")));
-    groups.sort((a,b)=>
-      a.cat.localeCompare(b.cat,"ru") ||
-      priceNumIn(a.d)-priceNumIn(b.d) ||
-      a.m.localeCompare(b.m,"ru"));
+    // Внутри группы сортируем по тем же характеристикам, что важны разделу
+    groups.forEach(g=>g.items.sort((a,b)=>{
+      for(const s of prof.sort){
+        if(s === "name") continue;
+        const d = attrNum(a, s) - attrNum(b, s);
+        if(d) return d;
+      }
+      return (a.sortOrder||0)-(b.sortOrder||0) || (a.printName||"").localeCompare(b.printName||"","ru");
+    }));
+    groups.sort((a,b)=>{
+      const c = a.cat.localeCompare(b.cat,"ru");
+      if(c) return c;
+      for(let i=0;i<Math.max(a.parts.length,b.parts.length);i++){
+        const x = a.parts[i] || "", y = b.parts[i] || "";
+        const nx = priceNumIn(x), ny = priceNumIn(y);
+        if(nx !== ny && (nx || ny)) return nx - ny;
+        const s = x.localeCompare(y,"ru");
+        if(s) return s;
+      }
+      return 0;
+    });
     return groups;
   }
 
   function renderPriceTable(){
     const items = priceVisibleItems();
-    const filtersOn = priceFilterCat || priceFilterDiams.size || priceFilterMats.size || priceFilterHeights.size || priceSearchQuery;
+    const filtersOn = priceFilterCat || Object.values(priceFilterSets).some(s=>s.size) || priceSearchQuery;
     document.getElementById("priceTreeInfo").textContent =
       `Найдено моделей: ${items.length} из ${catalogItems.length} в справочнике` + (filtersOn ? " (действуют фильтры)" : "");
 
@@ -2807,12 +2855,11 @@
     priceGroups = priceBuildGroups(items);
     body.innerHTML = priceGroups.map((g, gi)=>{
       const sel = g.items.filter(it=>priceSelected.has(it.id)).length;
-      const title = [g.cat, g.d].filter(Boolean).join(" · ");
+      const title = [g.cat, ...g.parts].join(" · ");
       const groupRow = `<tr class="pz-group"><td colspan="${colCount}">
           <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
             <input type="checkbox" class="pz-group-check" data-gi="${gi}">
-            ${g.m?`<span class="pz-badge" style="background:#fff;">${esc(g.m)}</span>`:""}
-            <span style="font-weight:600;">${esc(title)}${g.m?" · "+esc(g.m):""}</span>
+            <span style="font-weight:600;">${esc(title)}</span>
             <span style="color:var(--ink-soft); font-weight:400; font-size:12px;">${g.items.length} ${priceModelsWord(g.items.length)} · выбрано ${sel}</span>
           </label>
         </td></tr>`;
@@ -3126,7 +3173,7 @@
   document.getElementById("priceOnlyShown").addEventListener("change", ()=>{ renderPriceCatalogTree(); renderPriceFilters(); renderPriceTable(); });
   document.getElementById("btnPriceResetFilters").addEventListener("click", ()=>{
     priceFilterCat = null;
-    priceFilterDiams.clear(); priceFilterMats.clear(); priceFilterHeights.clear();
+    Object.values(priceFilterSets).forEach(s=>s.clear());
     priceSearchQuery = "";
     document.getElementById("priceSearch").value = "";
     renderPriceCatalogTree();
