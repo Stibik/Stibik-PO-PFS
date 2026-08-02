@@ -10,6 +10,18 @@ function num(v, def = 0) { const n = Number(v); return Number.isFinite(n) ? n : 
 function str(v, max = 500) { return String(v == null ? "" : v).replace(/[\r\n\t]+/g, " ").trim().slice(0, max); }
 function money(v) { return Math.round(num(v) * 100) / 100; }
 
+// В списке сотрудников после переноса из старой таблицы осели пометки, а не
+// люди: «не определено», «Без оплаты», «Перекрыто». Платить им некому, поэтому
+// в сводках и долгах они считаются как «не разнесено», а в выборе исполнителя
+// вообще не показываются. Удалять их нельзя — на них висит история.
+const SERVICE_NAMES = new Set([
+  "не определено", "не определен", "не определён", "без оплаты", "перекрыто",
+  "перекрыт", "возврат", "отмена", "пропустим", "хз", "-", "—"
+]);
+function isServiceEmployee(name) {
+  return SERVICE_NAMES.has(String(name || "").toLowerCase().trim());
+}
+
 // Расценка берётся ТОЛЬКО из Справочника (price_items.labor_rate) — так решили
 // сознательно, чтобы сумма не зависела от того, кто что вписал руками.
 // Найденное значение копируется в строку начисления и дальше не меняется:
@@ -49,6 +61,7 @@ function entryToJson(e, joined) {
     id: e.id,
     employeeId: e.employee_id,
     employeeName: emp ? emp.name : "",
+    employeeIsService: emp ? isServiceEmployee(emp.name) : false,
     orderNumber: o ? o.display_number : null,
     kaspiCode: o ? o.kaspi_code : null,
     orderDate: o ? (o.kaspi_creation_date || o.created_at || null) : null,
@@ -210,7 +223,10 @@ router.post("/from-production/:productionId", (req, res) => {
             db.prepare("SELECT name FROM employees WHERE id = ?").get(prod.employee_id)?.name || "", "Назначено в «Производстве»");
   logAudit({ user: req.session.username, action: "payroll_accrue", orderId: prod.order_id,
              comment: `${prod.product_name || prod.article}: ${money(entry.amount)} ₸` });
-  res.json(Object.assign(entryToJson(entry), { rateFound: found }));
+  // Перечитываем: строку только что дополнили автором разноски, и в ответ
+  // должна уйти уже обновлённая версия, а не та, что была сразу после вставки
+  const fresh = db.prepare("SELECT * FROM payroll_entries WHERE id = ?").get(entry.id);
+  res.json(Object.assign(entryToJson(fresh), { rateFound: found }));
 });
 
 // Работа на запас: изделие уходит на склад, начисление создаётся сразу,
@@ -424,6 +440,7 @@ router.get("/summary", (req, res) => {
     return {
       employeeId: emp.id,
       name: emp.name,
+      isService: isServiceEmployee(emp.name),   // пометка из старой таблицы, а не человек
       pendingCount: pending.count, pendingSum: pending.sum,       // отложено (работа не принята)
       pendingStockSum: agg("pending", "stock").sum,               // из них — на запас
       payableCount: payable.count, payableSum: payable.sum,       // к выплате
@@ -431,7 +448,8 @@ router.get("/summary", (req, res) => {
       payoutsSum: money(paidOut.s)                                // фактически выдано на руки (после вычетов)
     };
   });
-  const totals = rows.reduce((acc, r) => ({
+  // Итог считаем без служебных пометок — иначе «не определено» раздувает долг
+  const totals = rows.filter(r => !r.isService).reduce((acc, r) => ({
     pendingSum: money(acc.pendingSum + r.pendingSum),
     payableSum: money(acc.payableSum + r.payableSum),
     paidSum: money(acc.paidSum + r.paidSum),
@@ -454,7 +472,8 @@ router.get("/by-months", (req, res) => {
   for (const e of entries) {
     const name = e.emp_name || "не разнесено";
     const amount = num(e.amount);
-    if (!e.employee_id || !e.emp_name) { undistributed += amount; continue; }
+    // Служебная пометка — это то же самое, что пустая клетка в старом файле
+    if (!e.employee_id || !e.emp_name || isServiceEmployee(e.emp_name)) { undistributed += amount; continue; }
     people.add(name);
     if (e.status === "paid") {
       const when = String(e.paid_at || e.accepted_at || e.created_at || "").slice(0, 7);
