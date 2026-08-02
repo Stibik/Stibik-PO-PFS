@@ -393,6 +393,7 @@
     <button class="tab-btn" data-tab="price">Прайс</button>
     <button class="tab-btn" data-tab="salary">Зарплата</button>
     <button class="tab-btn" data-tab="production">Производство</button>
+    <button class="tab-btn" data-tab="warehouse">Склад</button>
     <button class="tab-btn" data-tab="tasks">Задачи</button>
     <button class="tab-btn" data-tab="monitor">Мои заказы</button>
     <button class="tab-btn" data-tab="stats">Статистика</button>
@@ -979,6 +980,27 @@
       </div>
       <div class="panel" id="statQuality" style="margin-top:14px;"></div>
     </section>
+    <section id="tab-warehouse" style="display:none">
+      <div class="toolbar">
+        <button class="btn amber" id="btnWhAdd">+ Добавить на склад</button>
+        <input type="text" id="whSearch" placeholder="Поиск по названию или артикулу..." style="flex:1; min-width:200px;">
+        <select id="whSource" style="min-width:170px;">
+          <option value="">Все поступления</option>
+          <option value="overproduced">Сшито на запас</option>
+          <option value="returned">Вернулось с возврата</option>
+          <option value="cancelled">С отменённого заказа</option>
+        </select>
+      </div>
+      <div id="whCards" style="display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:16px;"></div>
+      <div class="panel" style="padding:0; overflow:hidden;">
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr><th>Фото</th><th>Товар</th><th>Группа</th><th class="num">На складе</th><th>Откуда</th><th class="num">По рознице</th><th></th></tr></thead>
+            <tbody id="whBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
     <section id="tab-tasks" style="display:none">
       <style>
         #tab-tasks .tk-cols{display:grid; grid-template-columns:repeat(3,1fr); gap:14px; align-items:start;}
@@ -1444,11 +1466,9 @@
       но останется отложенным — заплатите, когда сами решите.
     </div>
     <div class="grid2">
-      <div class="full"><label>Товар из Справочника *</label>
-        <input type="text" id="spSearch" placeholder="Название или артикул..." style="width:100%;">
-        <div id="spHits" style="margin-top:6px;"></div>
-        <div id="spChosen" style="margin-top:6px; font-size:13px;"></div>
-      </div>
+      <div class="full"><label>Группа</label><select id="spGroup" style="width:100%;"></select></div>
+      <div class="full"><label>Материал</label><select id="spMaterial" style="width:100%;"></select></div>
+      <div class="full"><label>Товар *</label><select id="spItem" style="width:100%;"></select></div>
       <div><label>Исполнитель *</label><select id="spEmployee" style="width:100%;"></select></div>
       <div><label>Количество *</label><input type="number" min="1" step="1" id="spQty" value="1" style="width:100%;"></div>
       <div class="full"><label>Комментарий</label><input type="text" id="spComment" style="width:100%;"></div>
@@ -1643,6 +1663,44 @@
     <div class="modal-actions">
       <div></div>
       <button class="btn amber" id="demoUsersClose">Готово</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="whConsumeOverlay">
+  <div class="modal" style="max-width:560px;">
+    <h3 id="whConsumeTitle">Выдать со склада</h3>
+    <div style="font-size:12.5px; color:var(--ink-soft); margin-bottom:10px;">
+      Выберите заказ — изделие уйдёт со склада, а заказ закроется как «Списано со склада».
+      Зарплата за него не начисляется: работа уже оплачена.
+    </div>
+    <input type="text" id="whOrderSearch" placeholder="Поиск по номеру или названию..." style="width:100%; margin-bottom:8px;">
+    <div id="whOrdersList" style="max-height:44vh; overflow:auto;"></div>
+    <div class="modal-actions">
+      <button class="btn secondary" id="whConsumeNoOrder">Списать без заказа</button>
+      <button class="btn secondary" id="whConsumeClose">Отмена</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="whAddOverlay">
+  <div class="modal" style="max-width:520px;">
+    <h3>Добавить на склад</h3>
+    <div class="grid2">
+      <div class="full"><label>Группа</label><select id="whAddGroup" style="width:100%;"></select></div>
+      <div class="full"><label>Материал</label><select id="whAddMaterial" style="width:100%;"></select></div>
+      <div class="full"><label>Товар *</label><select id="whAddItem" style="width:100%;"></select></div>
+      <div><label>Количество</label><input type="number" id="whAddQty" value="1" min="1" style="width:100%;"></div>
+      <div><label>Откуда</label><select id="whAddSource" style="width:100%;">
+        <option value="overproduced">Сшито на запас</option>
+        <option value="returned">Вернулось с возврата</option>
+        <option value="cancelled">С отменённого заказа</option>
+      </select></div>
+    </div>
+    <div class="error" id="whAddError"></div>
+    <div class="modal-actions">
+      <div></div>
+      <div><button class="btn secondary" id="whAddCancel">Отмена</button> <button class="btn amber" id="whAddSave">Добавить</button></div>
     </div>
   </div>
 </div>
@@ -4680,6 +4738,170 @@
   ["statFrom","statTo","statShop"].forEach(id=>
     document.getElementById(id).addEventListener("change", ()=>{ statPeriod = ""; loadStats(); }));
 
+  // ================= Склад готовых изделий =================
+  // Менеджеру важно видеть «что уже есть», прежде чем отправлять в производство.
+  // Сюда попадает сшитое на запас и всё, что вернулось с возвратов и отмен.
+  let whData = null, whPendingOrders = [], whConsumeItem = null;
+  const WH_SOURCE = {
+    overproduced: { label:"сшито на запас", color:"#2563EB", bg:"#DBEAFE" },
+    returned:     { label:"возврат",        color:"#7C3AED", bg:"#EDE9FE" },
+    cancelled:    { label:"отмена",         color:"#B45309", bg:"#FEF3C7" }
+  };
+
+  async function loadWarehouse(){
+    document.getElementById("whBody").innerHTML = `<tr><td colspan="7" style="padding:20px; text-align:center; color:var(--ink-soft);">Загрузка...</td></tr>`;
+    try{
+      whData = await api("/warehouse");
+      if(!catalogItems.length){ try{ catalogItems = await api("/catalog"); }catch(e){} }
+      renderWarehouse();
+    }catch(e){
+      document.getElementById("whBody").innerHTML = `<tr><td colspan="7" style="padding:20px; color:var(--red);">Ошибка: ${esc(e.message)}</td></tr>`;
+    }
+  }
+
+  function renderWarehouse(){
+    const t = whData.totals;
+    const card = (color, big, label, sub) => `
+      <div class="panel" style="border-left:4px solid ${color}; margin:0;">
+        <div style="font-size:11px; text-transform:uppercase; color:var(--ink-soft);">${label}</div>
+        <div style="font-family:var(--serif); font-size:22px;">${big}</div>
+        <div style="font-size:11.5px; color:var(--ink-soft);">${sub}</div>
+      </div>`;
+    const bs = t.bySource || {};
+    document.getElementById("whCards").innerHTML =
+      card("var(--navy)", money(t.units) + " шт", "Всего на складе", `${t.positions} наименований`) +
+      card("#2563EB", money(bs.overproduced || 0) + " шт", "Сшито на запас", "работа уже оплачена") +
+      card("#7C3AED", money((bs.returned || 0) + (bs.cancelled || 0)) + " шт", "С возвратов и отмен", "платить не нужно") +
+      card("var(--amber)", money(t.retailValue) + " ₸", "По розничным ценам", "во что оценивается склад");
+
+    const q = (document.getElementById("whSearch").value || "").trim().toLowerCase();
+    const src = document.getElementById("whSource").value;
+    let groups = whData.groups;
+    if(q) groups = groups.filter(g=>String(g.name).toLowerCase().includes(q) || String(g.article).toLowerCase().includes(q));
+    if(src) groups = groups.filter(g=>g.bySource[src]);
+
+    const body = document.getElementById("whBody");
+    if(!groups.length){
+      body.innerHTML = `<tr><td colspan="7" style="padding:26px; text-align:center; color:var(--ink-soft);">
+        ${whData.groups.length ? "Ничего не найдено" : "Склад пуст. Сюда попадает то, что сшили на запас, и то, что вернулось с возвратов."}</td></tr>`;
+      return;
+    }
+    body.innerHTML = groups.map(g=>`
+      <tr>
+        <td>${g.photo?`<img class="thumb" src="${esc(g.photo)}">`:`<div class="thumb-empty">—</div>`}</td>
+        <td><b>${esc(g.name)}</b><div style="font-size:11px; color:var(--ink-soft);">${esc(g.article || "")}</div></td>
+        <td style="font-size:12.5px;">${esc(g.category || "—")}</td>
+        <td class="num"><b style="font-size:15px;">${money(g.qty)}</b></td>
+        <td>${Object.entries(g.bySource).map(([k,v])=>{
+              const s = WH_SOURCE[k] || { label:k, color:"#4B5563", bg:"#F3F4F6" };
+              return `<span class="cn-badge" style="color:${s.color}; background:${s.bg}; padding:2px 9px; border-radius:20px; font-size:11px; margin-right:4px;">${s.label} ${v}</span>`;
+            }).join("")}</td>
+        <td class="num">${g.retail ? money(g.qty * g.retail) + " ₸" : "—"}</td>
+        <td style="white-space:nowrap;">
+          <button class="btn amber" style="padding:4px 10px; font-size:12px;" data-wh-give="${esc(g.article)}">Выдать в заказ</button>
+        </td>
+      </tr>`).join("");
+
+    body.querySelectorAll("[data-wh-give]").forEach(b=>b.addEventListener("click", ()=>openWhConsume(b.dataset.whGive)));
+  }
+  ["whSearch","whSource"].forEach(id=>document.getElementById(id).addEventListener("input", ()=>{ if(whData) renderWarehouse(); }));
+  document.getElementById("whSource").addEventListener("change", ()=>{ if(whData) renderWarehouse(); });
+
+  async function openWhConsume(article){
+    const group = whData.groups.find(g=>g.article === article);
+    if(!group) return;
+    whConsumeItem = group.items.find(i=>!i.consumed);
+    if(!whConsumeItem){ toast("Свободных изделий не осталось"); return; }
+    document.getElementById("whConsumeTitle").textContent = `Выдать: ${group.name}`;
+    document.getElementById("whOrderSearch").value = "";
+    document.getElementById("whConsumeOverlay").classList.add("show");
+    try{
+      whPendingOrders = await api("/warehouse/pending-orders");
+    }catch(e){ whPendingOrders = []; }
+    renderWhOrders(article);
+  }
+
+  function renderWhOrders(article){
+    const q = (document.getElementById("whOrderSearch").value || "").trim().toLowerCase();
+    // Сначала показываем заказы на этот же товар — обычно списывают именно в них
+    const list = whPendingOrders
+      .filter(o=>!q || String(o.number).includes(q) || String(o.name||"").toLowerCase().includes(q) || String(o.article||"").toLowerCase().includes(q))
+      .sort((a,b)=>(b.article === article ? 1 : 0) - (a.article === article ? 1 : 0));
+    const wrap = document.getElementById("whOrdersList");
+    wrap.innerHTML = list.length ? list.map(o=>`
+      <div style="display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--line);
+                  ${o.article === article ? "background:#F0FDF4;" : ""}">
+        <div style="flex:1;">
+          <b>№${esc(o.number || "—")}</b> <span style="font-size:12px; color:var(--ink-soft);">${esc(o.shop || "")}</span>
+          <div style="font-size:12.5px;">${esc(o.name || "—")}
+            ${o.article === article ? `<span style="color:var(--green); font-size:11.5px;">· тот же товар</span>` : ""}</div>
+        </div>
+        <button class="btn amber" style="padding:4px 12px; font-size:12px;" data-wh-order="${esc(o.orderId)}">Выдать сюда</button>
+      </div>`).join("")
+      : `<div style="padding:16px; text-align:center; color:var(--ink-soft); font-size:12.5px;">Заказов, ждущих решения, нет</div>`;
+
+    wrap.querySelectorAll("[data-wh-order]").forEach(b=>b.addEventListener("click", ()=>consumeStock(b.dataset.whOrder)));
+  }
+  document.getElementById("whOrderSearch").addEventListener("input", ()=>renderWhOrders(whConsumeItem ? "" : ""));
+
+  async function consumeStock(orderId){
+    try{
+      await api(`/warehouse/${whConsumeItem.id}/consume`, {method:"POST", body: JSON.stringify({ orderId: orderId || null })});
+      document.getElementById("whConsumeOverlay").classList.remove("show");
+      toast(orderId ? "Выдано в заказ, зарплата не начисляется" : "Списано со склада");
+      loadWarehouse();
+    }catch(e){ toast("Не получилось: " + e.message); }
+  }
+  document.getElementById("whConsumeNoOrder").addEventListener("click", ()=>{
+    if(confirm("Списать со склада без привязки к заказу?")) consumeStock(null);
+  });
+  document.getElementById("whConsumeClose").addEventListener("click", ()=>document.getElementById("whConsumeOverlay").classList.remove("show"));
+
+  // ---------- Выбор товара разбивкой: группа → материал → товар ----------
+  // Искать текстом среди 233 позиций неудобно, а так выбор сужается сам
+  function fillCascade(groupSel, matSel, itemSel){
+    const groups = Array.from(new Set(catalogItems.filter(it=>!it.isArchived).map(it=>it.category).filter(Boolean))).sort();
+    groupSel.innerHTML = `<option value="">— все группы —</option>` + groups.map(g=>`<option value="${esc(g)}">${esc(g)}</option>`).join("");
+    const refresh = ()=>{
+      const g = groupSel.value;
+      const inGroup = catalogItems.filter(it=>!it.isArchived && (!g || it.category === g));
+      const mats = Array.from(new Set(inGroup.map(it=>it.material).filter(Boolean))).sort();
+      const prevMat = matSel.value;
+      matSel.innerHTML = `<option value="">— все материалы —</option>` + mats.map(m=>`<option value="${esc(m)}">${esc(m)}</option>`).join("");
+      if(mats.includes(prevMat)) matSel.value = prevMat;
+      const m = matSel.value;
+      const items = inGroup.filter(it=>!m || it.material === m)
+        .sort((a,b)=>(a.printName||a.kaspiName||"").localeCompare(b.printName||b.kaspiName||"","ru"));
+      itemSel.innerHTML = `<option value="">— выберите товар —</option>` +
+        items.map(it=>`<option value="${esc(it.article)}">${esc(it.printName || it.kaspiName || it.article)}${it.laborRate ? ` · работа ${money(it.laborRate)} ₸` : " · расценка не задана"}</option>`).join("");
+    };
+    groupSel.onchange = refresh;
+    matSel.onchange = refresh;
+    refresh();
+  }
+
+  document.getElementById("btnWhAdd").addEventListener("click", async ()=>{
+    if(!catalogItems.length){ try{ catalogItems = await api("/catalog"); }catch(e){} }
+    fillCascade(document.getElementById("whAddGroup"), document.getElementById("whAddMaterial"), document.getElementById("whAddItem"));
+    document.getElementById("whAddQty").value = "1";
+    document.getElementById("whAddError").textContent = "";
+    document.getElementById("whAddOverlay").classList.add("show");
+  });
+  document.getElementById("whAddCancel").addEventListener("click", ()=>document.getElementById("whAddOverlay").classList.remove("show"));
+  document.getElementById("whAddSave").addEventListener("click", async ()=>{
+    const article = document.getElementById("whAddItem").value;
+    if(!article){ document.getElementById("whAddError").textContent = "Выберите товар"; return; }
+    try{
+      await api("/warehouse", {method:"POST", body: JSON.stringify({
+        article, qty: parseInt(document.getElementById("whAddQty").value, 10) || 1,
+        source: document.getElementById("whAddSource").value
+      })});
+      document.getElementById("whAddOverlay").classList.remove("show");
+      toast("Добавлено на склад");
+      loadWarehouse();
+    }catch(e){ document.getElementById("whAddError").textContent = e.message; }
+  });
+
   // ================= Доска задач =================
   // Бытовые поручения: купить, сделать, съездить. Специально отдельно от
   // «Производства» — там работа по заказам и деньги, тут зарплата не считается.
@@ -5378,38 +5600,22 @@
   // ---------- Работа на запас ----------
   async function openStockProduction(){
     spItem = null;
-    document.getElementById("spSearch").value = "";
-    document.getElementById("spHits").innerHTML = "";
-    document.getElementById("spChosen").innerHTML = "";
     document.getElementById("spPreview").innerHTML = "";
     document.getElementById("spError").textContent = "";
     document.getElementById("spQty").value = "1";
     if(!employeesList.length){ try{ employeesList = await api("/employees"); }catch(e){} }
+    if(!catalogItems.length){ try{ catalogItems = await api("/catalog"); }catch(e){} }
     document.getElementById("spEmployee").innerHTML = `<option value="">— выберите —</option>` +
       employeesList.map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join("");
+    // Выбор сужается по шагам: группа → материал → товар
+    fillCascade(document.getElementById("spGroup"), document.getElementById("spMaterial"), document.getElementById("spItem"));
+    document.getElementById("spItem").onchange = ()=>{
+      spItem = catalogItems.find(x=>x.article === document.getElementById("spItem").value) || null;
+      updateSpPreview();
+    };
     document.getElementById("stockProdOverlay").classList.add("show");
   }
-  document.getElementById("spSearch").addEventListener("input", async (e)=>{
-    const q = e.target.value.trim().toLowerCase();
-    const hits = document.getElementById("spHits");
-    if(q.length < 2){ hits.innerHTML = ""; return; }
-    if(!catalogItems.length){ try{ catalogItems = await api("/catalog"); }catch(err){} }
-    const found = catalogItems.filter(it=>
-      (it.printName||"").toLowerCase().includes(q) ||
-      (it.kaspiName||"").toLowerCase().includes(q) ||
-      (it.article||"").toLowerCase().includes(q)).slice(0, 6);
-    hits.innerHTML = found.length
-      ? found.map(it=>`<button class="btn secondary" style="padding:4px 10px; font-size:12px; margin:0 6px 6px 0;" data-sp="${esc(it.id)}">${esc(it.printName || it.kaspiName || it.article)}${it.laborRate ? "" : " ⚠"}</button>`).join("")
-      : `<span style="font-size:12px; color:var(--ink-soft);">Не найдено в Справочнике</span>`;
-    hits.querySelectorAll("[data-sp]").forEach(b=>b.addEventListener("click", ()=>{
-      spItem = catalogItems.find(x=>x.id === b.dataset.sp);
-      hits.innerHTML = "";
-      document.getElementById("spSearch").value = "";
-      document.getElementById("spChosen").innerHTML = `<b>${esc(spItem.printName || spItem.kaspiName || spItem.article)}</b>
-        <span style="color:var(--ink-soft);">· ${esc(spItem.article||"")}</span>`;
-      updateSpPreview();
-    }));
-  });
+
   function updateSpPreview(){
     const box = document.getElementById("spPreview");
     if(!spItem){ box.innerHTML = ""; return; }
@@ -5493,6 +5699,13 @@
         <b>Три шага, они подписаны прямо в строке:</b> шаг 1 — решить, откуда берём товар; шаг 2 — нажать «✓ Сделали», когда готово; шаг 3 — выплатить в «Зарплате».<br>
         <b>Основная швея</b> выбирается сверху один раз — дальше кнопка сразу пишет её имя, выбирать каждый раз не нужно.<br>
         <b>На запас:</b> кнопка «Сделать на запас» — изделие встаёт на склад, начисление создаётся, но платить сразу не обязаны.`
+    },
+    warehouse: {
+      title: "Склад — что лежит готовое",
+      body: `<b>Что здесь:</b> изделия, которые уже есть в наличии: сшитые на запас и вернувшиеся с возвратов и отмен.<br>
+        <b>Зачем:</b> прежде чем ставить заказ в производство, посмотрите сюда — может, товар уже лежит.<br>
+        <b>Как списать:</b> кнопка «Выдать в заказ» рядом с позицией — выбираете заказ, товар уходит со склада, а заказ закрывается как «Списано со склада».<br>
+        <b>Про оплату:</b> за такие изделия зарплата не начисляется — работа была оплачена, когда шили на запас, а за возврат платить не за что.`
     },
     stats: {
       title: "Статистика — сколько заработали и что шить",
@@ -5950,12 +6163,13 @@
     b.addEventListener("click", ()=>{
       document.querySelectorAll(".tab-btn").forEach(x=>x.classList.remove("active"));
       b.classList.add("active");
-      ["orders","kaspiOrders","claims","price","catalog","salary","production","tasks","monitor","stats","kaspi","audit","users"].forEach(t=> document.getElementById("tab-"+t).style.display = (t===b.dataset.tab)?"":"none");
+      ["orders","kaspiOrders","claims","price","catalog","salary","production","warehouse","tasks","monitor","stats","kaspi","audit","users"].forEach(t=> document.getElementById("tab-"+t).style.display = (t===b.dataset.tab)?"":"none");
       if(b.dataset.tab === "orders") applyContour();
       if(b.dataset.tab === "catalog") loadCatalog();
       if(b.dataset.tab === "price") { loadPriceCompanies().catch(()=>{}).then(loadPriceTab); }
       if(b.dataset.tab === "production") loadProduction();
       if(b.dataset.tab === "salary") loadSalary();
+      if(b.dataset.tab === "warehouse") loadWarehouse();
       if(b.dataset.tab === "tasks") loadTasks();
       if(b.dataset.tab === "monitor") loadMonitor();
       if(b.dataset.tab === "stats") loadStats();
