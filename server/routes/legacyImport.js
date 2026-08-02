@@ -17,15 +17,17 @@ const NOT_A_PERSON = new Set([
   "перекрыто","перекрыт","перекрытро","прекрыт","возврат","отмена","пропустим",
   "без оплаты","хз","","none","-","—"
 ]);
-const COVERED_WORDS = ["перекрыт","прекрыт","возврат","отмена","без оплаты"];
+const COVERED_WORDS = ["перекрыт","прекрыт","возврат","отмена","без оплаты","пропустим"];
+// «Доплатить» — это НЕ перекрытие, а прямое указание, что человеку должны
+const DEBT_WORDS = ["доплатить","долг","не выплачено"];
 
 // Заказ закрыт со склада (возврат/отмена), а не изготовлен заново
 function isCovered(raw) {
   const ex = String(raw.executor || "").toLowerCase().trim();
   const pay = String(raw.payCode || "").toLowerCase().trim();
   if (COVERED_WORDS.some(w => ex.includes(w))) return true;
-  // «Без оплаты» в колонке оплаты при отсутствии живого исполнителя — тоже перекрытие
-  if (!cleanName(raw.executor) && COVERED_WORDS.some(w => pay.includes(w))) return true;
+  if (DEBT_WORDS.some(w => pay.includes(w))) return false;   // «доплатить» — это долг, а не перекрытие
+  if (COVERED_WORDS.some(w => pay.includes(w))) return true; // «без оплаты», «отмена», «пропустим»
   return false;
 }
 // В старом файле имена писали по-разному
@@ -38,11 +40,27 @@ function cleanName(v) {
   return NAME_FIX[low] || s;
 }
 
-// Код выплаты вида «Б1906»: первая буква имени и дата. Если он есть —
-// работа уже оплачена, если нет — это долг.
+// Отметка об оплате. В новом формате это дата выплаты, в старом — код вида
+// «Б1906» (буква имени плюс день и месяц). Понимаем оба варианта.
 function payCodeOf(v) {
-  const s = str(v, 20);
-  return /^[АABНHИСБб]\s?\d{4}$/i.test(s) ? s.toUpperCase().replace(/\s/g, "") : null;
+  if (!v) return null;
+  // Дата: пришла как ISO-строка от браузера
+  const s = String(v).trim();
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return { date: `${iso[1]}-${iso[2]}-${iso[3]}`, label: `${iso[3]}.${iso[2]}.${iso[1]}` };
+  // Дата в привычном виде 19.01.2026 или 19.01
+  const dot = s.match(/^(\d{1,2})[.\/](\d{1,2})(?:[.\/](\d{2,4}))?$/);
+  if (dot) {
+    const year = dot[3] ? (dot[3].length === 2 ? "20" + dot[3] : dot[3]) : String(new Date().getFullYear());
+    return { date: `${year}-${dot[2].padStart(2, "0")}-${dot[1].padStart(2, "0")}`, label: s };
+  }
+  // Старый код «Н1901» — день и месяц без года
+  const code = s.match(/^([АABНHИСБб])\s?(\d{2})(\d{2})$/i);
+  if (code) {
+    const year = new Date().getFullYear();
+    return { date: `${year}-${code[3]}-${code[2]}`, label: s.toUpperCase().replace(/\s/g, "") };
+  }
+  return null;
 }
 
 function analyze(rows) {
@@ -178,7 +196,8 @@ router.post("/apply", (req, res) => {
       }
 
       const order = kaspiCode ? db.prepare("SELECT id, shop FROM orders WHERE kaspi_code = ?").get(kaspiCode) : null;
-      const code = payCodeOf(raw.payCode);
+      const paid = payCodeOf(raw.payCode);
+      const paidAt = paid ? paid.date + "T12:00:00" : null;
       const id = uid("pay");
       db.prepare(`INSERT INTO payroll_entries
         (id, employee_id, order_id, shop, article, product_name, qty, rate, amount, kind, status,
@@ -186,15 +205,17 @@ router.post("/apply", (req, res) => {
         VALUES (?,?,?,?,?,?,1,?,?,'order',?,?,?,?,?,?,?,0)`)
         .run(id, employeeId, order ? order.id : null, str(raw.shop, 20) || (order ? order.shop : null),
              str(raw.article, 60), str(raw.name, 200), amount, amount,
-             code ? "paid" : "payable",
-             `Перенос из старой системы${code ? `, выплата ${code}` : ""}`,
+             paid ? "paid" : "payable",
+             `Перенос из старой системы${paid ? `, выплата ${paid.label}` : ""}`,
              now, req.session.username, req.session.username, now, legacyKey);
+      // Дату выплаты проставляем из файла, иначе всё свалится в текущий месяц
+      if (paidAt) db.prepare("UPDATE payroll_entries SET paid_at = ? WHERE id = ?").run(paidAt, id);
       stats.entriesCreated++;
 
-      if (code) {
+      if (paid) {
         stats.paidTotal += amount;
-        const key = `${employeeId}|${code}`;
-        if (!payoutBuckets.has(key)) payoutBuckets.set(key, { employeeId, code, sum: 0, ids: [] });
+        const key = `${employeeId}|${paid.date}`;
+        if (!payoutBuckets.has(key)) payoutBuckets.set(key, { employeeId, code: paid.label, date: paid.date, sum: 0, ids: [] });
         const b = payoutBuckets.get(key);
         b.sum += amount; b.ids.push(id);
       } else {
@@ -210,9 +231,9 @@ router.post("/apply", (req, res) => {
       db.prepare(`INSERT INTO payouts (id, number, employee_id, accrued, deductions_total, amount, comment, created_by, created_at)
                   VALUES (?,?,?,?,0,?,?,?,?)`)
         .run(payoutId, nextNumber++, b.employeeId, b.sum, b.sum,
-             `Перенос из старой системы, код ${b.code}`, req.session.username, now);
-      const upd = db.prepare("UPDATE payroll_entries SET payout_id = ?, paid_at = ? WHERE id = ?");
-      b.ids.forEach(id => upd.run(payoutId, now, id));
+             `Перенос из старой системы, выплата ${b.code}`, req.session.username, b.date + "T12:00:00");
+      const upd = db.prepare("UPDATE payroll_entries SET payout_id = ? WHERE id = ?");
+      b.ids.forEach(id => upd.run(payoutId, id));
       stats.payoutsCreated++;
     }
   }
