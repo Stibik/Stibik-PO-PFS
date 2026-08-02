@@ -4864,7 +4864,8 @@
     const reader = new FileReader();
     reader.onload = async (ev)=>{
       try{
-        const wb = XLSX.read(ev.target.result, {type:"array"});
+        // cellDates: даты выплат должны прийти датами, а не числами Excel
+        const wb = XLSX.read(ev.target.result, {type:"array", cellDates:true});
         // Берём лист, где больше всего строк — это и есть история заказов
         let best = null;
         for(const nm of wb.SheetNames){
@@ -4905,7 +4906,9 @@
             name: cName>=0 ? row[cName] : "",
             amount: cAmount>=0 ? row[cAmount] : 0,
             executor: cExec>=0 ? row[cExec] : "",
-            payCode: cPay>=0 ? row[cPay] : ""
+            payCode: cPay>=0 ? (row[cPay] instanceof Date
+              ? new Date(row[cPay].getTime() - row[cPay].getTimezoneOffset()*60000).toISOString().slice(0,10)
+              : row[cPay]) : ""
           });
         }
         if(!legacyRows.length) throw new Error("не нашлось ни одной строки");
