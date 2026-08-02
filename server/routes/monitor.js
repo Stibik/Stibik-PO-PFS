@@ -30,14 +30,23 @@ function toCard(prod, entry) {
     status: entry ? (entry.status === "paid" ? "paid" : (entry.status === "payable" ? "confirmed" : (entry.reported_done ? "reported" : "in_work"))) : "free",
     reportedAt: entry ? entry.reported_at : null,
     reportedWeight: entry ? entry.reported_weight : null,
+    managerComment: prod.manager_comment,
     entryId: entry ? entry.id : null
   };
 }
 
 // Свободные заказы — только те, что менеджер отправил в монитор
 router.get("/free", (req, res) => {
-  const rows = db.prepare("SELECT * FROM production WHERE decision IS NULL AND published = 1 ORDER BY published_at, created_at").all();
-  res.json(rows.map(r => Object.assign(toCard(r, null), { publishedAt: r.published_at })));
+  const me = currentEmployeeId(req);
+  const rows = db.prepare(`SELECT * FROM production WHERE decision IS NULL AND published = 1
+                           ORDER BY published_at, created_at`).all();
+  // Адресные заказы показываем только тому, кому отправили
+  const visible = rows.filter(r => !r.published_for || r.published_for === me);
+  res.json(visible.map(r => Object.assign(toCard(r, null), {
+    publishedAt: r.published_at,
+    forMe: !!r.published_for,
+    managerComment: r.manager_comment
+  })));
 });
 
 // Мои работы
