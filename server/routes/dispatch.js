@@ -13,18 +13,25 @@ router.post("/publish", (req, res) => {
   if (!ids.length) return res.status(400).json({ error: "no_ids", message: "Не выбрано ни одной позиции" });
 
   const now = new Date().toISOString();
+  // Кому отправляем: конкретному сотруднику или всем (пусто)
+  const forEmployee = req.body?.employeeId
+    ? (db.prepare("SELECT id FROM employees WHERE id = ?").get(req.body.employeeId) ? req.body.employeeId : null)
+    : null;
+  const comment = String(req.body?.comment || "").replace(/[\r\n\t]+/g, " ").trim().slice(0, 500) || null;
   let published = 0, skipped = 0;
   for (const id of ids) {
     const row = db.prepare("SELECT * FROM production WHERE id = ?").get(id);
     if (!row) { skipped++; continue; }
     // Уже решённые не отправляем: их либо кто-то взял, либо списали со склада
     if (row.decision) { skipped++; continue; }
-    db.prepare("UPDATE production SET published = 1, published_at = ?, published_by = ? WHERE id = ?")
-      .run(now, req.session.username, id);
+    db.prepare(`UPDATE production SET published = 1, published_at = ?, published_by = ?,
+                published_for = ?, manager_comment = ? WHERE id = ?`)
+      .run(now, req.session.username, forEmployee, comment || row.manager_comment || null, id);
     published++;
   }
-  logAudit({ user: req.session.username, action: "production_publish", comment: `Отправлено забивщикам: ${published}` });
-  res.json({ ok: true, published, skipped });
+  const who = forEmployee ? db.prepare("SELECT name FROM employees WHERE id = ?").get(forEmployee)?.name : "всем";
+  logAudit({ user: req.session.username, action: "production_publish", comment: `Отправлено (${who}): ${published}` });
+  res.json({ ok: true, published, skipped, forEmployee, forName: who });
 });
 
 // Забрать обратно из монитора — пока заказ никто не взял
