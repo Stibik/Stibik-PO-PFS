@@ -804,6 +804,8 @@
       <div class="toolbar">
         <button class="btn secondary" id="btnSalaryEmployees">Сотрудники</button>
         <button class="btn secondary" id="btnSalaryHistory">История выплат</button>
+        <button class="btn secondary admin-only" id="btnLegacyImport">⬆️ Перенос из старой системы</button>
+        <input type="file" id="legacyFile" accept=".xlsx,.xls" style="display:none">
         <span style="margin-left:auto; font-size:12.5px; color:var(--ink-soft);">Расценки берутся из Справочника</span>
       </div>
       <div class="panel" style="background:#F7FAFF; border-color:#CFE0F5; display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
@@ -1545,6 +1547,25 @@
     <div class="modal-actions">
       <div></div>
       <button class="btn amber" id="photoLinkClose">Готово</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="legacyOverlay">
+  <div class="modal" style="max-width:700px;">
+    <h3>Перенос из старой системы</h3>
+    <div style="font-size:12.5px; color:var(--ink-soft); margin-bottom:12px;">
+      Из вашего Excel переносятся три вещи: номера заказов (привязка по коду Kaspi),
+      сотрудники и зарплата — что уже выплачено и что осталось должны.
+      Сначала посмотрите предпросмотр, ничего не изменится, пока не нажмёте «Залить».
+    </div>
+    <div id="legacyBody">
+      <button class="btn amber" id="legacyPick">Выбрать файл Excel</button>
+    </div>
+    <div class="error" id="legacyError"></div>
+    <div class="modal-actions">
+      <div id="legacyActions"></div>
+      <button class="btn secondary" id="legacyClose">Закрыть</button>
     </div>
   </div>
 </div>
@@ -4370,6 +4391,130 @@
 
     if(!employeesList.length){ try{ employeesList = await api("/employees"); }catch(e){} }
     loadSalaryWorks();
+  }
+
+  // ---------- Перенос из старой системы ----------
+  // Excel разбираем прямо в браузере, на сервер уходит уже готовый список строк
+  let legacyRows = [];
+
+  document.getElementById("btnLegacyImport").addEventListener("click", ()=>{
+    legacyRows = [];
+    document.getElementById("legacyBody").innerHTML = `<button class="btn amber" id="legacyPick2">Выбрать файл Excel</button>
+      <div style="font-size:12px; color:var(--ink-soft); margin-top:8px;">Нужен лист со столбцами: № IN, Заказ, Компания, наим-е, сумма, Исполнитель, Оплата</div>`;
+    document.getElementById("legacyActions").innerHTML = "";
+    document.getElementById("legacyError").textContent = "";
+    document.getElementById("legacyOverlay").classList.add("show");
+    document.getElementById("legacyPick2").addEventListener("click", ()=>document.getElementById("legacyFile").click());
+  });
+  document.getElementById("legacyClose").addEventListener("click", ()=>document.getElementById("legacyOverlay").classList.remove("show"));
+
+  document.getElementById("legacyFile").addEventListener("change", (e)=>{
+    const file = e.target.files[0];
+    e.target.value = "";
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = async (ev)=>{
+      try{
+        const wb = XLSX.read(ev.target.result, {type:"array"});
+        // Берём лист, где больше всего строк — это и есть история заказов
+        let best = null;
+        for(const nm of wb.SheetNames){
+          const arr = XLSX.utils.sheet_to_json(wb.Sheets[nm], {header:1, defval:null});
+          if(!best || arr.length > best.arr.length) best = { nm, arr };
+        }
+        const arr = best.arr;
+        const head = (arr[0]||[]).map(x=>String(x||"").toLowerCase().trim());
+        const findCol = (...keys)=>{
+          for(let i=0;i<head.length;i++) if(keys.some(k=>head[i].includes(k))) return i;
+          return -1;
+        };
+        const cNum = findCol("№ in","номер","№"), cCode = findCol("заказ"), cShop = findCol("компания","магазин");
+        const cName = findCol("наим"), cExec = findCol("исполнит"), cPay = findCol("оплат"), cQty = findCol("кол-во");
+        // Сумма — колонка без заголовка сразу после наименования
+        let cAmount = -1;
+        for(let i=0;i<head.length;i++){
+          if(i > cName && !head[i] && arr.slice(1,40).some(r=>typeof r[i] === "number" && r[i] > 100)) { cAmount = i; break; }
+        }
+        if(cAmount === -1) cAmount = findCol("сумма","расценка","к выплате");
+
+        legacyRows = [];
+        for(let r=1;r<arr.length;r++){
+          const row = arr[r];
+          if(!row || row.every(x=>x==null)) continue;
+          legacyRows.push({
+            num: cNum>=0 ? row[cNum] : null,
+            kaspiCode: cCode>=0 && row[cCode]!=null ? String(row[cCode]).trim() : "",
+            shop: cShop>=0 ? row[cShop] : "",
+            name: cName>=0 ? row[cName] : "",
+            amount: cAmount>=0 ? row[cAmount] : 0,
+            executor: cExec>=0 ? row[cExec] : "",
+            payCode: cPay>=0 ? row[cPay] : ""
+          });
+        }
+        if(!legacyRows.length) throw new Error("не нашлось ни одной строки");
+        document.getElementById("legacyBody").innerHTML = `<div style="padding:10px 0;">Читаю файл: лист «${esc(best.nm)}», строк ${legacyRows.length}. Проверяю на сервере...</div>`;
+        const p = await api("/legacy-import/preview", {method:"POST", body: JSON.stringify({rows: legacyRows})});
+        renderLegacyPreview(p);
+      }catch(err){
+        document.getElementById("legacyError").textContent = "Не получилось прочитать файл: " + err.message;
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  });
+
+  function renderLegacyPreview(p){
+    document.getElementById("legacyBody").innerHTML = `
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px 16px; font-size:13px;">
+        <div>Строк в файле: <b>${p.rows}</b></div>
+        <div>Заказов найдено по коду Kaspi: <b>${p.matched}</b></div>
+        <div>Номеров будет проставлено: <b>${p.numbered}</b></div>
+        <div>Заказов не найдено: <b>${p.notMatched}</b></div>
+        <div>Уже выплачено: <b>${money(p.paidSum)} ₸</b></div>
+        <div>Останется долг: <b style="color:var(--red);">${money(p.debtSum)} ₸</b></div>
+      </div>
+      ${p.notMatched ? `<div style="font-size:11.5px; color:var(--ink-soft); margin-top:8px;">
+        Не найдены, например: ${esc(p.unmatchedExamples.join(", "))}. Обычно это старые заказы, которых нет в системе — их номера просто не проставятся.</div>` : ""}
+      <div style="margin-top:12px;"><b style="font-size:13px;">Сотрудники</b>
+        <table style="width:100%; margin-top:6px;"><thead><tr><th>Имя</th><th class="num">Работ</th><th class="num">Выплачено</th><th class="num">Долг</th><th>В системе</th></tr></thead>
+        <tbody>${p.employees.map(e=>`<tr>
+          <td>${esc(e.name)}</td><td class="num">${e.works}</td>
+          <td class="num">${money(e.paid)}</td>
+          <td class="num"><b style="color:${e.debt?"var(--red)":"inherit"};">${money(e.debt)}</b></td>
+          <td>${e.exists ? "есть" : "будет заведён"}</td></tr>`).join("")}</tbody></table>
+      </div>
+      <div style="margin-top:12px; font-size:12.5px;">
+        <label style="display:block;"><input type="checkbox" id="legacyDoNumbers" checked> Проставить номера заказов</label>
+        <label style="display:block;"><input type="checkbox" id="legacyDoSalary" checked> Завести сотрудников и зарплату</label>
+      </div>`;
+    document.getElementById("legacyActions").innerHTML =
+      `<button class="btn amber" id="legacyApply">Залить в программу</button>`;
+    document.getElementById("legacyApply").addEventListener("click", async ()=>{
+      if(!confirm("Залить данные? Номера заказов будут заменены на номера из файла, а зарплата — начислена.")) return;
+      const btn = document.getElementById("legacyApply");
+      btn.disabled = true; btn.textContent = "Заливаю...";
+      try{
+        const r = await api("/legacy-import/apply", {method:"POST", body: JSON.stringify({
+          rows: legacyRows,
+          options: {
+            numbers: document.getElementById("legacyDoNumbers").checked,
+            salary: document.getElementById("legacyDoSalary").checked
+          }
+        })});
+        document.getElementById("legacyBody").innerHTML = `<div style="font-size:13.5px; line-height:1.8;">
+          <b style="color:var(--green);">Готово.</b><br>
+          Номеров проставлено: <b>${r.numbersUpdated}</b><br>
+          Сотрудников заведено: <b>${r.employeesCreated}</b><br>
+          Начислений создано: <b>${r.entriesCreated}</b>${r.entriesSkipped ? ` (пропущено повторных: ${r.entriesSkipped})` : ""}<br>
+          Выплат перенесено: <b>${r.payoutsCreated}</b> на ${money(r.paidTotal)} ₸<br>
+          Осталось должны: <b style="color:var(--red);">${money(r.debtTotal)} ₸</b>
+        </div>`;
+        document.getElementById("legacyActions").innerHTML = "";
+        loadSalary();
+      }catch(e){
+        document.getElementById("legacyError").textContent = e.message;
+        btn.disabled = false; btn.textContent = "Залить в программу";
+      }
+    });
   }
 
   // ---------- Все работы: список с артикулами и разнесением по людям ----------
