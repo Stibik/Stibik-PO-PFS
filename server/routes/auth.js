@@ -80,7 +80,8 @@ router.get("/me", requireAuth, (req, res) => {
     roleLabel: ROLE_LABELS[user.role] || user.role,
     permissions: req.session.permissions,
     employeeId: user.employee_id || null,
-    mustChangePassword: user.must_change_password === 1
+    mustChangePassword: user.must_change_password === 1,
+    impersonating: req.session.impersonatedBy ? req.session.impersonatedBy.username : null
   });
 });
 
@@ -232,6 +233,66 @@ router.post("/demo-users", requireAdmin, (req, res) => {
   }
   logAudit({ user: req.session.username, action: "create_demo_users", comment: created.map(c => c.username).join(", ") });
   res.json({ ok: true, users: created.map(c => ({ username: c.username, password: c.password, role: c.role, employee: c.employee, status: c.status })) });
+});
+
+// ---------- Тестовое переключение ролей ----------
+// Чтобы проверить приложение глазами швеи или забивщика, не выходя и не
+// вводя пароли заново. Пускаем только администратора, и в журнале видно,
+// кто под кем сидел — иначе это была бы дыра в безопасности.
+router.post("/switch/:username", (req, res) => {
+  const isAdmin = req.session?.role === "admin";
+  const isImpersonating = !!req.session?.impersonatedBy;
+  if (!isAdmin && !isImpersonating) {
+    return res.status(403).json({ error: "admin_only", message: "Переключаться может только администратор" });
+  }
+  const target = db.prepare("SELECT * FROM users WHERE username = ?").get(req.params.username);
+  if (!target) return res.status(404).json({ error: "not_found", message: "Такого пользователя нет" });
+  if (target.is_active === 0) return res.status(400).json({ error: "disabled", message: "Учётная запись отключена" });
+
+  // Запоминаем, кто переключился, чтобы можно было вернуться
+  const original = req.session.impersonatedBy || { userId: req.session.userId, username: req.session.username };
+  req.session.impersonatedBy = original;
+  req.session.userId = target.id;
+  req.session.username = target.username;
+  req.session.role = target.role;
+  req.session.permissions = permissionsOf(target);
+
+  logAudit({ user: original.username, action: "switch_role", comment: `вошёл как ${target.username}` });
+  res.json({ ok: true, username: target.username, role: target.role, permissions: req.session.permissions });
+});
+
+router.post("/switch-back", (req, res) => {
+  const original = req.session?.impersonatedBy;
+  if (!original) return res.status(400).json({ error: "not_switched", message: "Вы и так под своей учётной записью" });
+  const user = db.prepare("SELECT * FROM users WHERE id = ?").get(original.userId);
+  if (!user) return req.session.destroy(() => res.status(401).json({ error: "not_authenticated" }));
+
+  req.session.userId = user.id;
+  req.session.username = user.username;
+  req.session.role = user.role;
+  req.session.permissions = permissionsOf(user);
+  delete req.session.impersonatedBy;
+  logAudit({ user: user.username, action: "switch_back" });
+  res.json({ ok: true, username: user.username, role: user.role, permissions: req.session.permissions });
+});
+
+// Кого можно примерить: активные учётки, кроме себя
+router.get("/switch-targets", (req, res) => {
+  const isAdmin = req.session?.role === "admin";
+  if (!isAdmin && !req.session?.impersonatedBy) {
+    return res.status(403).json({ error: "admin_only" });
+  }
+  const ROLE_ORDER = { admin: 0, manager: 1, warehouse: 2, stitcher: 3 };
+  const rows = db.prepare("SELECT id, username, role, employee_id FROM users WHERE is_active = 1").all();
+  res.json(rows.map(u => {
+    const emp = u.employee_id ? db.prepare("SELECT name FROM employees WHERE id = ?").get(u.employee_id) : null;
+    return {
+      username: u.username, role: u.role,
+      roleLabel: ROLE_LABELS[u.role] || u.role,
+      employeeName: emp ? emp.name : "",
+      current: u.username === req.session.username
+    };
+  }).sort((a, b) => (ROLE_ORDER[a.role] ?? 9) - (ROLE_ORDER[b.role] ?? 9) || a.username.localeCompare(b.username)));
 });
 
 router.delete("/users/:id", requireAdmin, (req, res) => {
