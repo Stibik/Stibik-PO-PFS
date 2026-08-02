@@ -933,11 +933,21 @@
       <style>
         #tab-monitor .mn-card{border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin-bottom:10px; background:#fff; display:flex; gap:12px; align-items:center; flex-wrap:wrap;}
         #tab-monitor .mn-card .mn-main{flex:1; min-width:180px;}
+        #tab-monitor .mn-order{font-size:20px; font-weight:800; letter-spacing:-.02em; line-height:1.1; margin-bottom:2px;}
+        #tab-monitor .mn-shop{font-size:12px; font-weight:600; color:#fff; background:var(--navy); padding:2px 8px; border-radius:20px; vertical-align:middle;}
         #tab-monitor .mn-title{font-size:14px; font-weight:600;}
         #tab-monitor .mn-meta{font-size:12px; color:var(--ink-soft); margin-top:2px;}
         #tab-monitor .mn-money{font-size:17px; font-weight:700; white-space:nowrap;}
         #tab-monitor .mn-cards{display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:16px;}
-        @media (max-width:760px){ #tab-monitor .mn-cards{grid-template-columns:1fr 1fr;} #tab-monitor .mn-card{padding:12px;} }
+        @media (max-width:760px){
+          #tab-monitor .mn-cards{grid-template-columns:1fr 1fr; gap:8px;}
+          #tab-monitor .mn-card{padding:12px; flex-wrap:wrap;}
+          #tab-monitor .mn-order{font-size:24px;}
+          #tab-monitor .mn-title{font-size:15px;}
+          #tab-monitor .mn-card .mn-main{min-width:100%;}
+          #tab-monitor .mn-card > div:last-child{width:100%; display:flex; align-items:center; justify-content:space-between; margin-top:8px;}
+          #tab-monitor .mn-card button{padding:12px 20px !important; font-size:15px !important;}
+        }
       </style>
       <div class="mn-cards" id="mnTotals"></div>
       <div class="panel" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
@@ -4498,8 +4508,9 @@
       return `<div class="mn-card">
         ${i.photo ? `<img src="${esc(i.photo)}" style="width:54px; height:54px; object-fit:contain; border:1px solid var(--line); border-radius:8px;">` : ""}
         <div class="mn-main">
+          ${i.orderNumber ? `<div class="mn-order">№${esc(i.orderNumber)}${i.shop ? ` <span class="mn-shop">${esc(i.shop)}</span>` : ""}</div>` : ""}
           <div class="mn-title">${esc(i.productName || i.article || "—")}</div>
-          <div class="mn-meta">${esc(i.article || "")}${i.orderNumber ? ` · заказ №${esc(i.orderNumber)}` : ""}${i.shop ? " · " + esc(i.shop) : ""} · ${money(i.qty)} шт</div>
+          <div class="mn-meta">${esc(i.article || "")} · ${money(i.qty)} шт${i.reportedWeight ? ` · вес ${money(i.reportedWeight)} кг` : ""}</div>
           <div class="mn-meta"><span style="color:${s.color}; background:${s.bg}; padding:2px 9px; border-radius:20px; font-weight:600;">${s.label}</span></div>
         </div>
         <div style="text-align:right;">
@@ -4519,9 +4530,17 @@
       catch(e){ toast(e.message); loadMonitor(); }
     }));
     wrap.querySelectorAll("[data-done]").forEach(b=>b.addEventListener("click", async ()=>{
-      if(!confirm("Отметить, что работа сделана? Менеджер это подтвердит.")) return;
-      try{ await api("/monitor/done/" + b.dataset.done, {method:"POST"}); toast("Отмечено, ждёт подтверждения"); loadMonitor(); }
-      catch(e){ toast(e.message); }
+      // Вес наполнителя спрашиваем сразу: потом его уже не вспомнить,
+      // а по нему списывается общий запас
+      const w = prompt("Сколько килограммов наполнителя ушло?\n\nВпишите вес — по нему спишется общий запас.", "");
+      if(w === null) return;
+      const weight = parseFloat(String(w).replace(",", "."));
+      if(!(weight > 0)){ toast("Укажите вес числом, например 25"); return; }
+      try{
+        await api("/monitor/done/" + b.dataset.done, {method:"POST", body: JSON.stringify({ weight })});
+        toast(`Отмечено: ${money(weight)} кг, ждёт подтверждения`);
+        loadMonitor();
+      }catch(e){ toast(e.message); }
     }));
   }
   document.getElementById("mnRefresh").addEventListener("click", loadMonitor);
@@ -5375,7 +5394,7 @@
         <td class="mono" style="font-size:11.5px;">${esc(r.article || "—")}</td>
         <td>${esc(r.productName || "—")}<div style="font-size:11px; color:var(--ink-soft);">${esc((r.createdAt||"").slice(0,10))}</div></td>
         <td style="font-size:12px;">${r.kind === "stock" ? "на запас" : (r.shop ? esc(r.shop) : "заказ")}</td>
-        <td class="num">${money(r.qty)}</td>
+        <td class="num">${money(r.qty)}${r.reportedWeight ? `<div style="font-size:11px; color:var(--ink-soft);">${money(r.reportedWeight)} кг</div>` : ""}</td>
         <td class="num">${r.needsRate ? `<span style="color:var(--red); font-size:11.5px;">не задана</span>` : money(r.rate)}</td>
         <td class="num"><b>${money(r.amount)} ₸</b></td>
         <td>${r.employeeName ? esc(r.employeeName) : `<span style="color:var(--red); font-weight:600;" title="Работа не разнесена — непонятно, кому платить">не разнесено</span>`}</td>
@@ -5835,7 +5854,7 @@
     if(!entry) return `<b style="color:var(--red); font-size:12px;">Начисления нет</b>
       <div style="font-size:11.5px; color:var(--ink-soft);">нажмите 👤, чтобы назначить заново</div>`;
     if(entry.status === "pending" && entry.reportedDone) return `<b style="color:#7C3AED; font-size:12px;">Шаг 2 из 3 · сдано</b>
-      <div style="font-size:11.5px; color:var(--ink-soft);">${esc(entry.reportedBy || "забивщик")} отметил готово — подтвердите</div>`;
+      <div style="font-size:11.5px; color:var(--ink-soft);">${esc(entry.reportedBy || "забивщик")} отметил готово${entry.reportedWeight ? `, вес ${money(entry.reportedWeight)} кг` : ""} — подтвердите</div>`;
     if(entry.status === "pending") return `<b style="color:var(--navy); font-size:12px;">Шаг 2 из 3</b>
       <div style="font-size:11.5px; color:var(--ink-soft);">отметить «Сделали», когда готово</div>`;
     if(entry.status === "payable") return `<b style="color:var(--green); font-size:12px;">Шаг 3 из 3</b>
@@ -5937,6 +5956,7 @@
               <button class="btn secondary prod-action-return" data-prod-id="${esc(p.id)}" style="padding:4px 8px; font-size:11.5px;" title="Закрываем товаром с возврата или отмены — зарплата не начисляется">↩️ Возврат · без оплаты</button>` : ""}
             ${entry && entry.status === "pending" ? `<button class="btn amber prod-accept" data-entry-id="${esc(entry.id)}" style="padding:4px 12px; font-size:11.5px;">${entry.reportedDone ? "✓ Подтвердить" : "✓ Сделали"}</button>` : ""}
             ${entry && entry.status !== "paid" ? `<button class="btn secondary prod-reassign" data-entry-id="${esc(entry.id)}" style="padding:4px 8px; font-size:11.5px;" title="Передать другому">👤</button>` : ""}
+            ${p.decision === "assigned" && (!entry || entry.status !== "paid") ? `<button class="btn secondary prod-release" data-prod-id="${esc(p.id)}" style="padding:4px 8px; font-size:11.5px;" title="Вернуть в свободные — забивщик взял по ошибке">↺</button>` : ""}
           </td>
         </tr>`;
       }).join("")}
@@ -5986,6 +6006,14 @@
     wrap.querySelectorAll(".prod-action-return").forEach(b=>b.addEventListener("click", ()=>resolveProduction(b.dataset.prodId, "return_offset")));
     wrap.querySelectorAll(".prod-accept").forEach(b=>b.addEventListener("click", ()=>acceptPayEntry(b.dataset.entryId, loadProduction)));
     wrap.querySelectorAll(".prod-reassign").forEach(b=>b.addEventListener("click", ()=>reassignEntry(b.dataset.entryId, loadProduction)));
+    wrap.querySelectorAll(".prod-release").forEach(b=>b.addEventListener("click", async ()=>{
+      if(!confirm("Вернуть заказ в свободные?\n\nНачисление по нему отменится, заказ снова появится у забивщиков.")) return;
+      try{
+        const r = await api("/dispatch/release", {method:"POST", body: JSON.stringify({ids:[b.dataset.prodId]})});
+        toast(r.released ? "Заказ снова свободен" : "Не удалось — работа уже оплачена");
+        loadProduction();
+      }catch(e){ toast("Не получилось: " + e.message); }
+    }));
     updateProdBulkBar();
   }
 
@@ -8173,6 +8201,8 @@
   const TAB_PERMISSION = {
     orders:"prihod", kaspiOrders:"orders", claims:"claims", catalog:"catalog", price:"price",
     salary:"salary", production:"production", tasks:"tasks", monitor:"monitor",
+    warehouse:"production",   // склад — для менеджера, забивщику не нужен
+    stats:"prices",           // деньги компании
     kaspi:"kaspi", audit:"audit", users:"users"
   };
   function can(perm){ return myRole === "admin" || myPermissions.includes(perm); }
