@@ -56,6 +56,8 @@ function rowToCatalogItem(row) {
     showInPrice: row.show_in_price !== 0, // по умолчанию true (в базе default 1)
     isArchived: row.is_archived === 1,
     gtin: row.gtin,
+    deliveryCost: row.delivery_cost,
+    taxPercent: row.tax_percent,
     sortOrder: row.sort_order || 0,
     createdAt: row.created_at
   };
@@ -235,10 +237,11 @@ router.put("/:id", (req, res) => {
     printName: "name", category: "type", subgroup: "subgroup",
     material: "material", color: "color", height: "height", diameter: "diameter",
     weight: "weight", mount: "mount", note: "note", photo: "photo", gtin: "gtin",
+    deliveryCost: "delivery_cost", taxPercent: "tax_percent",
     laborRate: "labor_rate", materialCost: "material_cost", miscCost: "misc_cost", ragsCost: "rags_cost",
     costPrice: "cost", retailPrice: "retail", sortOrder: "sort_order"
   };
-  const numericFields = new Set(["height","diameter","weight","laborRate","materialCost","miscCost","ragsCost","costPrice","retailPrice","sortOrder"]);
+  const numericFields = new Set(["height","diameter","weight","laborRate","materialCost","miscCost","ragsCost","costPrice","retailPrice","sortOrder","deliveryCost","taxPercent"]);
   for (const [jsKey, col] of Object.entries(map)) {
     if (Object.prototype.hasOwnProperty.call(b, jsKey)) {
       updates.push(`${col} = ?`);
@@ -299,10 +302,11 @@ router.post("/bulk-update", async (req, res) => {
     printName: "name", category: "type", subgroup: "subgroup",
     material: "material", color: "color", height: "height", diameter: "diameter",
     weight: "weight", mount: "mount", note: "note", gtin: "gtin",
+    deliveryCost: "delivery_cost", taxPercent: "tax_percent",
     laborRate: "labor_rate", materialCost: "material_cost", miscCost: "misc_cost", ragsCost: "rags_cost",
     costPrice: "cost", retailPrice: "retail"
   };
-  const numericFields = new Set(["height","diameter","weight","laborRate","materialCost","miscCost","ragsCost","costPrice","retailPrice"]);
+  const numericFields = new Set(["height","diameter","weight","laborRate","materialCost","miscCost","ragsCost","costPrice","retailPrice","deliveryCost","taxPercent"]);
 
   // createMissing = true: строки с новым артикулом заводятся как новые товары.
   // Так из старой системы можно залить весь каталог разом, а не по одному.
