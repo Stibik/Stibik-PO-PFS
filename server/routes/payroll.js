@@ -467,13 +467,15 @@ router.get("/by-months", (req, res) => {
   const months = new Map();
   const debts = new Map();
   const people = new Set();
-  let paidTotal = 0, debtTotal = 0, undistributed = 0;
+  let paidTotal = 0, debtTotal = 0, undistributed = 0, undistributedCount = 0;
 
   for (const e of entries) {
     const name = e.emp_name || "не разнесено";
     const amount = num(e.amount);
-    // Служебная пометка — это то же самое, что пустая клетка в старом файле
-    if (!e.employee_id || !e.emp_name || isServiceEmployee(e.emp_name)) { undistributed += amount; continue; }
+    // Служебная пометка — это то же самое, что пустая клетка в старом файле.
+    // Считаем не деньги, а штуки: «без разноски» — это то, что надо разнести,
+    // а не сумма долга. Про эти работы и напоминаем постоянно.
+    if (!e.employee_id || !e.emp_name || isServiceEmployee(e.emp_name)) { undistributed += amount; undistributedCount++; continue; }
     people.add(name);
     if (e.status === "paid") {
       const when = String(e.paid_at || e.accepted_at || e.created_at || "").slice(0, 7);
@@ -500,7 +502,7 @@ router.get("/by-months", (req, res) => {
       };
     }),
     debts: Array.from(debts.entries()).map(([name, sum]) => ({ name, sum })).sort((a, b) => b.sum - a.sum),
-    totals: { paid: money(paidTotal), debt: money(debtTotal), undistributed: money(undistributed) }
+    totals: { paid: money(paidTotal), debt: money(debtTotal), undistributed: money(undistributed), undistributedCount }
   });
 });
 
