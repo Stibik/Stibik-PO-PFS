@@ -1,5 +1,5 @@
 import express from "express";
-import { db, logAudit } from "../db.js";
+import { db, logAudit, bumpOrderNumber } from "../db.js";
 import { requireAuth, requireAdmin } from "../middleware/auth.js";
 
 const router = express.Router();
@@ -369,6 +369,109 @@ router.post("/rollback", (req, res) => {
              comment: `Удалено начислений ${deletedEntries} на ${stats.entriesSum} ₸, выплат ${deletedPayouts}` });
   res.json({ ok: true, deletedEntries, deletedPayouts, skipped,
              message: `Удалено ${deletedEntries} начислений и ${deletedPayouts} выплат. Теперь можно залить файл заново.` });
+});
+
+// ---------- Простановка номеров по списку ----------
+// На вход — пары «внутренний номер : код Kaspi» из старого учёта. Разбираем
+// текст как есть: из буфера прилетает то через табуляцию, то через пробелы.
+function parsePairs(text) {
+  const pairs = [];
+  const seen = new Set();
+  for (const line of String(text || "").split(/[\r\n]+/)) {
+    const m = line.trim().match(/^(\d{1,7})\D+(\d{6,20})$/);
+    if (!m) continue;
+    const number = parseInt(m[1], 10);
+    const code = m[2];
+    const key = number + "|" + code;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    pairs.push({ number, kaspiCode: code });
+  }
+  return pairs;
+}
+
+function analyzeNumbers(pairs) {
+  const found = [], notFound = [], willChange = [], alreadyOk = [];
+  const takenBy = new Map();   // номер -> код, чтобы поймать двойников в самом списке
+  const dupes = [];
+
+  for (const p of pairs) {
+    if (takenBy.has(p.number) && takenBy.get(p.number) !== p.kaspiCode) {
+      dupes.push({ number: p.number, codes: [takenBy.get(p.number), p.kaspiCode] });
+    }
+    takenBy.set(p.number, p.kaspiCode);
+
+    const order = db.prepare("SELECT id, display_number, shop, product_name FROM orders WHERE kaspi_code = ?").get(p.kaspiCode);
+    if (!order) { notFound.push(p); continue; }
+    found.push(p);
+    if (order.display_number === p.number) alreadyOk.push(p);
+    else willChange.push({ ...p, was: order.display_number, shop: order.shop, name: order.product_name });
+  }
+
+  // Заказы, которых в списке нет: им номера раздадим подряд после максимума
+  const listedCodes = new Set(pairs.map(p => p.kaspiCode));
+  const allOrders = db.prepare("SELECT id, kaspi_code, display_number, shop, product_name, created_at FROM orders ORDER BY created_at").all();
+  const outside = allOrders.filter(o => !listedCodes.has(String(o.kaspi_code || "")));
+  const maxFromList = pairs.reduce((m, p) => Math.max(m, p.number), 0);
+
+  return {
+    total: pairs.length,
+    found: found.length,
+    notFound: notFound.length,
+    notFoundExamples: notFound.slice(0, 8).map(p => `${p.number} / ${p.kaspiCode}`),
+    willChange: willChange.length,
+    alreadyOk: alreadyOk.length,
+    changeExamples: willChange.slice(0, 10),
+    dupes: dupes.slice(0, 5),
+    dupeCount: dupes.length,
+    outsideCount: outside.length,
+    outsideExamples: outside.slice(0, 6).map(o => ({ code: o.kaspi_code, was: o.display_number, shop: o.shop, name: o.product_name })),
+    maxFromList,
+    nextFree: maxFromList + 1
+  };
+}
+
+router.post("/numbers/preview", (req, res) => {
+  const pairs = Array.isArray(req.body?.pairs) ? req.body.pairs : parsePairs(req.body?.text);
+  if (!pairs.length) {
+    return res.status(400).json({ error: "no_pairs",
+      message: "Не нашлось ни одной пары «номер — код Kaspi». Каждая строка должна быть вида: 4226  1012058162" });
+  }
+  res.json(analyzeNumbers(pairs));
+});
+
+router.post("/numbers/apply", (req, res) => {
+  const pairs = Array.isArray(req.body?.pairs) ? req.body.pairs : parsePairs(req.body?.text);
+  if (!pairs.length) return res.status(400).json({ error: "no_pairs", message: "Список пуст" });
+  const renumberRest = req.body?.renumberRest !== false;
+
+  let updated = 0, notFound = 0, same = 0;
+  for (const p of pairs) {
+    const order = db.prepare("SELECT id, display_number FROM orders WHERE kaspi_code = ?").get(p.kaspiCode);
+    if (!order) { notFound++; continue; }
+    if (order.display_number === p.number) { same++; continue; }
+    db.prepare("UPDATE orders SET display_number = ? WHERE id = ?").run(p.number, order.id);
+    updated++;
+  }
+
+  // Заказы вне списка получают номера подряд после максимума из списка —
+  // так весь ряд остаётся сплошным и новые заказы не залезают на занятые
+  const maxFromList = pairs.reduce((m, p) => Math.max(m, p.number), 0);
+  let next = maxFromList + 1, renumbered = 0;
+  if (renumberRest) {
+    const listed = new Set(pairs.map(p => String(p.kaspiCode)));
+    const rest = db.prepare("SELECT id, kaspi_code, display_number FROM orders ORDER BY created_at, rowid").all()
+      .filter(o => !listed.has(String(o.kaspi_code || "")));
+    const upd = db.prepare("UPDATE orders SET display_number = ? WHERE id = ?");
+    for (const o of rest) { upd.run(next, o.id); next++; renumbered++; }
+  }
+  // Сдвигаем общий счётчик, чтобы новые заказы из Kaspi продолжили ряд
+  const nextFree = bumpOrderNumber(Math.max(next, maxFromList + 1));
+
+  logAudit({ user: req.session.username, action: "orders_set_numbers",
+             comment: `Проставлено ${updated}, перенумеровано ${renumbered}, следующий свободный ${nextFree}` });
+  res.json({ ok: true, updated, same, notFound, renumbered, nextFree,
+             message: `Проставлено номеров: ${updated}. Остальным заказам выданы номера подряд: ${renumbered}. Следующий свободный номер — ${nextFree}.` });
 });
 
 export default router;
