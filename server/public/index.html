@@ -7489,17 +7489,13 @@
     // предзаказом, он должен оставаться в "Упаковке", даже если preOrder у
     // Kaspi всё ещё true и близкого срока courierTransmissionPlanningDate нет.
     if(o.manualPacking) return "packing";
-    // Кабинет Kaspi переводит заказ в "Упаковка" не по флагу assembled, а когда
-    // приближается срок упаковки (courierTransmissionPlanningDate) — даже если
-    // preOrder ещё true и assembled ещё false. Проверено на реальном заказе:
-    // preOrder=true, assembled=false, но в кабинете уже "Упаковка", потому что
-    // до courierTransmissionPlanningDate оставалось меньше 2 дней.
-    // Порог "≤ 2 дня" — приближение по единственному проверенному примеру;
-    // если на других заказах не совпадёт, поправим порог по факту.
-    if(!o.assembled && o.courierTransmissionPlanningDate){
-      const daysUntilPacking = (new Date(o.courierTransmissionPlanningDate).getTime() - Date.now()) / 86400000;
-      if(daysUntilPacking <= 2) return "packing";
-    }
+    // Стадию определяет сам Kaspi флагом preOrder — ему и верим.
+    // Раньше здесь стояла догадка: «если до срока передачи меньше двух дней,
+    // считаем упаковкой». Она разошлась с кабинетом на живом заказе 1017961762
+    // (preOrder=true, срок 05.08 — Kaspi показывает «Предзаказ», а мы показывали
+    // «Упаковка»). Своих правил поверх чужого статуса больше не выдумываем:
+    // если менеджер сам решил начать сборку, для этого есть кнопка «В упаковку»
+    // (manualPacking выше).
     if(o.preOrder && !o.assembled) return "preorder";
     if(!o.assembled) return "packing";
     if(o.assembled && !o.courierTransmissionDate) return "handover";
