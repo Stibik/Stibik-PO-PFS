@@ -200,21 +200,42 @@ router.post("/:id/sewn", (req, res) => {
 // доработки, её просто не существует — и они нигде не видны, хотя их надо делать.
 router.post("/pull-missing", (req, res) => {
   const dryRun = req.body?.confirm !== true;
-  // Берём только те, по которым реально надо работать: не отменённые,
-  // не возвращённые, не завершённые и не архивные
-  const rows = db.prepare(`
-    SELECT o.* FROM orders o
-    WHERE o.source = 'kaspi'
-      AND (o.kaspi_status IS NULL OR o.kaspi_status NOT IN ('CANCELLED','CANCELLING','RETURNED','RETURN_REQUESTED','COMPLETED'))
-      AND (o.delivery_state IS NULL OR o.delivery_state != 'ARCHIVE')
+  // Что считаем «активным» — ровно то, что в кабинете Kaspi ещё в работе:
+  // предзаказ, упаковка, передача, доставка. Отменённое и завершённое не берём.
+  const ACTIVE = `(o.kaspi_status IS NULL OR o.kaspi_status NOT IN ('CANCELLED','CANCELLING','RETURNED','RETURN_REQUESTED','COMPLETED'))
+                  AND (o.delivery_state IS NULL OR o.delivery_state != 'ARCHIVE')`;
+
+  const activeTotal = db.prepare(`SELECT COUNT(*) AS n FROM orders o WHERE o.source = 'kaspi' AND ${ACTIVE}`).get().n;
+  // Совсем без записи в производстве
+  const noRow = db.prepare(`SELECT o.* FROM orders o
+    WHERE o.source = 'kaspi' AND ${ACTIVE}
       AND NOT EXISTS (SELECT 1 FROM production p WHERE p.order_id = o.id)
     ORDER BY o.display_number`).all();
+  // Запись есть, но закрыта решением или убрана в архив, — а заказ всё ещё в
+  // работе. Такие тоже нигде не видны, хотя делать их надо.
+  const closedRow = db.prepare(`SELECT o.* FROM orders o
+    WHERE o.source = 'kaspi' AND ${ACTIVE}
+      AND NOT EXISTS (SELECT 1 FROM production p WHERE p.order_id = o.id AND p.decision IS NULL AND p.archived_at IS NULL)
+      AND EXISTS (SELECT 1 FROM production p WHERE p.order_id = o.id)
+    ORDER BY o.display_number`).all();
+
+  const includeClosed = req.body?.includeClosed === true;
+  const rows = includeClosed ? noRow.concat(closedRow) : noRow;
 
   if (dryRun) {
-    return res.json({ dryRun: true, count: rows.length,
+    return res.json({ dryRun: true,
+      count: rows.length,
+      activeTotal,
+      noRowCount: noRow.length,
+      closedRowCount: closedRow.length,
+      inQueue: db.prepare("SELECT COUNT(*) AS n FROM production WHERE decision IS NULL AND archived_at IS NULL").get().n,
       examples: rows.slice(0, 10).map(o => ({
-        number: o.display_number, kaspiCode: o.kaspi_code, shop: o.shop, name: o.product_name })),
-      message: `Найдено заказов без записи в производстве: ${rows.length}. Ничего ещё не создано.` });
+        number: o.display_number, kaspiCode: o.kaspi_code, shop: o.shop,
+        name: o.product_name, status: o.kaspi_status })),
+      closedExamples: closedRow.slice(0, 6).map(o => ({
+        number: o.display_number, kaspiCode: o.kaspi_code, name: o.product_name })),
+      message: `Активных заказов в Kaspi: ${activeTotal}. Без записи в производстве: ${noRow.length}. ` +
+               `С закрытой записью, хотя заказ ещё в работе: ${closedRow.length}.` });
   }
 
   const now = new Date().toISOString();
@@ -222,7 +243,6 @@ router.post("/pull-missing", (req, res) => {
                           VALUES (?,?,?,?,?,?, 'pending', ?)`);
   let created = 0;
   for (const o of rows) {
-    // Артикул лежит в сыром ответе Kaspi — достаём оттуда, если он есть
     let article = o.article || null;
     if (!article && o.entries_raw) {
       try { article = JSON.parse(o.entries_raw)?.data?.[0]?.attributes?.offer?.code || null; } catch (e) {}
@@ -231,7 +251,8 @@ router.post("/pull-missing", (req, res) => {
             o.id, article, o.product_name || "", Number(o.qty) || 1, o.shop || null, now);
     created++;
   }
-  logAudit({ user: req.session.username, action: "production_pull_missing", comment: `Подтянуто: ${created}` });
+  logAudit({ user: req.session.username, action: "production_pull_missing",
+             comment: `Подтянуто: ${created}${includeClosed ? " (включая закрытые)" : ""}` });
   res.json({ ok: true, created,
              message: `Подтянуто в производство: ${created}. Они появились в «Ждут решения».` });
 });
