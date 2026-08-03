@@ -359,6 +359,37 @@ router.delete("/:id", (req, res) => {
              message: cancelled ? `Удалено. Отменено начислений: ${cancelled}.` : "Удалено." });
 });
 
+// Убрать разом весь мусор без названия. Он приезжает с отмен и возвратов,
+// когда Kaspi не отдал наименование: опознать вещь нельзя, выдать её тоже.
+router.post("/delete-unnamed", (req, res) => {
+  const rows = db.prepare(`SELECT * FROM warehouse_stock
+    WHERE consumed = 0 AND (article IS NULL OR article = '')
+      AND (product_name IS NULL OR product_name = '')`).all();
+  const dryRun = req.body?.confirm !== true;
+  if (dryRun) {
+    return res.json({ dryRun: true, count: rows.length,
+      numbers: rows.slice(0, 20).map(r => r.stock_number),
+      message: `Будет удалено позиций: ${rows.length}. Ничего ещё не удалено.` });
+  }
+  let deleted = 0, skipped = 0;
+  for (const row of rows) {
+    const paid = [row.sew_entry_id, row.fill_entry_id, entryOf(row)?.id]
+      .map(entryById).filter(e => e && e.status === "paid");
+    if (paid.length) { skipped++; continue; }
+    for (const id of [row.sew_entry_id, row.fill_entry_id, entryOf(row)?.id]) {
+      const e = entryById(id);
+      if (e) db.prepare("UPDATE payroll_entries SET status = 'cancelled', comment = ? WHERE id = ?")
+        .run("Безымянная позиция склада удалена", e.id);
+    }
+    db.prepare("DELETE FROM warehouse_moves WHERE stock_id = ?").run(row.id);
+    db.prepare("DELETE FROM warehouse_stock WHERE id = ?").run(row.id);
+    deleted++;
+  }
+  logAudit({ user: req.session.username, action: "warehouse_delete_unnamed", comment: `Удалено: ${deleted}` });
+  res.json({ ok: true, deleted, skipped,
+             message: `Удалено безымянных позиций: ${deleted}.${skipped ? ` Пропущено оплаченных: ${skipped}.` : ""}` });
+});
+
 // Списание со склада в заказ. Здесь же решается вопрос денег: как только вещь
 // ушла в заказ, работа за неё становится к выплате и вешается на того, кто шил.
 // До этого начисление лежит «отложено»: изделие ещё не продано.
