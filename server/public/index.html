@@ -702,7 +702,9 @@
           <div><label>Вес, кг</label><input id="ci_weight" type="number" step="0.1"></div>
           <div><label>Крепление/кольцо</label><input id="ci_mount" type="text"></div>
           <div><label>GTIN / штрихкод</label><input id="ci_gtin" type="text" placeholder="напр. 4870123456789"></div>
-          <div><label>Расценка труда, ₸ (для Зарплаты)</label><input id="ci_laborRate" type="number" step="1"></div>
+          <div><label>Расценка труда, ₸ — всего за изделие</label><input id="ci_laborRate" type="number" step="1"></div>
+          <div><label>из них швее за пошив, ₸</label><input id="ci_sewRate" type="number" step="1" placeholder="0 — работа не делится">
+            <div style="font-size:11px; color:var(--ink-soft); margin-top:3px;" id="ci_rateSplit"></div></div>
           <div><label>Затраты на материал, ₸</label><input id="ci_materialCost" type="number" step="1"></div>
           <div><label>Прочие затраты, ₸</label><input id="ci_miscCost" type="number" step="1"></div>
           <div><label>Ветошь, ₸</label><input id="ci_ragsCost" type="number" step="1"></div>
@@ -1114,9 +1116,13 @@
         <h3 style="font-family:var(--serif); font-weight:400; margin-bottom:6px;">Нумерация заказов</h3>
         <p style="font-size:12.5px; color:var(--ink-soft); margin-top:0;">
           Внутренний короткий номер заказа (тот, что видят сотрудники и печатается на этикетках) — не код Kaspi.
-          У каждого магазина свой отдельный счётчик, чтобы номера SA и PFS не путались между собой.
-          Можно продолжить счёт с того места, где остановились в PRODIX или на бумаге, вместо того чтобы начинать с 1.
+          Счётчик теперь <b>один на всю программу</b>: SA и PFS идут общим рядом, как в старом учёте.
+          Отдельные счётчики по магазинам убраны — из-за них у соседних заказов оказывались номера
+          вроде 541 и 9941, и ничего не билось ни с Kaspi, ни с прежней таблицей.
         </p>
+        <div style="padding:9px 11px; background:#EAF6EE; border:1px solid var(--green); border-radius:8px; font-size:12.5px; margin-bottom:10px;">
+          Счётчик выставляется сам после простановки номеров из файла. Руками сюда лезть не нужно.
+        </div>
         <div id="orderNumberingShops"></div>
         <div id="orderNumberingMsg" style="margin-top:8px; font-size:12.5px;"></div>
       </div>
@@ -2733,6 +2739,8 @@
     document.getElementById("ci_mount").value = it.mount || "";
     document.getElementById("ci_gtin").value = it.gtin || "";
     document.getElementById("ci_laborRate").value = it.laborRate ?? "";
+    document.getElementById("ci_sewRate").value = it.sewRate ?? "";
+    showRateSplit();
     document.getElementById("ci_materialCost").value = it.materialCost ?? "";
     document.getElementById("ci_miscCost").value = it.miscCost ?? "";
     document.getElementById("ci_ragsCost").value = it.ragsCost ?? "";
@@ -2843,6 +2851,23 @@
         <b style="color:${color};">${money(margin)} ₸ · маржа ${marginPct}%</b>
         ${retail && marginPct < 15 ? ` <span style="color:var(--red);">— слишком низкая</span>` : ""}</div>`;
   }
+  // Сразу показываем, как делится работа: чтобы не гадать, сколько уйдёт забивщику
+  function showRateSplit(){
+    const total = Number(document.getElementById("ci_laborRate").value) || 0;
+    const sew = Number(document.getElementById("ci_sewRate").value) || 0;
+    const box = document.getElementById("ci_rateSplit");
+    if(!box) return;
+    if(!total){ box.textContent = ""; return; }
+    if(sew <= 0){ box.textContent = "Работа не делится — вся сумма одному человеку."; box.style.color = "var(--ink-soft)"; return; }
+    if(sew > total){ box.textContent = "Доля швеи больше общей расценки — так нельзя."; box.style.color = "var(--red)"; return; }
+    box.style.color = "var(--ink-soft)";
+    box.textContent = `Швея ${money(sew)} ₸ · забивщик ${money(total - sew)} ₸`;
+  }
+  ["ci_laborRate","ci_sewRate"].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.addEventListener("input", showRateSplit);
+  });
+
   ["ci_materialCost","ci_miscCost","ci_ragsCost","ci_laborRate","ci_deliveryCost","ci_taxPercent","ci_retailPrice"]
     .forEach(id=>document.getElementById(id).addEventListener("input", ()=>recalcCatalogCost(true)));
   document.getElementById("ci_costPrice").addEventListener("input", ()=>recalcCatalogCost(false));
@@ -2870,6 +2895,7 @@
       diameter: numOrNull("ci_diameter"),
       weight: numOrNull("ci_weight"),
       laborRate: numOrNull("ci_laborRate"),
+      sewRate: numOrNull("ci_sewRate"),
       materialCost: numOrNull("ci_materialCost"),
       miscCost: numOrNull("ci_miscCost"),
       ragsCost: numOrNull("ci_ragsCost"),
@@ -5041,22 +5067,25 @@
         <td></td><td></td>
         <td colspan="2" style="font-size:12.5px;">
           <span class="mono"><b>№ ${i.number || "—"}</b></span>
+          ${whStageBadge(i)}
           ${i.location ? ` · ${esc(i.location)}` : ""}
           ${i.comment ? `<div style="font-size:11px; color:var(--ink-soft);">${esc(i.comment)}</div>` : ""}
+          ${i.defectReason ? `<div style="font-size:11px; color:var(--red);">брак: ${esc(i.defectReason)}</div>` : ""}
         </td>
         <td class="num" style="font-size:12.5px;">${money(i.qty)}</td>
         <td style="font-size:12px;">${esc(i.sourceLabel)}
           <div style="font-size:11px; color:var(--ink-soft);">${esc(String(i.createdAt||"").slice(0,10))}</div></td>
-        <td class="num" style="font-size:12.5px;">
-          ${i.payable
-            ? (i.employeeName
-                ? `${money(i.amount)} ₸<div style="font-size:11px; color:var(--ink-soft);">${esc(i.employeeName)}</div>`
-                : `<span style="color:var(--red); font-size:11.5px;">не указан, кто сшил</span>`)
-            : `<span style="color:var(--ink-soft); font-size:11.5px;">платить не нужно</span>`}</td>
+        <td class="num" style="font-size:12px;">${whMoneyCell(i)}</td>
         <td></td>
         <td style="white-space:nowrap;">
-          <button class="btn secondary" style="padding:3px 9px; font-size:11.5px;" data-wh-edit="${esc(i.id)}">✎</button>
-          <button class="btn amber" style="padding:3px 9px; font-size:11.5px;" data-wh-give-one="${esc(i.id)}">Выдать</button>
+          ${i.nextAction === "fill"
+            ? `<button class="btn amber" style="padding:3px 9px; font-size:11.5px;" data-wh-fill="${esc(i.id)}">Забить</button>`
+            : i.nextAction === "issue"
+              ? `<button class="btn amber" style="padding:3px 9px; font-size:11.5px;" data-wh-give-one="${esc(i.id)}">Выдать</button>`
+              : ""}
+          <button class="btn secondary" style="padding:3px 9px; font-size:11.5px;" data-wh-edit="${esc(i.id)}" title="Изменить">✎</button>
+          <button class="btn secondary" style="padding:3px 9px; font-size:11.5px;" data-wh-defect="${esc(i.id)}" title="Брак">⚠</button>
+          <button class="btn secondary" style="padding:3px 9px; font-size:11.5px; color:var(--red);" data-wh-del="${esc(i.id)}" title="Удалить">✕</button>
         </td>
       </tr>`).join("");
       return head + rows;
@@ -5066,6 +5095,9 @@
       ev.stopPropagation(); openWhConsume(b.dataset.whGive);
     }));
     body.querySelectorAll("[data-wh-give-one]").forEach(b=>b.addEventListener("click", ()=>openWhConsumeOne(b.dataset.whGiveOne)));
+    body.querySelectorAll("[data-wh-fill]").forEach(b=>b.addEventListener("click", ()=>whFill(b.dataset.whFill)));
+    body.querySelectorAll("[data-wh-defect]").forEach(b=>b.addEventListener("click", ()=>whDefect(b.dataset.whDefect)));
+    body.querySelectorAll("[data-wh-del]").forEach(b=>b.addEventListener("click", ()=>whDelete(b.dataset.whDel)));
     body.querySelectorAll("[data-wh-edit]").forEach(b=>b.addEventListener("click", ()=>openWhEdit(b.dataset.whEdit)));
     body.querySelectorAll("[data-wh-toggle]").forEach(r=>r.addEventListener("click", ()=>{
       const key = r.dataset.whToggle;
@@ -5075,6 +5107,65 @@
       const arrow = document.getElementById("whArrow_" + key);
       if(arrow) arrow.textContent = open ? "▸" : "▾";
     }));
+  }
+
+  // Стадия изделия: сшито — значит работа ещё не закончена
+  const WH_STAGE_STYLE = {
+    sewn:   { color:"#92400E", bg:"#FEF3C7" },
+    ready:  { color:"#065F46", bg:"#D1FAE5" },
+    defect: { color:"#991B1B", bg:"#FEE2E2" }
+  };
+  function whStageBadge(i){
+    if(!i.stage || i.stage === "ready" && !i.sewnByName) return "";
+    const s = WH_STAGE_STYLE[i.stage] || WH_STAGE_STYLE.ready;
+    return `<span class="cn-badge" style="color:${s.color}; background:${s.bg}; padding:2px 9px; border-radius:20px; font-size:11px; margin-left:6px;">${esc(i.stageLabel)}</span>`;
+  }
+  // Деньги по изделию: отдельно за пошив, отдельно за забивку
+  function whMoneyCell(i){
+    if(!i.payable) return `<span style="color:var(--ink-soft); font-size:11.5px;">платить не нужно</span>`;
+    const parts = [];
+    if(i.sewnByName) parts.push(`пошив ${money(i.sewAmount || i.sewRate)} ₸ — ${esc(i.sewnByName)}`);
+    if(i.filledByName) parts.push(`забивка ${money(i.fillAmount || i.fillRate)} ₸ — ${esc(i.filledByName)}`);
+    if(!parts.length) return `<span style="color:var(--red); font-size:11.5px;">не указан, кто делал</span>`;
+    if(i.stage === "sewn") parts.push(`<span style="color:var(--amber);">забивка ещё не сделана</span>`);
+    return parts.map(p=>`<div style="font-size:11.5px;">${p}</div>`).join("");
+  }
+
+  async function whFill(itemId){
+    const pick = await pickEmployee({ title: "Кто забил?" });
+    if(!pick || !pick.employeeId) return;
+    try{
+      const r = await api(`/warehouse/${encodeURIComponent(itemId)}/stage`, { method:"POST",
+        body: JSON.stringify({ employeeId: pick.employeeId }) });
+      toast(r.message || "Готово");
+      loadWarehouse();
+    }catch(e){ toast("Не получилось: " + e.message); }
+  }
+
+  async function whDefect(itemId){
+    const reason = prompt("Что случилось с изделием? Это попадёт в историю:", "");
+    if(reason === null || !reason.trim()) return;
+    try{
+      const r = await api(`/warehouse/${encodeURIComponent(itemId)}/defect`, { method:"POST",
+        body: JSON.stringify({ reason: reason.trim() }) });
+      toast(r.message || "Помечено браком");
+      loadWarehouse();
+    }catch(e){ toast("Не получилось: " + e.message); }
+  }
+
+  async function whDelete(itemId){
+    let found = null;
+    for(const g of (whData?.groups || [])){
+      const it = g.items.find(i=>i.id === itemId);
+      if(it){ found = it; break; }
+    }
+    if(!confirm(`Удалить позицию № ${found ? found.number : "—"} со склада?\n\n` +
+      `Начисления по ней будут отменены. Отменить удаление нельзя.`)) return;
+    try{
+      const r = await api(`/warehouse/${encodeURIComponent(itemId)}`, { method:"DELETE" });
+      toast(r.message || "Удалено");
+      loadWarehouse();
+    }catch(e){ toast("Не получилось: " + e.message); }
   }
 
   // Выдача конкретной штуки по её номеру
@@ -5839,12 +5930,15 @@
       <div style="margin-top:12px; font-size:12.5px;">
         <label style="display:block;"><input type="checkbox" id="legacyDoNumbers" checked> Проставить номера заказов из файла</label>
         <label style="display:block;"><input type="checkbox" id="legacyDoSalary" checked> Завести сотрудников и зарплату</label>
-        <label style="display:block;"><input type="checkbox" id="legacyDoRenumber" checked> Перенумеровать остальные заказы подряд (тестовые на 600 и 5000)</label>
+        <div style="margin-top:6px; color:var(--ink-soft); font-size:12px;">
+          Заказы, которых нет в файле, эта заливка НЕ трогает. Номера им ставятся
+          отдельно — кнопкой «№ Проставить номера заказов».
+        </div>
       </div>`;
     document.getElementById("legacyActions").innerHTML =
       `<button class="btn amber" id="legacyApply">Залить в программу</button>`;
     document.getElementById("legacyApply").addEventListener("click", async ()=>{
-      if(!confirm("Залить данные? Номера заказов будут заменены на номера из файла, а зарплата — начислена.")) return;
+      if(!confirm("Залить данные? Номера заказов поменяются только у тех, что есть в файле. Остальные не тронем.")) return;
       const btn = document.getElementById("legacyApply");
       btn.disabled = true; btn.textContent = "Заливаю...";
       try{
@@ -5855,28 +5949,20 @@
             salary: document.getElementById("legacyDoSalary").checked
           }
         })});
-        // Остальные заказы (тестовые и свежие) ставим в общий ряд после файла
-        let renumber = null;
-        if(document.getElementById("legacyDoRenumber").checked && r.maxNumberFromFile){
-          try{
-            renumber = await api("/legacy-import/renumber", {method:"POST", body: JSON.stringify({
-              startFrom: r.maxNumberFromFile + 1,
-              keepOrderIds: r.matchedOrderIds || []
-            })});
-          }catch(e){ toast("Номера из файла проставлены, но перенумерация не прошла: " + e.message); }
-        }
+        // Перенумерации здесь больше нет. Раньше эта заливка сама раздавала
+        // номера подряд всем «лишним» заказам — и ровно она ломала нумерацию,
+        // затирая правильные номера выдуманными вроде 9916 и 9954.
         document.getElementById("legacyBody").innerHTML = `<div style="font-size:13.5px; line-height:1.8;">
           <b style="color:var(--green);">Готово.</b><br>
           Номеров проставлено: <b>${r.numbersUpdated}</b><br>
-          ${renumber ? `Перенумеровано остальных: <b>${renumber.count}</b> (с ${r.maxNumberFromFile + 1}). Следующий свободный номер: <b>${renumber.nextFree}</b><br>` : ""}
           Сотрудников заведено: <b>${r.employeesCreated}</b><br>
           Начислений создано: <b>${r.entriesCreated}</b>${r.entriesSkipped ? ` (пропущено повторных: ${r.entriesSkipped})` : ""}<br>
           Помечено «перекрыто возвратом»: <b>${r.coveredMarked || 0}</b><br>
           Выплат перенесено: <b>${r.payoutsCreated}</b> на ${money(r.paidTotal)} ₸<br>
           Осталось должны: <b style="color:var(--red);">${money(r.debtTotal)} ₸</b>
-          ${renumber ? `<div style="margin-top:10px; padding:9px 11px; background:#FEF3C7; border:1px solid #F59E0B; border-radius:8px; font-size:12.5px;">
-            Поставьте счётчики в «Kaspi: настройки» → «Нумерация заказов»: <b>${renumber.nextFree}</b> и <b>${renumber.nextFree + 1}</b> —
-            тогда новые заказы продолжат ряд без задвоения.</div>` : ""}
+          <div style="margin-top:10px; padding:9px 11px; background:#EAF6EE; border:1px solid var(--green); border-radius:8px; font-size:12.5px;">
+            Номера заказов эта заливка меняла только у тех, что есть в файле. Счётчик теперь один
+            на всю программу и выставляется сам — руками в настройках ничего ставить не надо.</div>
         </div>`;
         document.getElementById("legacyActions").innerHTML = "";
         loadSalary();
