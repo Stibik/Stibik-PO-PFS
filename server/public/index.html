@@ -943,6 +943,7 @@
         <button class="btn secondary" id="prodBulkStock" style="padding:6px 12px; font-size:12.5px;">📦 Списать с остатков</button>
         <button class="btn secondary" id="prodBulkReturn" style="padding:6px 12px; font-size:12.5px;">↩️ Перекрыть возвратом</button>
         <button class="btn secondary" id="prodBulkArchive" style="padding:6px 12px; font-size:12.5px;">🗄 В архив</button>
+        <button class="btn secondary" id="prodBulkDelete" style="padding:6px 12px; font-size:12.5px; color:var(--red);" title="Убрать из монитора совсем">✕ Удалить</button>
         <button class="btn secondary" id="prodBulkClear" style="padding:6px 12px; font-size:12.5px; margin-left:auto;">Снять выбор</button>
       </div>
       <div id="prodList"></div>
@@ -1647,9 +1648,17 @@
   <div class="modal" style="max-width:520px;">
     <h3>Сделать на запас</h3>
     <div style="font-size:12.5px; color:var(--ink-soft); margin-bottom:12px;">
-      Создаётся <b>задание</b>: швея шьёт чехол. Он появится в «Производстве», и когда
-      будет готов — отметите «Сшито», и изделие ляжет на склад со своим номером.
-      Денег за пошив не начисляется: платим забивщику, когда изделие забьют.
+      Это заказ <b>самим себе</b>, без покупателя — чтобы товар лежал готовый.
+      <div style="margin-top:8px; line-height:1.9;">
+        <b>1.</b> Выбираете товар и швею, жмёте «Создать».<br>
+        <b>2.</b> Задание появляется в «Производстве», строка «Шьётся на запас».<br>
+        <b>3.</b> Швея сшила — жмёте «✓ Сшито». Чехол ложится на склад со своим номером.<br>
+        <b>4.</b> На складе жмёте «На забивку» — задание уходит забивщикам.<br>
+        <b>5.</b> Забивщик забил — деньги начисляются ему.
+      </div>
+      <div style="margin-top:8px; color:var(--ink);">
+        За пошив денег нет — швея на окладе. Платим только за забивку.
+      </div>
     </div>
     <div class="grid2">
       <div class="full"><label>Группа</label><select id="spGroup" style="width:100%;"></select></div>
@@ -6912,6 +6921,23 @@
   let prodStep = localStorage.getItem("prodStep") || "pending";
   let selectedProdIds = new Set();
   let prodDefaultEmployeeId = null, prodDefaultEmployeeName = "";
+
+  // Удалить строки из монитора совсем — не в архив. После подтягивания часть
+  // заказов делать не надо, и в архиве они всё равно мозолят глаза.
+  document.getElementById("prodBulkDelete").addEventListener("click", async ()=>{
+    const ids = Array.from(selectedProdIds);
+    if(!ids.length){ toast("Ничего не выбрано"); return; }
+    if(!confirm(`Убрать ${ids.length} строк из монитора совсем?\n\n` +
+      `Заказы, деньги и история не пострадают — удалится только строка производства.\n` +
+      `Те, по которым уже начислены деньги, будут пропущены.\n\nОтменить удаление нельзя.`)) return;
+    try{
+      const r = await api("/dispatch/delete", { method:"POST", body: JSON.stringify({ ids }) });
+      toast(r.message);
+      if(r.skipped && r.reasons?.length) alert("Не удалось убрать:\n\n" + r.reasons.join("\n"));
+      selectedProdIds.clear();
+      loadProduction();
+    }catch(e){ toast("Не получилось: " + e.message); }
+  });
 
   // Заказы, по которым нет записи в производстве — обычно старые, пришедшие
   // до того, как эта запись стала создаваться автоматически
