@@ -55,6 +55,8 @@ function rowToOrder(row) {
     lastPrintedBy: row.last_printed_by,
     claimNote: row.claim_note,
     claimResolved: !!row.claim_resolved,
+    claimArchived: !!row.claim_archived,
+    claimHidden: !!row.claim_hidden,
     raw: row.raw ? JSON.parse(row.raw) : null,
     entriesRaw: row.entries_raw ? JSON.parse(row.entries_raw) : null,
     createdAt: row.created_at,
@@ -176,7 +178,8 @@ router.put("/:id", (req, res) => {
     receiveStatus: "receive_status", orderDate: "order_date",
     buyPriceCny: "buy_price_cny", buyPriceKzt: "buy_price_kzt", deliveryPrice: "delivery_price",
     salePrice: "sale_price", category: "category", actualQty: "actual_qty",
-    claimNote: "claim_note", claimResolved: "claim_resolved", printed: "printed",
+    claimNote: "claim_note", claimResolved: "claim_resolved",
+    claimArchived: "claim_archived", claimHidden: "claim_hidden", printed: "printed",
     shop: "shop"
   };
   for (const [jsKey, col] of Object.entries(map)) {
