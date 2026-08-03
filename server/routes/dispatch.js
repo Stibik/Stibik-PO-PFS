@@ -1,5 +1,5 @@
 import express from "express";
-import { db, logAudit } from "../db.js";
+import { db, logAudit, nextStockNumber } from "../db.js";
 import { requireAuth, requirePermission } from "../middleware/auth.js";
 
 const router = express.Router();
@@ -104,7 +104,11 @@ function toItem(p, L) {
 
     // На каком шаге запись — считаем здесь, чтобы на экране не было разнобоя
     let step = "pending";
-    if (p.archived_at) step = "archived";
+    // Задание «сшить на запас»: заказа под ним нет, изделие пока не существует
+    if (p.stage === "to_stock" && !p.decision) step = "to_stock";
+    else if (p.archived_at) step = "archived";
+    // Швея отчиталась: изделие уже на складе и ждёт забивки
+    else if (p.decision === "sewn_to_stock") step = "sewn";
     else if (p.decision === "stock") step = "from_stock";
     else if (p.decision === "return_offset") step = "covered";
     else if (p.decision === "assigned") {
@@ -152,6 +156,43 @@ router.get("/list", (req, res) => {
     return acc;
   }, {});
   res.json({ items, counts, total: items.length });
+});
+
+// Швея отчиталась: чехол сшит. Только теперь изделие появляется на складе —
+// со стадией «сшито, не забито» и с номером, по которому его можно найти.
+router.post("/:id/sewn", (req, res) => {
+  const row = db.prepare("SELECT * FROM production WHERE id = ?").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  if (row.stage !== "to_stock") {
+    return res.status(400).json({ error: "not_stock_task", message: "Это не задание на запас" });
+  }
+  if (row.decision) return res.status(400).json({ error: "already", message: "Задание уже закрыто" });
+
+  const sewnBy = req.body?.employeeId && db.prepare("SELECT id FROM employees WHERE id = ?").get(req.body.employeeId)
+    ? req.body.employeeId : row.employee_id;
+  if (!sewnBy) return res.status(400).json({ error: "no_employee", message: "Укажите, кто сшил" });
+
+  const now = new Date().toISOString();
+  const stockId = "ws_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  const stockNumber = nextStockNumber();
+  db.prepare(`INSERT INTO warehouse_stock (id, stock_number, article, product_name, source, qty, consumed,
+              employee_id, created_by, created_at, stage, sewn_by, sewn_at)
+              VALUES (?,?,?,?,'overproduced',?,0,?,?,?, 'sewn', ?, ?)`)
+    .run(stockId, stockNumber, row.article || "", row.product_name || "", Number(row.quantity) || 1,
+         sewnBy, req.session.username, now, sewnBy, now);
+  db.prepare(`INSERT INTO warehouse_moves (id, stock_id, stock_number, at, user, action, employee_id, comment)
+              VALUES (?,?,?,?,?,'in',?,?)`)
+    .run("wm_" + Date.now().toString(36), stockId, stockNumber, now, req.session.username, sewnBy,
+         "Сшито на запас — ждёт забивки");
+
+  db.prepare("UPDATE production SET decision = 'sewn_to_stock', warehouse_stock_id = ?, employee_id = ?, resolved_at = ? WHERE id = ?")
+    .run(stockId, sewnBy, now, row.id);
+
+  const who = db.prepare("SELECT name FROM employees WHERE id = ?").get(sewnBy)?.name || "";
+  logAudit({ user: req.session.username, action: "production_sewn",
+             comment: `Сшито ${who}: ${row.product_name || row.article} → склад №${stockNumber}` });
+  res.json({ ok: true, stockId, stockNumber,
+             message: `Сшито (${who}). На складе под №${stockNumber} — отправьте на забивку, когда понадобится.` });
 });
 
 // Подтянуть в производство заказы, которых там нет. Запись в «Производстве»
