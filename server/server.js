@@ -18,19 +18,12 @@ import { fileURLToPath } from "url";
 
 import { ensureSchema, ensureBootstrapUser } from "./db.js";
 import { autoMigrateIfNeeded } from "./autoMigrate.js";
+// Только вход подключаем жёстко: без него в программу не зайти вообще.
+// Все остальные разделы — через mountRoute (см. ниже), чтобы один неудачно
+// залитый файл не убивал весь сервер. Раньше половина разделов подключалась
+// жёстко, и при заливке файлов по одному сервис падал целиком: например,
+// kaspi.js уже ждал новую функцию из db.js, а сам db.js ещё не был залит.
 import authRoutes from "./routes/auth.js";
-import orderRoutes from "./routes/orders.js";
-import priceRoutes from "./routes/price.js";
-import kaspiRoutes from "./routes/kaspi.js";
-import catalogRoutes from "./routes/catalog.js";
-import counterRoutes from "./routes/counters.js";
-import employeeRoutes from "./routes/employees.js";
-import companiesRoutes from "./routes/companies.js";
-import pricePdfRoutes from "./routes/pricePdf.js";
-import productionRoutes from "./routes/production.js";
-import metaRoutes from "./routes/meta.js";
-import settingsRoutes from "./routes/settings.js";
-import auditRoutes from "./routes/audit.js";
 import * as authMiddleware from "./middleware/auth.js";
 
 // Если middleware/auth.js остался старой версии, в нём нет requirePermission.
@@ -89,18 +82,6 @@ app.use("/uploads", express.static(UPLOAD_DIR));
 
 // API маршруты
 app.use("/api/auth", authRoutes);
-app.use("/api/orders", orderRoutes);
-app.use("/api/price", priceRoutes);
-app.use("/api/kaspi", kaspiRoutes);
-app.use("/api/catalog", catalogRoutes);
-app.use("/api/counters", counterRoutes);
-app.use("/api/employees", employeeRoutes);
-app.use("/api/companies", companiesRoutes);
-app.use("/api/price-pdf", requirePermission("price"), pricePdfRoutes);
-app.use("/api/production", productionRoutes);
-app.use("/api/meta", metaRoutes);
-app.use("/api/settings", requirePermission("kaspi"), settingsRoutes);
-app.use("/api/audit", requirePermission("audit"), auditRoutes);
 
 // Подключаем модули по одному: если какой-то файл не залит на сервер,
 // упадёт только он, а остальная программа продолжит работать.
@@ -119,6 +100,18 @@ async function mountRoute(name, mountPath, guard) {
   }
 }
 
+await mountRoute("orders", "/api/orders", null);
+await mountRoute("price", "/api/price", null);
+await mountRoute("kaspi", "/api/kaspi", null);
+await mountRoute("catalog", "/api/catalog", null);
+await mountRoute("counters", "/api/counters", null);
+await mountRoute("employees", "/api/employees", null);
+await mountRoute("companies", "/api/companies", null);
+await mountRoute("pricePdf", "/api/price-pdf", requirePermission("price"));
+await mountRoute("production", "/api/production", null);
+await mountRoute("meta", "/api/meta", null);
+await mountRoute("settings", "/api/settings", requirePermission("kaspi"));
+await mountRoute("audit", "/api/audit", requirePermission("audit"));
 await mountRoute("priceLists", "/api/price-lists", requirePermission("price"));
 await mountRoute("chinaPurchases", "/api/china-purchases", requirePermission("china"));
 await mountRoute("chinaStock", "/api/china-stock", requirePermission("china"));
