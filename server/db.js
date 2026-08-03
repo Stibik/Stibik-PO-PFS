@@ -622,6 +622,9 @@ export function ensureSchema() {
   safeAddColumn("production", "archived_at TEXT");
   safeAddColumn("production", "quantity INTEGER DEFAULT 1");
   safeAddColumn("production", "shop TEXT");
+  // Заявка на забивку сшитого изделия со склада: менеджер отправляет чехол
+  // в очередь производства, забивщик берёт его так же, как обычный заказ
+  safeAddColumn("production", "warehouse_stock_id TEXT");
   // Менеджер решает, что уходит забивщикам: пока заказ не «опубликован»,
   // в мониторе его не видно — иначе там висело бы всё подряд
   safeAddColumn("production", "published INTEGER DEFAULT 0");
