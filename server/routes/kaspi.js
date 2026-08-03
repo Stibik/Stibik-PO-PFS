@@ -1,5 +1,5 @@
 import express from "express";
-import { db, getKaspiShops, nextKaspiNumber, nextStockNumber, logAudit } from "../db.js";
+import { db, getKaspiShops, nextOrderNumber, nextStockNumber, logAudit } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
 import { syncShop } from "../kaspi.js";
 
@@ -197,7 +197,10 @@ router.post("/sync", async (req, res) => {
           }
         } else {
           if (ko.deliveryState === "ARCHIVE" && !includeArchive) { skippedArchive++; continue; }
-          const displayNumber = nextKaspiNumber(shop.name);
+          // Сквозной номер на всю программу: SA и PFS идут одним рядом,
+          // как в старой таблице. Отдельные счётчики по магазинам давали
+          // разные номера у соседних заказов и не бились с прежним учётом.
+          const displayNumber = nextOrderNumber();
           const id = "kord_" + ko.kaspiOrderId;
           db.prepare(`INSERT INTO orders
             (id, source, kaspi_order_id, kaspi_code, shop, display_number, status, kaspi_status,
