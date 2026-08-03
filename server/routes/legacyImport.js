@@ -285,4 +285,90 @@ router.post("/renumber", (req, res) => {
   res.json({ ok: true, count: plan.length, nextFree: n, examples: plan.slice(0, 8), dryRun });
 });
 
+// ---------- Откат импорта ----------
+// Единственное место во всей программе, которое удаляет начисления. Поэтому:
+// удаляем ТОЛЬКО строки с меткой импорта (legacy_key), живые начисления по
+// заказам Kaspi не трогаем вообще, и по умолчанию работаем в режиме показа.
+
+// Выплаты, созданные импортом, узнаём по комментарию — своих таких нет
+const IMPORT_PAYOUT_MARK = "Перенос из старой системы";
+
+function importedStats() {
+  const entries = db.prepare("SELECT * FROM payroll_entries WHERE legacy_key IS NOT NULL").all();
+  const payouts = db.prepare("SELECT * FROM payouts WHERE comment LIKE ?").all(IMPORT_PAYOUT_MARK + "%");
+  const importPayoutIds = new Set(payouts.map(p => p.id));
+
+  // Если начисление уже вошло в НАСТОЯЩУЮ выплату (не импортную) — удалять его
+  // нельзя: рассыплется сумма выданного. Такие показываем отдельно и оставляем.
+  const blocked = entries.filter(e => e.payout_id && !importPayoutIds.has(e.payout_id));
+  const removable = entries.filter(e => !(e.payout_id && !importPayoutIds.has(e.payout_id)));
+
+  const byEmployee = new Map();
+  for (const e of removable) {
+    const name = e.employee_id
+      ? (db.prepare("SELECT name FROM employees WHERE id = ?").get(e.employee_id)?.name || e.employee_id)
+      : "без исполнителя";
+    if (!byEmployee.has(name)) byEmployee.set(name, { name, count: 0, sum: 0 });
+    const b = byEmployee.get(name);
+    b.count++; b.sum += num(e.amount);
+  }
+  const sum = a => Math.round(a.reduce((s, e) => s + num(e.amount), 0));
+  return {
+    entries: removable.length,
+    entriesSum: sum(removable),
+    paidEntries: removable.filter(e => e.status === "paid").length,
+    unpaidSum: sum(removable.filter(e => e.status !== "paid")),
+    payouts: payouts.length,
+    payoutsSum: Math.round(payouts.reduce((s, p) => s + num(p.amount), 0)),
+    blocked: blocked.length,
+    blockedSum: sum(blocked),
+    liveEntries: db.prepare("SELECT COUNT(*) AS n FROM payroll_entries WHERE legacy_key IS NULL").get().n,
+    employees: Array.from(byEmployee.values()).map(b => ({ ...b, sum: Math.round(b.sum) }))
+                    .sort((a, b) => b.sum - a.sum)
+  };
+}
+
+// Что будет удалено — смотреть можно сколько угодно, ничего не меняется
+router.get("/imported", (req, res) => {
+  res.json(importedStats());
+});
+
+router.post("/rollback", (req, res) => {
+  const stats = importedStats();
+  // Защита от случайного нажатия: удаление только по явному подтверждению
+  if (req.body?.confirm !== "УДАЛИТЬ") {
+    return res.json({ ok: true, dryRun: true, ...stats,
+      message: "Ничего не удалено — это предпросмотр. Для удаления пришлите confirm: \"УДАЛИТЬ\"." });
+  }
+  if (!stats.entries && !stats.payouts) {
+    return res.json({ ok: true, deletedEntries: 0, deletedPayouts: 0, message: "Нечего удалять — импортированных строк нет." });
+  }
+
+  const payouts = db.prepare("SELECT id FROM payouts WHERE comment LIKE ?").all(IMPORT_PAYOUT_MARK + "%");
+  const importPayoutIds = new Set(payouts.map(p => p.id));
+  const entries = db.prepare("SELECT * FROM payroll_entries WHERE legacy_key IS NOT NULL").all();
+
+  let deletedEntries = 0, skipped = 0;
+  for (const e of entries) {
+    if (e.payout_id && !importPayoutIds.has(e.payout_id)) { skipped++; continue; }
+    db.prepare("DELETE FROM payroll_entry_log WHERE entry_id = ?").run(e.id);
+    db.prepare("DELETE FROM payroll_entries WHERE id = ?").run(e.id);
+    deletedEntries++;
+  }
+  let deletedPayouts = 0;
+  for (const p of payouts) {
+    // Выплату сносим, только если в ней не осталось чужих начислений
+    const left = db.prepare("SELECT COUNT(*) AS n FROM payroll_entries WHERE payout_id = ?").get(p.id).n;
+    if (left > 0) continue;
+    db.prepare("DELETE FROM payout_deductions WHERE payout_id = ?").run(p.id);
+    db.prepare("DELETE FROM payouts WHERE id = ?").run(p.id);
+    deletedPayouts++;
+  }
+
+  logAudit({ user: req.session.username, action: "legacy_rollback",
+             comment: `Удалено начислений ${deletedEntries} на ${stats.entriesSum} ₸, выплат ${deletedPayouts}` });
+  res.json({ ok: true, deletedEntries, deletedPayouts, skipped,
+             message: `Удалено ${deletedEntries} начислений и ${deletedPayouts} выплат. Теперь можно залить файл заново.` });
+});
+
 export default router;
