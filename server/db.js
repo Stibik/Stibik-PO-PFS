@@ -617,6 +617,41 @@ export function ensureSchema() {
   safeAddColumn("warehouse_stock", "location TEXT");   // место хранения (свободный текст)
   safeAddColumn("warehouse_stock", "status TEXT DEFAULT 'available'"); // available | reserved | damaged
   safeAddColumn("warehouse_stock", "comment TEXT");
+  // Свой номер у каждой позиции: без него нельзя ни сослаться на вещь,
+  // ни отдать её забивщику — «та груша, которая слева» не работает
+  safeAddColumn("warehouse_stock", "stock_number INTEGER");
+  // Кто сшил и какое начисление за это висит. Пока вещь лежит на складе,
+  // начисление в состоянии «отложено»; выдали в заказ — оно идёт к выплате.
+  safeAddColumn("warehouse_stock", "employee_id TEXT");
+  safeAddColumn("warehouse_stock", "payroll_entry_id TEXT");
+  safeAddColumn("warehouse_stock", "created_by TEXT");
+  safeAddColumn("warehouse_stock", "consumed_at TEXT");
+  safeAddColumn("warehouse_stock", "consumed_by TEXT");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_stock_number ON warehouse_stock(stock_number)");
+
+  // История движения: откуда пришло, куда ушло, кто трогал
+  db.exec(`CREATE TABLE IF NOT EXISTS warehouse_moves (
+    id TEXT PRIMARY KEY,
+    stock_id TEXT NOT NULL,
+    stock_number INTEGER,
+    at TEXT,
+    user TEXT,
+    action TEXT,        -- in | out | edit | damaged | restored
+    order_id TEXT,
+    order_number INTEGER,
+    employee_id TEXT,
+    amount REAL,
+    comment TEXT
+  )`);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_moves_stock ON warehouse_moves(stock_id, at)");
+
+  // Раздаём номера тем позициям, что появились раньше этой доработки:
+  // старые записи иначе остались бы безымянными навсегда
+  const noNumber = db.prepare("SELECT id FROM warehouse_stock WHERE stock_number IS NULL ORDER BY created_at").all();
+  if (noNumber.length) {
+    const upd = db.prepare("UPDATE warehouse_stock SET stock_number = ? WHERE id = ?");
+    for (const r of noNumber) upd.run(nextStockNumber(), r.id);
+  }
 
   const kaspiShopsRow = db.prepare("SELECT value FROM settings WHERE key = 'kaspi_shops'").get();
   if (!kaspiShopsRow) {
@@ -692,6 +727,15 @@ export function nextKaspiNumber(shopName) {
   const key = shopName ? `next_kaspi_number:${shopName}` : "next_kaspi_number";
   const n = parseInt(getMeta(key) || "1", 10);
   setMeta(key, n + 1);
+  return n;
+}
+
+// Номер складской позиции. Начинаем с 50000, чтобы номера склада ни при каких
+// обстоятельствах не спутались с номерами заказов — глядя на число, сразу
+// понятно, это склад или заказ.
+export function nextStockNumber() {
+  const n = parseInt(getMeta("next_stock_number") || "50000", 10);
+  setMeta("next_stock_number", n + 1);
   return n;
 }
 
