@@ -27,13 +27,13 @@ const STAGE = {
   defect: { label: "брак",             next: null }
 };
 
-// Расценка из Справочника делится на две части. Если доля швеи не заполнена,
-// вся сумма считается забивкой — так работало раньше, и цифры не поедут.
+// Швея на окладе — сдельных денег за пошив нет. Расценка из Справочника
+// целиком принадлежит забивке: чехол сшили, он лежит; забил человек — ему и
+// деньги. Поэтому доли швеи здесь нет и быть не должно.
 function ratesFor(article) {
-  const item = article ? db.prepare("SELECT labor_rate, sew_rate FROM price_items WHERE article = ?").get(article) : null;
+  const item = article ? db.prepare("SELECT labor_rate FROM price_items WHERE article = ?").get(article) : null;
   const total = num(item?.labor_rate);
-  const sew = Math.min(num(item?.sew_rate), total);
-  return { total, sew, fill: money(total - sew) };
+  return { total, sew: 0, fill: total };
 }
 
 function logMove(row, user, action, extra = {}) {
