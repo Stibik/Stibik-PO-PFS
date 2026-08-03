@@ -1269,7 +1269,12 @@
       Вставьте список из старого учёта: в каждой строке внутренний номер и код Kaspi.
       Разделитель любой — табуляция, пробелы, точка с запятой.
     </div>
-    <textarea id="numbersText" style="width:100%; height:150px; margin-top:10px; font-family:var(--mono); font-size:12px;"
+    <div style="margin-top:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+      <button class="btn amber" id="numbersPickFile">Выбрать файл со списком</button>
+      <input type="file" id="numbersFile" accept=".txt,.csv,.tsv,.xlsx,.xls" style="display:none">
+      <span id="numbersFileInfo" style="font-size:12.5px; color:var(--ink-soft);">или вставьте список вручную ниже</span>
+    </div>
+    <textarea id="numbersText" style="width:100%; height:110px; margin-top:8px; font-family:var(--mono); font-size:12px;"
       placeholder="4226&#9;1012058162&#10;4227&#9;1012208954&#10;4240&#9;1018048121"></textarea>
     <div style="margin-top:10px; font-size:12.5px;">
       <b>Заказы, которых в файле нет:</b>
@@ -5019,11 +5024,14 @@
 
     // Безымянные позиции надо подписать, иначе их не выдать: непонятно, что выдаёшь
     document.getElementById("whUnnamedWarn").innerHTML = t.unnamed
-      ? `<div class="panel" style="background:#FFF8E6; border-color:var(--amber); display:flex; align-items:center; gap:10px;">
+      ? `<div class="panel" style="background:#FFF8E6; border-color:var(--amber); display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
            <span style="font-size:18px;">⚠️</span>
-           <span style="font-size:13px;"><b>Без названия: ${t.unnamed} шт.</b> Это пришло с возвратов, где Kaspi не отдал наименование.
-             Раскройте строку и подпишите — у каждой штуки есть свой номер.</span></div>`
+           <span style="font-size:13px; flex:1;"><b>Без названия: ${t.unnamed} шт.</b> Пришло с отмен и возвратов, где Kaspi не отдал наименование.
+             Опознать и выдать такое нельзя — подпишите по одной или удалите все разом.</span>
+           <button class="btn secondary" id="whDelUnnamed" style="padding:5px 12px; font-size:12px;">Удалить все безымянные</button></div>`
       : "";
+    const delUn = document.getElementById("whDelUnnamed");
+    if(delUn) delUn.addEventListener("click", whDeleteUnnamed);
 
     const q = (document.getElementById("whSearch").value || "").trim().toLowerCase();
     const src = document.getElementById("whSource").value;
@@ -5149,6 +5157,21 @@
       const r = await api(`/warehouse/${encodeURIComponent(itemId)}/defect`, { method:"POST",
         body: JSON.stringify({ reason: reason.trim() }) });
       toast(r.message || "Помечено браком");
+      loadWarehouse();
+    }catch(e){ toast("Не получилось: " + e.message); }
+  }
+
+  async function whDeleteUnnamed(){
+    let info;
+    try{ info = await api("/warehouse/delete-unnamed", { method:"POST", body: JSON.stringify({}) }); }
+    catch(e){ toast("Не получилось: " + e.message); return; }
+    if(!info.count){ toast("Безымянных позиций нет"); return; }
+    if(!confirm(`Удалить ${info.count} позиций без названия?\n\n` +
+      `Номера: ${(info.numbers || []).join(", ")}${info.count > 20 ? " и другие" : ""}\n\n` +
+      `Начисления по ним будут отменены. Отменить удаление нельзя.`)) return;
+    try{
+      const r = await api("/warehouse/delete-unnamed", { method:"POST", body: JSON.stringify({ confirm: true }) });
+      toast(r.message);
       loadWarehouse();
     }catch(e){ toast("Не получилось: " + e.message); }
   }
@@ -5658,6 +5681,7 @@
   // программой. Ставим строго по коду Kaspi: он в обеих системах одинаковый.
   document.getElementById("btnFixNumbers").addEventListener("click", ()=>{
     document.getElementById("numbersText").value = "";
+    document.getElementById("numbersFileInfo").textContent = "или вставьте список вручную ниже";
     document.getElementById("numbersPreview").innerHTML = "";
     document.getElementById("numbersError").textContent = "";
     document.getElementById("numbersActions").innerHTML = `<button class="btn secondary" id="numbersCheck">Проверить</button>`;
@@ -5666,6 +5690,47 @@
   });
   document.getElementById("numbersClose").addEventListener("click", ()=>
     document.getElementById("numbersOverlay").classList.remove("show"));
+
+  // Файл со списком — чтобы не мучиться с копированием тысяч строк.
+  // Понимаем и обычный текст, и Excel: колонки «номер» и «код Kaspi».
+  document.getElementById("numbersPickFile").addEventListener("click", ()=>
+    document.getElementById("numbersFile").click());
+  document.getElementById("numbersFile").addEventListener("change", (ev)=>{
+    const file = ev.target.files[0];
+    ev.target.value = "";
+    if(!file) return;
+    const info = document.getElementById("numbersFileInfo");
+    info.textContent = "Читаю файл...";
+    const isExcel = /\.xlsx?$/i.test(file.name);
+    const reader = new FileReader();
+    reader.onload = (e)=>{
+      try{
+        let text = "";
+        if(isExcel){
+          const wb = XLSX.read(e.target.result, { type:"array" });
+          let best = null;
+          for(const nm of wb.SheetNames){
+            const arr = XLSX.utils.sheet_to_json(wb.Sheets[nm], { header:1, defval:null });
+            if(!best || arr.length > best.length) best = arr;
+          }
+          text = (best || []).map(r=>(r || []).join("\t")).join("\n");
+        }else{
+          // Выгрузки бывают в разных кодировках: пробуем UTF-16, потом обычную
+          const buf = new Uint8Array(e.target.result);
+          const looksUtf16 = buf.length > 1 && buf[0] === 0xFF && buf[1] === 0xFE;
+          text = new TextDecoder(looksUtf16 ? "utf-16le" : "utf-8").decode(buf);
+        }
+        document.getElementById("numbersText").value = text;
+        const lines = text.split(/[\r\n]+/).filter(l=>/\d{1,7}\D+\d{6,20}/.test(l)).length;
+        info.innerHTML = `<b>${esc(file.name)}</b> — подходящих строк: ${lines}`;
+        checkNumbers();
+      }catch(err){
+        info.textContent = "";
+        document.getElementById("numbersError").textContent = "Не получилось прочитать файл: " + err.message;
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  });
 
   function bindNumbersCheck(){
     const btn = document.getElementById("numbersCheck");
