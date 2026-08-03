@@ -824,6 +824,7 @@
         <button class="btn secondary admin-only" id="btnLegacyImport">📄 Загрузить файл заказов и зарплаты</button>
         <input type="file" id="legacyFile" accept=".xlsx,.xls" style="display:none">
         <button class="btn secondary admin-only" id="btnLegacyRollback">↺ Убрать залитое из старого файла</button>
+        <button class="btn secondary admin-only" id="btnFixNumbers">№ Проставить номера заказов</button>
         <span style="margin-left:auto; font-size:12.5px; color:var(--ink-soft);">Расценки берутся из Справочника</span>
       </div>
       <div id="salaryHero" style="margin-bottom:14px;"></div>
@@ -1252,6 +1253,28 @@
       <tbody id="whMovesBody"></tbody></table>
     </div>
     <div class="modal-actions"><div></div><button class="btn secondary" id="whMovesClose">Закрыть</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="numbersOverlay">
+  <div class="modal" style="max-width:680px;">
+    <h3>Проставить номера заказов</h3>
+    <div style="font-size:12.5px; color:var(--ink-soft); margin-top:-8px;">
+      Вставьте список из старого учёта: в каждой строке внутренний номер и код Kaspi.
+      Разделитель любой — табуляция, пробелы, точка с запятой.
+    </div>
+    <textarea id="numbersText" style="width:100%; height:150px; margin-top:10px; font-family:var(--mono); font-size:12px;"
+      placeholder="4226&#9;1012058162&#10;4227&#9;1012208954&#10;4240&#9;1018048121"></textarea>
+    <label style="display:block; margin-top:8px; font-size:12.5px;">
+      <input type="checkbox" id="numbersRenumberRest" checked>
+      Остальным заказам выдать номера подряд после максимума из списка
+    </label>
+    <div id="numbersPreview" style="margin-top:12px; font-size:13px;"></div>
+    <div class="error" id="numbersError"></div>
+    <div class="modal-actions">
+      <div id="numbersActions"><button class="btn secondary" id="numbersCheck">Проверить</button></div>
+      <button class="btn secondary" id="numbersClose">Закрыть</button>
+    </div>
   </div>
 </div>
 
@@ -5529,6 +5552,77 @@
     if(!employeesList.length){ try{ employeesList = await api("/employees"); }catch(e){} }
     loadSalaryWorks();
     loadSalaryMonths();
+  }
+
+  // ---------- Простановка номеров заказов ----------
+  // Номера из старого учёта — единственная ниточка между Kaspi, InSales и нашей
+  // программой. Ставим строго по коду Kaspi: он в обеих системах одинаковый.
+  document.getElementById("btnFixNumbers").addEventListener("click", ()=>{
+    document.getElementById("numbersText").value = "";
+    document.getElementById("numbersPreview").innerHTML = "";
+    document.getElementById("numbersError").textContent = "";
+    document.getElementById("numbersActions").innerHTML = `<button class="btn secondary" id="numbersCheck">Проверить</button>`;
+    bindNumbersCheck();
+    document.getElementById("numbersOverlay").classList.add("show");
+  });
+  document.getElementById("numbersClose").addEventListener("click", ()=>
+    document.getElementById("numbersOverlay").classList.remove("show"));
+
+  function bindNumbersCheck(){
+    const btn = document.getElementById("numbersCheck");
+    if(btn) btn.addEventListener("click", checkNumbers);
+  }
+  bindNumbersCheck();
+
+  async function checkNumbers(){
+    const text = document.getElementById("numbersText").value;
+    document.getElementById("numbersError").textContent = "";
+    const box = document.getElementById("numbersPreview");
+    box.innerHTML = "Проверяю...";
+    let p;
+    try{ p = await api("/legacy-import/numbers/preview", {method:"POST", body: JSON.stringify({ text })}); }
+    catch(e){ box.innerHTML = ""; document.getElementById("numbersError").textContent = e.message; return; }
+
+    box.innerHTML = `
+      <div class="panel" style="margin:0 0 10px;">
+        <div style="line-height:1.9;">
+          Разобрано строк: <b>${p.total}</b><br>
+          Заказы найдены по коду Kaspi: <b>${p.found}</b>${p.notFound ? ` · не найдено: <b style="color:var(--red);">${p.notFound}</b>` : ""}<br>
+          Номер поменяется у <b>${p.willChange}</b> заказов${p.alreadyOk ? ` · уже верный у ${p.alreadyOk}` : ""}
+        </div>
+      </div>
+      ${p.dupeCount ? `<div class="panel" style="margin:0 0 10px; background:#FCEEEE; border-color:var(--red); font-size:12.5px;">
+        В самом списке один и тот же номер стоит у разных заказов: <b>${p.dupeCount}</b>.
+        Например ${p.dupes.map(d=>`№${d.number}`).join(", ")}. Проверьте список — иначе номера задвоятся.</div>` : ""}
+      ${p.changeExamples.length ? `<b style="font-size:13px;">Что поменяется</b>
+        <table style="width:100%; margin:6px 0 10px;"><thead><tr><th class="num">Было</th><th class="num">Станет</th><th>Магазин</th><th>Товар</th></tr></thead>
+        <tbody>${p.changeExamples.map(c=>`<tr>
+          <td class="num">${c.was ?? "—"}</td><td class="num"><b>${c.number}</b></td>
+          <td style="font-size:12px;">${esc(c.shop || "")}</td>
+          <td style="font-size:12px;">${esc(String(c.name || "").slice(0,44))}</td></tr>`).join("")}</tbody></table>` : ""}
+      ${p.notFound ? `<div style="font-size:12px; color:var(--ink-soft); margin-bottom:10px;">
+        Не нашлись, например: ${esc(p.notFoundExamples.join(", "))}. Это старые заказы, которых нет в базе — их номера просто не проставятся.</div>` : ""}
+      <div class="panel" style="margin:0; background:#FFF8E6; border-color:var(--amber); font-size:12.5px;">
+        Заказов вне списка: <b>${p.outsideCount}</b> — им выдадим номера подряд, начиная с <b>${p.nextFree}</b>.<br>
+        Дальше новые заказы из Kaspi продолжат этот же ряд — одной сквозной нумерацией для SA и PFS.
+      </div>`;
+    document.getElementById("numbersActions").innerHTML =
+      `<button class="btn amber" id="numbersApply">Проставить номера</button>`;
+    document.getElementById("numbersApply").addEventListener("click", async ()=>{
+      const btn = document.getElementById("numbersApply");
+      btn.disabled = true; btn.textContent = "Ставлю...";
+      try{
+        const r = await api("/legacy-import/numbers/apply", {method:"POST", body: JSON.stringify({
+          text, renumberRest: document.getElementById("numbersRenumberRest").checked })});
+        document.getElementById("numbersOverlay").classList.remove("show");
+        toast(r.message);
+        if(typeof loadOrders === "function") loadOrders();
+        loadSalary();
+      }catch(e){
+        document.getElementById("numbersError").textContent = e.message;
+        btn.disabled = false; btn.textContent = "Проставить номера";
+      }
+    });
   }
 
   // ---------- Откат импорта ----------
