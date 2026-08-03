@@ -66,6 +66,7 @@ function payCodeOf(v) {
 function analyze(rows) {
   const employees = new Map();
   let matched = 0, notMatched = 0, withRate = 0, paidSum = 0, debtSum = 0, numbered = 0, covered = 0;
+  let noExecutor = 0;   // пустая клетка «Исполнитель» — это то, что придётся разносить руками
   const unmatchedExamples = [];
 
   for (const raw of rows) {
@@ -79,7 +80,7 @@ function analyze(rows) {
     if (isCovered(raw)) { covered++; continue; }
     const name = cleanName(raw.executor);
     const amount = num(raw.amount);
-    if (!name) continue;
+    if (!name) { noExecutor++; continue; }
     if (!employees.has(name)) employees.set(name, { works: 0, paid: 0, debt: 0 });
     const e = employees.get(name);
     e.works++;
@@ -90,7 +91,7 @@ function analyze(rows) {
     }
   }
   return {
-    rows: rows.length, matched, notMatched, numbered, withRate, covered,
+    rows: rows.length, matched, notMatched, numbered, withRate, covered, noExecutor,
     paidSum: Math.round(paidSum), debtSum: Math.round(debtSum),
     unmatchedExamples,
     employees: Array.from(employees.entries()).map(([name, v]) => ({
