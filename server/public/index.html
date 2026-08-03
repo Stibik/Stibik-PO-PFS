@@ -5343,12 +5343,18 @@
         for(let i=0;i<head.length;i++){
           if(head[i].includes("оплат") && !head[i].includes("без") && i !== cExec){ cPay = i; break; }
         }
-        // Сумма — колонка без заголовка сразу после наименования
-        let cAmount = -1;
+        // Сумма к начислению — это «К выплате», а НЕ продажная цена заказа.
+        // Раньше бралась первая колонка без заголовка после наименования, а там
+        // лежит сумма самого заказа. В большинстве строк они совпадают, поэтому
+        // ошибка и не бросалась в глаза, но там, где заказ на две штуки или
+        // работу решили не оплачивать, начислялось неверно.
+        let cAmount = findCol("к выплате", "квыплате", "расценка", "зарплат");
+        let cOrderSum = -1;
         for(let i=0;i<head.length;i++){
-          if(i > cName && !head[i] && arr.slice(1,40).some(r=>typeof r[i] === "number" && r[i] > 100)) { cAmount = i; break; }
+          if(i > cName && !head[i] && arr.slice(1,40).some(r=>typeof r[i] === "number" && r[i] > 100)) { cOrderSum = i; break; }
         }
-        if(cAmount === -1) cAmount = findCol("сумма","расценка","к выплате");
+        // Колонки «К выплате» в файле нет — только тогда берём безымянную
+        if(cAmount === -1) cAmount = cOrderSum >= 0 ? cOrderSum : findCol("сумма");
 
         legacyRows = [];
         for(let r=1;r<arr.length;r++){
@@ -5361,12 +5367,36 @@
             name: cName>=0 ? row[cName] : "",
             amount: cAmount>=0 ? row[cAmount] : 0,
             executor: cExec>=0 ? row[cExec] : "",
-            payCode: cPay>=0 ? (row[cPay] instanceof Date
+            // Дату узнаём по поведению, а не через instanceof: если библиотека
+            // разбора Excel загружена отдельным файлом, её Date — «чужой» объект,
+            // и проверка через instanceof молча не срабатывает
+            payCode: cPay>=0 ? (row[cPay] && typeof row[cPay].getTime === "function"
               ? new Date(row[cPay].getTime() - row[cPay].getTimezoneOffset()*60000).toISOString().slice(0,10)
               : row[cPay]) : ""
           });
         }
         if(!legacyRows.length) throw new Error("не нашлось ни одной строки");
+        // Показываем, что именно программа поняла из шапки файла. Если колонку
+        // определило неверно, это видно сразу, а не после заливки денег.
+        const colName = (i)=>i < 0 ? `<span style="color:var(--red);">не найдена</span>`
+          : `<b>${esc(String(arr[0][i] || "без заголовка"))}</b> <span style="color:var(--ink-soft);">(колонка ${i+1})</span>`;
+        const sample = legacyRows.find(r=>r.executor && Number(r.amount) > 0) || legacyRows[0];
+        window.__legacyColumns = `
+          <div style="background:#FFF8E6; border:1px solid var(--amber); border-radius:8px; padding:10px 12px; margin-bottom:12px; font-size:12.5px;">
+            <b>Как прочитан файл — проверьте:</b>
+            <div style="margin-top:6px; line-height:1.7;">
+              № заказа: ${colName(cNum)}<br>
+              Код Kaspi: ${colName(cCode)}<br>
+              Наименование: ${colName(cName)}<br>
+              Исполнитель: ${colName(cExec)}<br>
+              Дата оплаты: ${colName(cPay)}<br>
+              <span style="color:var(--red);">Сумма к начислению:</span> ${colName(cAmount)}
+              ${cOrderSum >= 0 && cOrderSum !== cAmount ? `<br><span style="color:var(--ink-soft);">Цена заказа (колонка ${cOrderSum+1}) в зарплату НЕ идёт — это правильно.</span>` : ""}
+            </div>
+            ${sample ? `<div style="margin-top:8px; padding-top:8px; border-top:1px solid var(--amber);">
+              Пример строки: №${esc(String(sample.num||"—"))} · ${esc(String(sample.name||"").slice(0,40))} ·
+              <b>${esc(String(sample.executor||""))}</b> · <b>${esc(String(sample.amount||0))} ₸</b></div>` : ""}
+          </div>`;
         document.getElementById("legacyBody").innerHTML = `<div style="padding:10px 0;">Читаю файл: лист «${esc(best.nm)}», строк ${legacyRows.length}. Проверяю на сервере...</div>`;
         const p = await api("/legacy-import/preview", {method:"POST", body: JSON.stringify({rows: legacyRows})});
         renderLegacyPreview(p);
@@ -5379,6 +5409,7 @@
 
   function renderLegacyPreview(p){
     document.getElementById("legacyBody").innerHTML = `
+      ${window.__legacyColumns || ""}
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px 16px; font-size:13px;">
         <div>Строк в файле: <b>${p.rows}</b></div>
         <div>Заказов найдено по коду Kaspi: <b>${p.matched}</b></div>
@@ -5386,6 +5417,7 @@
         <div>Заказов не найдено: <b>${p.notMatched}</b></div>
         <div>Уже выплачено: <b>${money(p.paidSum)} ₸</b></div>
         <div>Останется долг: <b style="color:var(--red);">${money(p.debtSum)} ₸</b></div>
+        <div style="grid-column:1/-1;">Без исполнителя (надо будет разнести): <b>${p.noExecutor || 0}</b></div>
         <div style="grid-column:1/-1;">Перекрыто возвратом или отменой: <b>${p.covered || 0}</b>
           <span style="color:var(--ink-soft);">— работу не делали заново, зарплата не начисляется</span></div>
       </div>
