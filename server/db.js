@@ -733,6 +733,28 @@ export function nextKaspiNumber(shopName) {
 // Номер складской позиции. Начинаем с 50000, чтобы номера склада ни при каких
 // обстоятельствах не спутались с номерами заказов — глядя на число, сразу
 // понятно, это склад или заказ.
+// Сквозной номер заказа — ОДИН на всю программу, без деления по магазинам.
+// Раньше у SA и PFS были свои счётчики, и номера налезали друг на друга:
+// в одном магазине 541, в другом 9941, а в старой таблице тот же заказ 4226.
+// Единая нумерация продолжается от самого большого номера, который уже есть.
+export function nextOrderNumber() {
+  let n = parseInt(getMeta("next_order_number") || "0", 10);
+  if (!n) {
+    const row = db.prepare("SELECT MAX(display_number) AS m FROM orders").get();
+    n = (row && row.m ? row.m : 0) + 1;
+  }
+  setMeta("next_order_number", n + 1);
+  return n;
+}
+
+// Сдвинуть счётчик вперёд — после простановки номеров из старой таблицы,
+// чтобы новые заказы продолжили ряд, а не начали затирать уже занятые номера
+export function bumpOrderNumber(minNext) {
+  const cur = parseInt(getMeta("next_order_number") || "0", 10);
+  if (minNext > cur) setMeta("next_order_number", minNext);
+  return parseInt(getMeta("next_order_number"), 10);
+}
+
 export function nextStockNumber() {
   const n = parseInt(getMeta("next_stock_number") || "50000", 10);
   setMeta("next_stock_number", n + 1);
