@@ -1,5 +1,5 @@
 import express from "express";
-import { db, logAudit } from "../db.js";
+import { db, logAudit, nextStockNumber } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
 
 const router = express.Router();
@@ -258,18 +258,31 @@ router.post("/stock-production", (req, res) => {
 
   const now = new Date().toISOString();
   const stockId = uid("ws");
-  db.prepare(`INSERT INTO warehouse_stock (id, article, product_name, source, qty, consumed, created_at)
-              VALUES (?,?,?,'overproduced',?,0,?)`)
-    .run(stockId, item.article || "", item.name || item.kaspi_name || "", qty, now);
+  // Номер присваиваем сразу: без него вещь на складе не опознать, а забивщику
+  // и вовсе не на что сослаться
+  const stockNumber = nextStockNumber();
+  db.prepare(`INSERT INTO warehouse_stock (id, stock_number, article, product_name, source, qty, consumed,
+              employee_id, created_by, created_at)
+              VALUES (?,?,?,?,'overproduced',?,0,?,?,?)`)
+    .run(stockId, stockNumber, item.article || "", item.name || item.kaspi_name || "", qty,
+         b.employeeId, req.session.username, now);
 
   const entry = insertEntry({
     employeeId: b.employeeId, warehouseStockId: stockId,
     article: item.article, productName: item.name || item.kaspi_name || "",
     qty, rate, kind: "stock", comment: str(b.comment), user: req.session.username
   });
+  // Связь в обе стороны: со склада надо быстро находить начисление, чтобы при
+  // выдаче в заказ перевести его к выплате
+  db.prepare("UPDATE warehouse_stock SET payroll_entry_id = ? WHERE id = ?").run(entry.id, stockId);
+  db.prepare(`INSERT INTO warehouse_moves (id, stock_id, stock_number, at, user, action, employee_id, amount, comment)
+              VALUES (?,?,?,?,?,'in',?,?,?)`)
+    .run(uid("wm"), stockId, stockNumber, now, req.session.username, b.employeeId, money(entry.amount),
+         "Сшито на запас — оплата после выдачи в заказ");
+
   logAudit({ user: req.session.username, action: "payroll_stock_production",
-             comment: `На склад: ${item.name || item.article} ×${qty}, начислено ${money(entry.amount)} ₸` });
-  res.json({ ok: true, entry: entryToJson(entry), stockId });
+             comment: `На склад №${stockNumber}: ${item.name || item.article} ×${qty}, отложено ${money(entry.amount)} ₸` });
+  res.json({ ok: true, entry: entryToJson(entry), stockId, stockNumber });
 });
 
 // Ручное начисление (доработка, ремонт, нестандартная работа)
