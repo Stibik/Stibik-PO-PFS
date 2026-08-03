@@ -11,15 +11,28 @@ function str(v, max = 500) { return String(v == null ? "" : v).replace(/[\r\n\t]
 function money(v) { return Math.round(num(v) * 100) / 100; }
 
 // В списке сотрудников после переноса из старой таблицы осели пометки, а не
-// люди: «не определено», «Без оплаты», «Перекрыто». Платить им некому, поэтому
-// в сводках и долгах они считаются как «не разнесено», а в выборе исполнителя
-// вообще не показываются. Удалять их нельзя — на них висит история.
-const SERVICE_NAMES = new Set([
-  "не определено", "не определен", "не определён", "без оплаты", "перекрыто",
-  "перекрыт", "возврат", "отмена", "пропустим", "хз", "-", "—"
+// люди. Но пометки бывают ДВУХ разных смыслов, и путать их нельзя:
+//
+// 1. Заказ закрыт возвратом или отменой — «Без оплаты», «Перекрыто», «Возврат».
+//    Работу заново не делали, платить не за что, разносить нечего. Закрыто.
+// 2. Исполнителя просто не записали — «не определено», пустая клетка.
+//    Работа была, человек был, его надо найти и разнести.
+const CLOSED_NAMES = new Set([
+  "без оплаты", "безоплаты", "перекрыто", "перекрыт", "перекрытро", "прекрыт",
+  "возврат", "отмена", "пропустим"
 ]);
+const UNASSIGNED_NAMES = new Set([
+  "не определено", "не определен", "не определён", "неопределено", "хз", "-", "—", "?"
+]);
+function isClosedEmployee(name) {
+  return CLOSED_NAMES.has(String(name || "").toLowerCase().trim());
+}
+function isUnassignedEmployee(name) {
+  return UNASSIGNED_NAMES.has(String(name || "").toLowerCase().trim());
+}
+// Общее: и то и другое — не человек, выплачивать нельзя
 function isServiceEmployee(name) {
-  return SERVICE_NAMES.has(String(name || "").toLowerCase().trim());
+  return isClosedEmployee(name) || isUnassignedEmployee(name);
 }
 
 // Расценка берётся ТОЛЬКО из Справочника (price_items.labor_rate) — так решили
@@ -62,6 +75,8 @@ function entryToJson(e, joined) {
     employeeId: e.employee_id,
     employeeName: emp ? emp.name : "",
     employeeIsService: emp ? isServiceEmployee(emp.name) : false,
+    employeeIsClosed: emp ? isClosedEmployee(emp.name) : false,
+    employeeIsUnassigned: emp ? isUnassignedEmployee(emp.name) : false,
     orderNumber: o ? o.display_number : null,
     kaspiCode: o ? o.kaspi_code : null,
     orderDate: o ? (o.kaspi_creation_date || o.created_at || null) : null,
@@ -440,7 +455,10 @@ router.get("/summary", (req, res) => {
     return {
       employeeId: emp.id,
       name: emp.name,
-      isService: isServiceEmployee(emp.name),   // пометка из старой таблицы, а не человек
+      // Две разные пометки: закрытое возвратом и то, что надо разнести
+      isService: isServiceEmployee(emp.name),
+      isClosed: isClosedEmployee(emp.name),
+      isUnassigned: isUnassignedEmployee(emp.name),
       pendingCount: pending.count, pendingSum: pending.sum,       // отложено (работа не принята)
       pendingStockSum: agg("pending", "stock").sum,               // из них — на запас
       payableCount: payable.count, payableSum: payable.sum,       // к выплате
@@ -468,14 +486,17 @@ router.get("/by-months", (req, res) => {
   const debts = new Map();
   const people = new Set();
   let paidTotal = 0, debtTotal = 0, undistributed = 0, undistributedCount = 0;
+  let closedSum = 0, closedCount = 0;   // закрыто возвратом — разносить нечего
 
   for (const e of entries) {
     const name = e.emp_name || "не разнесено";
     const amount = num(e.amount);
-    // Служебная пометка — это то же самое, что пустая клетка в старом файле.
-    // Считаем не деньги, а штуки: «без разноски» — это то, что надо разнести,
-    // а не сумма долга. Про эти работы и напоминаем постоянно.
-    if (!e.employee_id || !e.emp_name || isServiceEmployee(e.emp_name)) { undistributed += amount; undistributedCount++; continue; }
+    // «Без оплаты» и «Перекрыто» — заказ закрыт возвратом. Работу заново не
+    // делали, платить не за что и разносить нечего: это НЕ «без разноски».
+    if (isClosedEmployee(e.emp_name)) { closedSum += amount; closedCount++; continue; }
+    // А вот пустая клетка и «не определено» — это как раз то, что надо разнести.
+    // Считаем штуки, а не деньги: это не долг, а работа, которую надо разобрать.
+    if (!e.employee_id || !e.emp_name || isUnassignedEmployee(e.emp_name)) { undistributed += amount; undistributedCount++; continue; }
     people.add(name);
     if (e.status === "paid") {
       const when = String(e.paid_at || e.accepted_at || e.created_at || "").slice(0, 7);
@@ -502,7 +523,9 @@ router.get("/by-months", (req, res) => {
       };
     }),
     debts: Array.from(debts.entries()).map(([name, sum]) => ({ name, sum })).sort((a, b) => b.sum - a.sum),
-    totals: { paid: money(paidTotal), debt: money(debtTotal), undistributed: money(undistributed), undistributedCount }
+    totals: { paid: money(paidTotal), debt: money(debtTotal),
+              undistributed: money(undistributed), undistributedCount,
+              closed: money(closedSum), closedCount }
   });
 });
 
@@ -511,6 +534,13 @@ router.post("/payouts", (req, res) => {
   const b = req.body || {};
   const emp = b.employeeId ? db.prepare("SELECT * FROM employees WHERE id = ?").get(b.employeeId) : null;
   if (!emp) return res.status(400).json({ error: "no_employee", message: "Выберите сотрудника" });
+  // «не определено», «Без оплаты» — это пометки из старой таблицы, а не люди.
+  // Спрятать кнопку на экране мало: запрет должен стоять здесь, иначе выплату
+  // всё равно можно провести, и деньги уйдут в никуда.
+  if (isServiceEmployee(emp.name)) {
+    return res.status(400).json({ error: "service_employee",
+      message: `«${emp.name}» — это пометка из старой таблицы, а не сотрудник. Сначала разнесите эти работы на людей.` });
+  }
 
   // Берём только принятые работы: что не принято — в выплату не попадает
   let entries;
