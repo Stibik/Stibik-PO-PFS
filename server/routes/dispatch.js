@@ -76,12 +76,29 @@ router.post("/release", (req, res) => {
 // из нескольких запросов и часть полей вообще не доходила до экрана.
 // Одна строка производства → то, что видит экран. Вынесено в функцию,
 // чтобы теми же правилами считать и список, и счётчики на кнопках.
-function toItem(p) {
-    const order = p.order_id ? db.prepare("SELECT display_number, shop, qty, kaspi_code, product_name FROM orders WHERE id = ?").get(p.order_id) : null;
-    const entry = db.prepare("SELECT * FROM payroll_entries WHERE production_id = ? AND status != 'cancelled'").get(p.id);
-    const emp = p.employee_id ? db.prepare("SELECT name FROM employees WHERE id = ?").get(p.employee_id) : null;
-    const forEmp = p.published_for ? db.prepare("SELECT name FROM employees WHERE id = ?").get(p.published_for) : null;
-    const item = p.article ? db.prepare("SELECT labor_rate, photo FROM price_items WHERE article = ?").get(p.article) : null;
+// Справочники грузим ОДИН раз на весь список. Раньше на каждую строку уходило
+// пять отдельных запросов к базе, и SQL компилировался заново — на пяти тысячах
+// позиций это 25 000 запросов и заметные тормоза всего раздела.
+function loadLookups() {
+  const map = (rows, key) => {
+    const m = new Map();
+    for (const r of rows) m.set(r[key], r);
+    return m;
+  };
+  return {
+    orders: map(db.prepare("SELECT id, display_number, shop, qty, kaspi_code, product_name FROM orders").all(), "id"),
+    employees: map(db.prepare("SELECT id, name FROM employees").all(), "id"),
+    items: map(db.prepare("SELECT article, labor_rate, photo FROM price_items WHERE article IS NOT NULL").all(), "article"),
+    entries: map(db.prepare("SELECT * FROM payroll_entries WHERE production_id IS NOT NULL AND status != 'cancelled'").all(), "production_id")
+  };
+}
+
+function toItem(p, L) {
+    const order = p.order_id ? L.orders.get(p.order_id) || null : null;
+    const entry = L.entries.get(p.id) || null;
+    const emp = p.employee_id ? L.employees.get(p.employee_id) || null : null;
+    const forEmp = p.published_for ? L.employees.get(p.published_for) || null : null;
+    const item = p.article ? L.items.get(p.article) || null : null;
     const qty = Number(order?.qty) || Number(p.quantity) || 1;
     const rate = item ? Number(item.labor_rate) || 0 : 0;
 
@@ -124,7 +141,8 @@ router.get("/list", (req, res) => {
   const allRows = db.prepare("SELECT * FROM production ORDER BY created_at DESC LIMIT 5000").all();
   // Собираем один раз и потом только фильтруем: toItem дёргает базу пять раз
   // на строку, а прогонять его дважды по всему производству — лишняя нагрузка
-  const allItems = allRows.map(toItem);
+  const L = loadLookups();
+  const allItems = allRows.map(p => toItem(p, L));
   const items = allItems.filter(i => withArchived ? !!i.archivedAt : !i.archivedAt);
 
   // Счётчики — по всем строкам производства, чтобы «Архив» и остальные шаги
@@ -134,6 +152,47 @@ router.get("/list", (req, res) => {
     return acc;
   }, {});
   res.json({ items, counts, total: items.length });
+});
+
+// Подтянуть в производство заказы, которых там нет. Запись в «Производстве»
+// создаётся при синхронизации Kaspi, поэтому у заказов, пришедших раньше этой
+// доработки, её просто не существует — и они нигде не видны, хотя их надо делать.
+router.post("/pull-missing", (req, res) => {
+  const dryRun = req.body?.confirm !== true;
+  // Берём только те, по которым реально надо работать: не отменённые,
+  // не возвращённые, не завершённые и не архивные
+  const rows = db.prepare(`
+    SELECT o.* FROM orders o
+    WHERE o.source = 'kaspi'
+      AND (o.kaspi_status IS NULL OR o.kaspi_status NOT IN ('CANCELLED','CANCELLING','RETURNED','RETURN_REQUESTED','COMPLETED'))
+      AND (o.delivery_state IS NULL OR o.delivery_state != 'ARCHIVE')
+      AND NOT EXISTS (SELECT 1 FROM production p WHERE p.order_id = o.id)
+    ORDER BY o.display_number`).all();
+
+  if (dryRun) {
+    return res.json({ dryRun: true, count: rows.length,
+      examples: rows.slice(0, 10).map(o => ({
+        number: o.display_number, kaspiCode: o.kaspi_code, shop: o.shop, name: o.product_name })),
+      message: `Найдено заказов без записи в производстве: ${rows.length}. Ничего ещё не создано.` });
+  }
+
+  const now = new Date().toISOString();
+  const ins = db.prepare(`INSERT INTO production (id, order_id, article, product_name, quantity, shop, stage, created_at)
+                          VALUES (?,?,?,?,?,?, 'pending', ?)`);
+  let created = 0;
+  for (const o of rows) {
+    // Артикул лежит в сыром ответе Kaspi — достаём оттуда, если он есть
+    let article = o.article || null;
+    if (!article && o.entries_raw) {
+      try { article = JSON.parse(o.entries_raw)?.data?.[0]?.attributes?.offer?.code || null; } catch (e) {}
+    }
+    ins.run("prod_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+            o.id, article, o.product_name || "", Number(o.qty) || 1, o.shop || null, now);
+    created++;
+  }
+  logAudit({ user: req.session.username, action: "production_pull_missing", comment: `Подтянуто: ${created}` });
+  res.json({ ok: true, created,
+             message: `Подтянуто в производство: ${created}. Они появились в «Ждут решения».` });
 });
 
 // В архив уходит то, что уже отработано или больше не нужно.
