@@ -6874,11 +6874,13 @@
   // строке одна главная кнопка, а не набор одинаковых иконок.
   const PROD_STEPS = [
     { key:"pending",    label:"Ждут решения",   color:"#B45309", bg:"#FEF3C7", hint:"выберите, откуда берём товар" },
+    { key:"to_stock",   label:"Шьётся на запас", color:"#0F766E", bg:"#CCFBF1", hint:"отметьте «Сшито», когда будет готово" },
     { key:"published",  label:"У забивщиков",   color:"#7C3AED", bg:"#EDE9FE", hint:"ждём, кто возьмёт" },
     { key:"in_work",    label:"В работе",       color:"#2563EB", bg:"#DBEAFE", hint:"забивщик шьёт" },
     { key:"reported",   label:"Сдано",          color:"#7C3AED", bg:"#EDE9FE", hint:"подтвердите работу" },
     { key:"accepted",   label:"К выплате",      color:"#166534", bg:"#DCFCE7", hint:"деньги ждут выплаты" },
     { key:"paid",       label:"Оплачено",       color:"#4B5563", bg:"#F3F4F6", hint:"" },
+    { key:"sewn",       label:"Сшито на склад", color:"#0F766E", bg:"#CCFBF1", hint:"лежит на складе, ждёт забивки" },
     { key:"from_stock", label:"Со склада",      color:"#4B5563", bg:"#F3F4F6", hint:"без оплаты" },
     { key:"covered",    label:"Перекрыто",      color:"#4B5563", bg:"#F3F4F6", hint:"без оплаты" },
     { key:"archived",   label:"Архив",          color:"#6B7280", bg:"#F3F4F6", hint:"" }
@@ -7045,6 +7047,12 @@
     if(p.step === "published") return `
       <button class="btn secondary prod-unpublish" data-prod-id="${esc(p.id)}" ${small}>Убрать из монитора</button>
       <button class="btn secondary prod-edit" data-prod-id="${esc(p.id)}" ${small}>✎</button>`;
+    // Задание «сшить на запас»: пока швея не отчиталась, изделия ещё нет
+    if(p.step === "to_stock") return `
+      <button class="btn amber prod-sewn" data-prod-id="${esc(p.id)}" ${small}>✓ Сшито</button>
+      <button class="btn secondary prod-edit" data-prod-id="${esc(p.id)}" ${small}>✎</button>`;
+    if(p.step === "sewn") return `
+      <span style="font-size:11.5px; color:var(--ink-soft);">на складе, ждёт забивки</span>`;
     // У «в работе» и «сдано» начисление может отсутствовать: так бывает, если
     // работу освободили или строка приехала из старой системы. Раньше здесь
     // читалось p.entry.id и вся вкладка падала с «Cannot read properties of null».
@@ -7079,6 +7087,17 @@
         renderProduction();
       });
     }
+    // Швея отчиталась — изделие уходит на склад со своим номером
+    wrap.querySelectorAll(".prod-sewn").forEach(b=>b.addEventListener("click", async ()=>{
+      const pick = await pickEmployee({ title: "Кто сшил?" });
+      if(!pick || !pick.employeeId) return;
+      try{
+        const r = await api(`/dispatch/${encodeURIComponent(b.dataset.prodId)}/sewn`, { method:"POST",
+          body: JSON.stringify({ employeeId: pick.employeeId }) });
+        toast(r.message);
+        loadProduction();
+      }catch(e){ toast("Не получилось: " + e.message); }
+    }));
     wrap.querySelectorAll(".prod-action-stock").forEach(b=>b.addEventListener("click", ()=>resolveProduction(b.dataset.prodId, "stock")));
     wrap.querySelectorAll(".prod-action-return").forEach(b=>b.addEventListener("click", ()=>resolveProduction(b.dataset.prodId, "return_offset")));
     // Починка строки, у которой пропало начисление: пересоздаём по расценке из Справочника
