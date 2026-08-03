@@ -256,10 +256,10 @@ router.post("/stock-production", (req, res) => {
   const { rate, found, item } = findRate(b.itemId, b.article);
   if (!found) return res.status(400).json({ error: "item_not_found", message: "Товар не найден в Справочнике — расценка берётся только оттуда" });
 
-  // Расценка делится на пошив и забивку. Если доля швеи в Справочнике не
-  // заполнена, работа считается одной — как было раньше, цифры не поедут.
-  const sewRate = Math.min(num(item.sew_rate), rate);
-  const splitWork = sewRate > 0;
+  // Швея на окладе: за пошив сдельного начисления нет. Сшитый чехол просто
+  // ложится на склад со стадией «сшито, не забито». Деньги появятся, когда
+  // изделие забьют — и получит их забивщик.
+  const splitWork = true;
 
   const now = new Date().toISOString();
   const stockId = uid("ws");
@@ -275,28 +275,15 @@ router.post("/stock-production", (req, res) => {
          // другой человек. Одна расценка — изделие сразу готово, как раньше.
          splitWork ? "sewn" : "ready", b.employeeId, now);
 
-  const entry = insertEntry({
-    employeeId: b.employeeId, warehouseStockId: stockId,
-    article: item.article, productName: item.name || item.kaspi_name || "",
-    qty, rate: splitWork ? sewRate : rate, kind: "stock",
-    comment: str(b.comment) || (splitWork ? "Пошив" : ""), user: req.session.username
-  });
-  // Связь в обе стороны: со склада надо быстро находить начисление, чтобы при
-  // выдаче в заказ перевести его к выплате
-  db.prepare("UPDATE warehouse_stock SET payroll_entry_id = ?, sew_entry_id = ? WHERE id = ?")
-    .run(entry.id, splitWork ? entry.id : null, stockId);
-  db.prepare(`INSERT INTO warehouse_moves (id, stock_id, stock_number, at, user, action, employee_id, amount, comment)
-              VALUES (?,?,?,?,?,'in',?,?,?)`)
-    .run(uid("wm"), stockId, stockNumber, now, req.session.username, b.employeeId, money(entry.amount),
-         "Сшито на запас — оплата после выдачи в заказ");
+  db.prepare(`INSERT INTO warehouse_moves (id, stock_id, stock_number, at, user, action, employee_id, comment)
+              VALUES (?,?,?,?,?,'in',?,?)`)
+    .run(uid("wm"), stockId, stockNumber, now, req.session.username, b.employeeId,
+         "Сшито на запас — ждёт забивки");
 
   logAudit({ user: req.session.username, action: "payroll_stock_production",
-             comment: `На склад №${stockNumber}: ${item.name || item.article} ×${qty}, отложено ${money(entry.amount)} ₸` });
-  res.json({ ok: true, entry: entryToJson(entry), stockId, stockNumber,
-             stage: splitWork ? "sewn" : "ready",
-             message: splitWork
-               ? `Сшито, склад №${stockNumber}. Осталось забить — тогда начислим и забивщику.`
-               : `На складе под №${stockNumber}. Оплата начислится, когда изделие уйдёт в заказ.` });
+             comment: `На склад №${stockNumber}: ${item.name || item.article} ×${qty}, сшито` });
+  res.json({ ok: true, stockId, stockNumber, stage: "sewn", rate,
+             message: `Сшито, склад №${stockNumber}. Забивки ещё не было — деньги появятся, когда изделие забьют.` });
 });
 
 // Ручное начисление (доработка, ремонт, нестандартная работа)
