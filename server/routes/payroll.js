@@ -249,41 +249,30 @@ router.post("/from-production/:productionId", (req, res) => {
 router.post("/stock-production", (req, res) => {
   const b = req.body || {};
   if (!b.employeeId || !db.prepare("SELECT id FROM employees WHERE id = ?").get(b.employeeId)) {
-    return res.status(400).json({ error: "no_employee", message: "Выберите исполнителя" });
+    return res.status(400).json({ error: "no_employee", message: "Выберите, кто шьёт" });
   }
   const qty = num(b.qty, 1);
   if (qty <= 0) return res.status(400).json({ error: "bad_qty", message: "Количество должно быть больше нуля" });
   const { rate, found, item } = findRate(b.itemId, b.article);
   if (!found) return res.status(400).json({ error: "item_not_found", message: "Товар не найден в Справочнике — расценка берётся только оттуда" });
 
-  // Швея на окладе: за пошив сдельного начисления нет. Сшитый чехол просто
-  // ложится на склад со стадией «сшито, не забито». Деньги появятся, когда
-  // изделие забьют — и получит их забивщик.
-  const splitWork = true;
-
+  // «Сшить на запас» — это ЗАДАНИЕ, а не готовое изделие. Оно встаёт в
+  // «Производство» и ждёт, пока швея действительно сошьёт. Только после отметки
+  // «Сшито» вещь попадает на склад. Раньше она падала на склад сразу, и на
+  // остатках висело то, чего ещё не существует.
   const now = new Date().toISOString();
-  const stockId = uid("ws");
-  // Номер присваиваем сразу: без него вещь на складе не опознать, а забивщику
-  // и вовсе не на что сослаться
-  const stockNumber = nextStockNumber();
-  db.prepare(`INSERT INTO warehouse_stock (id, stock_number, article, product_name, source, qty, consumed,
-              employee_id, created_by, created_at, stage, sewn_by, sewn_at)
-              VALUES (?,?,?,?,'overproduced',?,0,?,?,?,?,?,?)`)
-    .run(stockId, stockNumber, item.article || "", item.name || item.kaspi_name || "", qty,
-         b.employeeId, req.session.username, now,
-         // Раздельная расценка — значит вещь пока только сшита, забивать будет
-         // другой человек. Одна расценка — изделие сразу готово, как раньше.
-         splitWork ? "sewn" : "ready", b.employeeId, now);
+  const prodId = uid("prod");
+  db.prepare(`INSERT INTO production (id, order_id, article, product_name, quantity, shop,
+              stage, employee_id, manager_comment, created_at)
+              VALUES (?, NULL, ?, ?, ?, NULL, 'to_stock', ?, ?, ?)`)
+    .run(prodId, item.article || "", item.name || item.kaspi_name || "", qty,
+         b.employeeId, str(b.comment) || null, now);
 
-  db.prepare(`INSERT INTO warehouse_moves (id, stock_id, stock_number, at, user, action, employee_id, comment)
-              VALUES (?,?,?,?,?,'in',?,?)`)
-    .run(uid("wm"), stockId, stockNumber, now, req.session.username, b.employeeId,
-         "Сшито на запас — ждёт забивки");
-
+  const who = db.prepare("SELECT name FROM employees WHERE id = ?").get(b.employeeId)?.name || "";
   logAudit({ user: req.session.username, action: "payroll_stock_production",
-             comment: `На склад №${stockNumber}: ${item.name || item.article} ×${qty}, сшито` });
-  res.json({ ok: true, stockId, stockNumber, stage: "sewn", rate,
-             message: `Сшито, склад №${stockNumber}. Забивки ещё не было — деньги появятся, когда изделие забьют.` });
+             comment: `Задание на запас: ${item.name || item.article} ×${qty}, шьёт ${who}` });
+  res.json({ ok: true, productionId: prodId, rate,
+             message: `Задание создано: шьёт ${who}. Появилось в «Производстве» — отметьте «Сшито», когда будет готово.` });
 });
 
 // Ручное начисление (доработка, ремонт, нестандартная работа)
