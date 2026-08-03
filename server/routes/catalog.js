@@ -39,7 +39,8 @@ function rowToCatalogItem(row) {
     diameter: row.diameter,
     weight: row.weight,
     mount: row.mount,               // крепление/кольцо (для груш и т.п.)
-    laborRate: row.labor_rate,      // расценка труда за 1 шт — читает "Зарплата"
+    laborRate: row.labor_rate,      // ОБЩАЯ расценка труда за 1 шт — читает "Зарплата"
+    sewRate: row.sew_rate,          // сколько из неё достаётся швее; остальное — забивщику
     materialCost: row.material_cost,
     miscCost: row.misc_cost,
     ragsCost: row.rags_cost,
@@ -238,7 +239,7 @@ router.put("/:id", (req, res) => {
     material: "material", color: "color", height: "height", diameter: "diameter",
     weight: "weight", mount: "mount", note: "note", photo: "photo", gtin: "gtin",
     deliveryCost: "delivery_cost", taxPercent: "tax_percent",
-    laborRate: "labor_rate", materialCost: "material_cost", miscCost: "misc_cost", ragsCost: "rags_cost",
+    laborRate: "labor_rate", sewRate: "sew_rate", materialCost: "material_cost", miscCost: "misc_cost", ragsCost: "rags_cost",
     costPrice: "cost", retailPrice: "retail", sortOrder: "sort_order"
   };
   const numericFields = new Set(["height","diameter","weight","laborRate","materialCost","miscCost","ragsCost","costPrice","retailPrice","sortOrder","deliveryCost","taxPercent"]);
@@ -303,7 +304,7 @@ router.post("/bulk-update", async (req, res) => {
     material: "material", color: "color", height: "height", diameter: "diameter",
     weight: "weight", mount: "mount", note: "note", gtin: "gtin",
     deliveryCost: "delivery_cost", taxPercent: "tax_percent",
-    laborRate: "labor_rate", materialCost: "material_cost", miscCost: "misc_cost", ragsCost: "rags_cost",
+    laborRate: "labor_rate", sewRate: "sew_rate", materialCost: "material_cost", miscCost: "misc_cost", ragsCost: "rags_cost",
     costPrice: "cost", retailPrice: "retail"
   };
   const numericFields = new Set(["height","diameter","weight","laborRate","materialCost","miscCost","ragsCost","costPrice","retailPrice","deliveryCost","taxPercent"]);
