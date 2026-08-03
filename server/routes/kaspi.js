@@ -1,5 +1,5 @@
 import express from "express";
-import { db, getKaspiShops, nextKaspiNumber, logAudit } from "../db.js";
+import { db, getKaspiShops, nextKaspiNumber, nextStockNumber, logAudit } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
 import { syncShop } from "../kaspi.js";
 
@@ -106,10 +106,15 @@ async function refreshStaleOrders(token, shopName, limit = 50) {
         let entriesRaw = null;
         try { entriesRaw = existing.entries_raw ? JSON.parse(existing.entries_raw) : null; } catch (e) {}
         const article = extractArticle(entriesRaw);
+        // Название обязательно: без него на складе появлялась безымянная строка
+        // «—», и восемь разных изделий слипались в одну кучу, которую нельзя
+        // ни опознать, ни выдать в заказ. Берём лучшее из доступного.
+        const whName = existing.product_name || extractOfferName(entriesRaw)
+          || (article ? `Артикул ${article}` : `Возврат по заказу №${existing.display_number || existing.kaspi_code}`);
         db.prepare(`INSERT INTO warehouse_stock
-          (id, article, product_name, source, source_order_id, qty, consumed, created_at)
-          VALUES (?, ?, ?, ?, ?, 1, 0, ?)`)
-          .run(genId("wh"), article, existing.product_name,
+          (id, stock_number, article, product_name, source, source_order_id, qty, consumed, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?)`)
+          .run(genId("wh"), nextStockNumber(), article, whName,
                newStatus === "CANCELLED" ? "cancelled" : "returned", existing.id, now);
       }
 
@@ -182,10 +187,12 @@ router.post("/sync", async (req, res) => {
           const justCancelledOrReturned = statusChanged && (ko.status === "CANCELLED" || ko.status === "RETURNED");
           if (justCancelledOrReturned && ko.assembled) {
             const article = extractArticle(ko.entriesRaw);
+            const whName = ko.productName || extractOfferName(ko.entriesRaw)
+              || (article ? `Артикул ${article}` : `Возврат по заказу ${ko.kaspiCode}`);
             db.prepare(`INSERT INTO warehouse_stock
-              (id, article, product_name, source, source_order_id, qty, consumed, created_at)
-              VALUES (?, ?, ?, ?, ?, 1, 0, ?)`)
-              .run(genId("wh"), article, ko.productName || extractOfferName(ko.entriesRaw),
+              (id, stock_number, article, product_name, source, source_order_id, qty, consumed, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?)`)
+              .run(genId("wh"), nextStockNumber(), article, whName,
                    ko.status === "CANCELLED" ? "cancelled" : "returned", existing.id, now);
           }
         } else {
