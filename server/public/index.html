@@ -627,10 +627,22 @@
     <section id="tab-claims" style="display:none">
       <div class="toolbar">
         <label style="font-size:13px;"><input type="checkbox" id="showClosedClaims"> Показывать закрытые</label>
+        <label style="font-size:13px;"><input type="checkbox" id="showArchivedClaims"> Показывать архив</label>
+        <label style="font-size:13px;"><input type="checkbox" id="showHiddenClaims"> Показывать убранные</label>
+        <span id="claimsCount" style="margin-left:auto; font-size:12.5px; color:var(--ink-soft);"></span>
+      </div>
+      <div class="panel" id="claimsBulkBar" style="display:none; background:#FFF8E6; border-color:var(--amber); align-items:center; gap:10px; flex-wrap:wrap;">
+        <b style="font-size:13px;" id="claimsBulkCount"></b>
+        <button class="btn secondary" id="claimsBulkArchive" style="padding:5px 12px; font-size:12px;">🗄 В архив</button>
+        <button class="btn secondary" id="claimsBulkUnarchive" style="padding:5px 12px; font-size:12px;">Вернуть из архива</button>
+        <button class="btn secondary" id="claimsBulkHide" style="padding:5px 12px; font-size:12px; color:var(--red);">✕ Убрать из списка</button>
+        <button class="btn secondary" id="claimsBulkUnhide" style="padding:5px 12px; font-size:12px;">Вернуть в список</button>
+        <button class="btn secondary" id="claimsBulkClear" style="padding:5px 12px; font-size:12px; margin-left:auto;">Снять выбор</button>
       </div>
 <div class="tbl-wrap">
             <table>
-        <thead><tr><th>№</th><th>Kaspi код</th><th>Магазин</th><th>Наименование</th><th>Статус</th><th>Дата отмены (прибл.)</th><th>Дней с отмены</th><th>Заметка</th><th></th></tr></thead>
+        <thead><tr><th style="width:28px;"><input type="checkbox" id="claimsCheckAll" title="Выделить все"></th>
+        <th>№</th><th>Kaspi код</th><th>Магазин</th><th>Наименование</th><th>Статус</th><th>Дата отмены (прибл.)</th><th>Дней с отмены</th><th>Заметка</th><th></th></tr></thead>
         <tbody id="claimsBody"></tbody>
       </table>
       </div>
@@ -8191,15 +8203,31 @@
 
   document.getElementById("showClosedClaims").addEventListener("change", renderClaims);
 
+  let selectedClaimIds = new Set();
+
   function renderClaims(){
     const showClosed = document.getElementById("showClosedClaims").checked;
-    let list = kaspiOrders.filter(o=>CLAIM_STATUSES.includes(o.kaspiStatus));
+    const showArchived = document.getElementById("showArchivedClaims").checked;
+    const showHidden = document.getElementById("showHiddenClaims").checked;
+    const all = kaspiOrders.filter(o=>CLAIM_STATUSES.includes(o.kaspiStatus));
+    let list = all;
     if(!showClosed) list = list.filter(o=>!o.claimResolved);
+    // Архив и убранные показываем только по галочке — иначе список зарастает
+    list = list.filter(o=>showArchived ? true : !o.claimArchived);
+    list = list.filter(o=>showHidden ? true : !o.claimHidden);
     list.sort((a,b)=>(a.displayNumber||0)-(b.displayNumber||0));
+
+    const arch = all.filter(o=>o.claimArchived).length;
+    const hid = all.filter(o=>o.claimHidden).length;
+    document.getElementById("claimsCount").textContent =
+      `Показано: ${list.length} из ${all.length}` + (arch ? ` · в архиве ${arch}` : "") + (hid ? ` · убрано ${hid}` : "");
+
     const body = document.getElementById("claimsBody");
+    window.__claimsShown = list;
     body.innerHTML = list.map(o=>`
-      <tr style="${o.claimResolved?'opacity:.5;':''}">
-        <td>${esc(o.displayNumber||"")}</td>
+      <tr style="${o.claimResolved||o.claimArchived?'opacity:.55;':''}">
+        <td><input type="checkbox" data-claim="${esc(o.id)}" ${selectedClaimIds.has(o.id)?"checked":""}></td>
+        <td>${esc(o.displayNumber||"")}${o.claimArchived?`<div style="font-size:10.5px; color:var(--ink-soft);">архив</div>`:""}${o.claimHidden?`<div style="font-size:10.5px; color:var(--ink-soft);">убрано</div>`:""}</td>
         <td class="mono">${esc(o.kaspiCode||"")}</td>
         <td>${esc(o.shop||"")}</td>
         <td>${esc(o.productName||"—")}</td>
@@ -8211,8 +8239,69 @@
           <button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__openClaim('${o.id}')">${o.claimResolved?'Открыть':'Обработать'}</button>
           <button class="btn secondary" style="padding:4px 8px;font-size:12px" onclick="window.__openKaspiDetail('${o.id}')">Детали</button>
         </td>
-      </tr>`).join("") || `<tr><td colspan="9" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет отмен/возвратов${showClosed?'':' (не закрытых)'}</td></tr>`;
+      </tr>`).join("") || `<tr><td colspan="10" style="text-align:center;color:var(--ink-soft);padding:20px;">Нет отмен/возвратов${showClosed?'':' (не закрытых)'}</td></tr>`;
+
+    body.querySelectorAll("[data-claim]").forEach(c=>c.addEventListener("change", ()=>{
+      if(c.checked) selectedClaimIds.add(c.dataset.claim); else selectedClaimIds.delete(c.dataset.claim);
+      updateClaimsBulk();
+    }));
+    document.getElementById("claimsCheckAll").checked = false;
+    updateClaimsBulk();
   }
+
+  function updateClaimsBulk(){
+    const bar = document.getElementById("claimsBulkBar");
+    if(!selectedClaimIds.size){ bar.style.display = "none"; return; }
+    bar.style.display = "flex";
+    document.getElementById("claimsBulkCount").textContent = `Выбрано: ${selectedClaimIds.size}`;
+  }
+
+  // Пометки хранятся на самом заказе, поэтому просто правим его полями
+  async function claimsBulkSet(fields, what){
+    const ids = Array.from(selectedClaimIds);
+    if(!ids.length) return;
+    let done = 0;
+    for(const id of ids){
+      try{
+        await api("/orders/" + encodeURIComponent(id), { method:"PUT", body: JSON.stringify(fields) });
+        const o = kaspiOrders.find(x=>x.id === id);
+        if(o) Object.assign(o, fields);
+        done++;
+      }catch(e){}
+    }
+    selectedClaimIds.clear();
+    toast(`${what}: ${done}`);
+    renderClaims();
+  }
+
+  document.getElementById("claimsCheckAll").addEventListener("change", (ev)=>{
+    const rows = window.__claimsShown || [];
+    if(ev.target.checked) rows.forEach(o=>selectedClaimIds.add(o.id)); else selectedClaimIds.clear();
+    document.querySelectorAll("[data-claim]").forEach(c=>{ c.checked = selectedClaimIds.has(c.dataset.claim); });
+    updateClaimsBulk();
+  });
+  document.getElementById("claimsBulkClear").addEventListener("click", ()=>{
+    selectedClaimIds.clear();
+    document.querySelectorAll("[data-claim]").forEach(c=>{ c.checked = false; });
+    document.getElementById("claimsCheckAll").checked = false;
+    updateClaimsBulk();
+  });
+  document.getElementById("claimsBulkArchive").addEventListener("click", ()=>
+    claimsBulkSet({ claimArchived: true }, "Убрано в архив"));
+  document.getElementById("claimsBulkUnarchive").addEventListener("click", ()=>
+    claimsBulkSet({ claimArchived: false }, "Возвращено из архива"));
+  document.getElementById("claimsBulkUnhide").addEventListener("click", ()=>
+    claimsBulkSet({ claimHidden: false }, "Возвращено в список"));
+  document.getElementById("claimsBulkHide").addEventListener("click", ()=>{
+    // Сам заказ не удаляем: он есть в Kaspi и вернётся при синхронизации.
+    // Убираем только из этого списка, и это всегда можно откатить.
+    if(!confirm(`Убрать ${selectedClaimIds.size} строк из списка отмен?\n\n` +
+      `Заказы останутся в «Заказах» и в Kaspi — прячется только эта строка.\n` +
+      `Вернуть можно галочкой «Показывать убранные».`)) return;
+    claimsBulkSet({ claimHidden: true }, "Убрано из списка");
+  });
+  ["showArchivedClaims","showHiddenClaims"].forEach(id=>
+    document.getElementById(id).addEventListener("change", renderClaims));
 
   window.__openClaim = function(id){
     editingClaimId = id;
