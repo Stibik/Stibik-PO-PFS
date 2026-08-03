@@ -253,36 +253,16 @@ router.post("/apply", (req, res) => {
   res.json({ ok: true, ...stats, matchedOrderIds: Array.from(matchedOrderIds), maxNumberFromFile: maxFromFile });
 });
 
-// Наведение порядка в номерах: заказы, которых нет в старом файле (тестовые
-// на 600 и 5000, свежие из Kaspi), получают номера подряд от указанного числа.
-// Так весь список становится сплошным, без дыр и выдуманных значений.
+// Перенумерация «всех остальных подряд» УДАЛЕНА намеренно.
+// Именно она ломала нумерацию: раздавала выдуманные номера вроде 9916–9954
+// поверх правильных, и заказы переставали биться с Kaspi и старым учётом.
+// Номера теперь ставятся только по списку «номер — код Kaspi» (см. ниже),
+// а новые заказы берут номер из общего сквозного счётчика.
 router.post("/renumber", (req, res) => {
-  const startFrom = Number(req.body?.startFrom);
-  if (!Number.isFinite(startFrom) || startFrom < 1) {
-    return res.status(400).json({ error: "bad_start", message: "Укажите, с какого номера продолжать" });
-  }
-  const keepIds = new Set(Array.isArray(req.body?.keepOrderIds) ? req.body.keepOrderIds : []);
-  const dryRun = req.body?.dryRun === true;
-
-  // Берём только те заказы, номера которых мы НЕ переносили из файла
-  const rows = db.prepare(`SELECT id, display_number, shop, kaspi_code, product_name, created_at
-                           FROM orders WHERE source = 'kaspi' OR kaspi_code LIKE 'УД-%'
-                           ORDER BY created_at, rowid`).all();
-  const targets = rows.filter(o => !keepIds.has(o.id));
-
-  let n = startFrom;
-  const plan = targets.map(o => ({
-    id: o.id, kaspiCode: o.kaspi_code, shop: o.shop,
-    name: o.product_name, was: o.display_number, becomes: n++
-  }));
-
-  if (!dryRun) {
-    const upd = db.prepare("UPDATE orders SET display_number = ? WHERE id = ?");
-    plan.forEach(p => upd.run(p.becomes, p.id));
-    logAudit({ user: req.session.username, action: "orders_renumber",
-               comment: `Перенумеровано ${plan.length} заказов с ${startFrom}` });
-  }
-  res.json({ ok: true, count: plan.length, nextFree: n, examples: plan.slice(0, 8), dryRun });
+  res.status(410).json({
+    error: "removed",
+    message: "Массовая перенумерация убрана — она портила номера. Пользуйтесь кнопкой «№ Проставить номера заказов»: там номера ставятся строго по коду Kaspi."
+  });
 });
 
 // ---------- Откат импорта ----------
