@@ -257,6 +257,39 @@ router.post("/pull-missing", (req, res) => {
              message: `Подтянуто в производство: ${created}. Они появились в «Ждут решения».` });
 });
 
+// Удалить строки из монитора совсем. Нужно после подтягивания: часть заказов
+// делать не надо, а в архиве они всё равно мешают глазу. Удаляем только саму
+// строку производства — заказ, начисления и деньги не трогаем.
+router.post("/delete", (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+  if (!ids.length) return res.status(400).json({ error: "no_ids", message: "Не выбрано ни одной позиции" });
+
+  let deleted = 0, skipped = 0;
+  const reasons = [];
+  for (const id of ids) {
+    const row = db.prepare("SELECT * FROM production WHERE id = ?").get(id);
+    if (!row) continue;
+    const entry = db.prepare("SELECT * FROM payroll_entries WHERE production_id = ? AND status != 'cancelled'").get(row.id);
+    // Если по строке уже начислены или выплачены деньги — удалять нельзя,
+    // иначе сумма повиснет в зарплате без источника
+    if (entry && (entry.status === "paid" || entry.status === "payable")) {
+      skipped++;
+      reasons.push(`№${db.prepare("SELECT display_number FROM orders WHERE id = ?").get(row.order_id)?.display_number || "—"}: деньги уже начислены`);
+      continue;
+    }
+    if (entry) {
+      db.prepare("UPDATE payroll_entries SET status = 'cancelled', comment = ? WHERE id = ?")
+        .run("Строка производства удалена", entry.id);
+    }
+    db.prepare("DELETE FROM production_history WHERE production_id = ?").run(row.id);
+    db.prepare("DELETE FROM production WHERE id = ?").run(row.id);
+    deleted++;
+  }
+  logAudit({ user: req.session.username, action: "production_delete", comment: `Удалено строк: ${deleted}` });
+  res.json({ ok: true, deleted, skipped, reasons: reasons.slice(0, 5),
+             message: `Удалено: ${deleted}.` + (skipped ? ` Пропущено ${skipped} — по ним уже есть деньги.` : "") });
+});
+
 // В архив уходит то, что уже отработано или больше не нужно.
 // Не удаляем: на записи держатся начисления и история.
 router.post("/archive", (req, res) => {
