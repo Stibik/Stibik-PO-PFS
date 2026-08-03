@@ -154,7 +154,8 @@ CREATE TABLE IF NOT EXISTS employees (
 
 CREATE TABLE IF NOT EXISTS production (
   id TEXT PRIMARY KEY,
-  order_id TEXT NOT NULL,
+  -- Заказа может не быть: задание «сшить на запас» ни к какому заказу не привязано
+  order_id TEXT,
   article TEXT,
   product_name TEXT,
   decision TEXT,              -- 'stock' | 'assigned' | 'return_offset' | NULL (пока не решено)
@@ -625,6 +626,34 @@ export function ensureSchema() {
   // Заявка на забивку сшитого изделия со склада: менеджер отправляет чехол
   // в очередь производства, забивщик берёт его так же, как обычный заказ
   safeAddColumn("production", "warehouse_stock_id TEXT");
+
+  // Снимаем NOT NULL с production.order_id. Он мешает заданиям «сшить на запас»:
+  // у них заказа нет, и вставка падала с «NOT NULL constraint failed».
+  // Изменить ограничение на месте SQLite не умеет — перестраиваем таблицу,
+  // сохраняя все данные и все колонки, какие в ней сейчас есть.
+  try {
+    const info = db.prepare("PRAGMA table_info(production)").all();
+    const orderCol = info.find(c => c.name === "order_id");
+    if (orderCol && orderCol.notnull === 1) {
+      const cols = info.map(c => {
+        let def = `${c.name} ${c.type || "TEXT"}`;
+        if (c.pk) def += " PRIMARY KEY";
+        else if (c.name !== "order_id" && c.notnull) def += " NOT NULL";
+        if (c.dflt_value != null) def += ` DEFAULT ${c.dflt_value}`;
+        return def;
+      }).join(", ");
+      const names = info.map(c => c.name).join(", ");
+      db.exec("PRAGMA foreign_keys=off");
+      db.exec(`CREATE TABLE production_rebuild (${cols})`);
+      db.exec(`INSERT INTO production_rebuild (${names}) SELECT ${names} FROM production`);
+      db.exec("DROP TABLE production");
+      db.exec("ALTER TABLE production_rebuild RENAME TO production");
+      db.exec("PRAGMA foreign_keys=on");
+      console.log("[db] production.order_id: запрет на пустое значение снят, данные сохранены");
+    }
+  } catch (e) {
+    console.error("[db] Не удалось снять NOT NULL с production.order_id:", e.message);
+  }
   // Менеджер решает, что уходит забивщикам: пока заказ не «опубликован»,
   // в мониторе его не видно — иначе там висело бы всё подряд
   safeAddColumn("production", "published INTEGER DEFAULT 0");
