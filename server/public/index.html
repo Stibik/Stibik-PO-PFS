@@ -702,9 +702,8 @@
           <div><label>Вес, кг</label><input id="ci_weight" type="number" step="0.1"></div>
           <div><label>Крепление/кольцо</label><input id="ci_mount" type="text"></div>
           <div><label>GTIN / штрихкод</label><input id="ci_gtin" type="text" placeholder="напр. 4870123456789"></div>
-          <div><label>Расценка труда, ₸ — всего за изделие</label><input id="ci_laborRate" type="number" step="1"></div>
-          <div><label>из них швее за пошив, ₸</label><input id="ci_sewRate" type="number" step="1" placeholder="0 — работа не делится">
-            <div style="font-size:11px; color:var(--ink-soft); margin-top:3px;" id="ci_rateSplit"></div></div>
+          <div><label>Расценка забивщику, ₸ (для Зарплаты)</label><input id="ci_laborRate" type="number" step="1">
+            <div style="font-size:11px; color:var(--ink-soft); margin-top:3px;">Швея на окладе — сдельно за пошив не начисляется</div></div>
           <div><label>Затраты на материал, ₸</label><input id="ci_materialCost" type="number" step="1"></div>
           <div><label>Прочие затраты, ₸</label><input id="ci_miscCost" type="number" step="1"></div>
           <div><label>Ветошь, ₸</label><input id="ci_ragsCost" type="number" step="1"></div>
@@ -1270,7 +1269,8 @@
       Разделитель любой — табуляция, пробелы, точка с запятой.
     </div>
     <div style="margin-top:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-      <button class="btn amber" id="numbersPickFile">Выбрать файл со списком</button>
+      <button class="btn amber" id="numbersBuiltin">Взять готовый список</button>
+      <button class="btn secondary" id="numbersPickFile">Выбрать другой файл</button>
       <input type="file" id="numbersFile" accept=".txt,.csv,.tsv,.xlsx,.xls" style="display:none">
       <span id="numbersFileInfo" style="font-size:12.5px; color:var(--ink-soft);">или вставьте список вручную ниже</span>
     </div>
@@ -2744,8 +2744,7 @@
     document.getElementById("ci_mount").value = it.mount || "";
     document.getElementById("ci_gtin").value = it.gtin || "";
     document.getElementById("ci_laborRate").value = it.laborRate ?? "";
-    document.getElementById("ci_sewRate").value = it.sewRate ?? "";
-    showRateSplit();
+
     document.getElementById("ci_materialCost").value = it.materialCost ?? "";
     document.getElementById("ci_miscCost").value = it.miscCost ?? "";
     document.getElementById("ci_ragsCost").value = it.ragsCost ?? "";
@@ -2856,23 +2855,6 @@
         <b style="color:${color};">${money(margin)} ₸ · маржа ${marginPct}%</b>
         ${retail && marginPct < 15 ? ` <span style="color:var(--red);">— слишком низкая</span>` : ""}</div>`;
   }
-  // Сразу показываем, как делится работа: чтобы не гадать, сколько уйдёт забивщику
-  function showRateSplit(){
-    const total = Number(document.getElementById("ci_laborRate").value) || 0;
-    const sew = Number(document.getElementById("ci_sewRate").value) || 0;
-    const box = document.getElementById("ci_rateSplit");
-    if(!box) return;
-    if(!total){ box.textContent = ""; return; }
-    if(sew <= 0){ box.textContent = "Работа не делится — вся сумма одному человеку."; box.style.color = "var(--ink-soft)"; return; }
-    if(sew > total){ box.textContent = "Доля швеи больше общей расценки — так нельзя."; box.style.color = "var(--red)"; return; }
-    box.style.color = "var(--ink-soft)";
-    box.textContent = `Швея ${money(sew)} ₸ · забивщик ${money(total - sew)} ₸`;
-  }
-  ["ci_laborRate","ci_sewRate"].forEach(id=>{
-    const el = document.getElementById(id);
-    if(el) el.addEventListener("input", showRateSplit);
-  });
-
   ["ci_materialCost","ci_miscCost","ci_ragsCost","ci_laborRate","ci_deliveryCost","ci_taxPercent","ci_retailPrice"]
     .forEach(id=>document.getElementById(id).addEventListener("input", ()=>recalcCatalogCost(true)));
   document.getElementById("ci_costPrice").addEventListener("input", ()=>recalcCatalogCost(false));
@@ -2900,7 +2882,6 @@
       diameter: numOrNull("ci_diameter"),
       weight: numOrNull("ci_weight"),
       laborRate: numOrNull("ci_laborRate"),
-      sewRate: numOrNull("ci_sewRate"),
       materialCost: numOrNull("ci_materialCost"),
       miscCost: numOrNull("ci_miscCost"),
       ragsCost: numOrNull("ci_ragsCost"),
@@ -5132,10 +5113,11 @@
   function whMoneyCell(i){
     if(!i.payable) return `<span style="color:var(--ink-soft); font-size:11.5px;">платить не нужно</span>`;
     const parts = [];
-    if(i.sewnByName) parts.push(`пошив ${money(i.sewAmount || i.sewRate)} ₸ — ${esc(i.sewnByName)}`);
-    if(i.filledByName) parts.push(`забивка ${money(i.fillAmount || i.fillRate)} ₸ — ${esc(i.filledByName)}`);
-    if(!parts.length) return `<span style="color:var(--red); font-size:11.5px;">не указан, кто делал</span>`;
-    if(i.stage === "sewn") parts.push(`<span style="color:var(--amber);">забивка ещё не сделана</span>`);
+    // Швея на окладе — её работа денег не создаёт, показываем только для истории
+    if(i.sewnByName) parts.push(`<span style="color:var(--ink-soft);">сшила ${esc(i.sewnByName)}</span>`);
+    if(i.stage === "sewn") parts.push(`<span style="color:var(--amber);">ждёт забивки — ${money(i.fillRate)} ₸</span>`);
+    else if(i.filledByName) parts.push(`<b>${money(i.fillAmount || i.fillRate)} ₸</b> — ${esc(i.filledByName)}`);
+    else parts.push(`<span style="color:var(--red);">не указан, кто забил</span>`);
     return parts.map(p=>`<div style="font-size:11.5px;">${p}</div>`).join("");
   }
 
@@ -5690,6 +5672,25 @@
   });
   document.getElementById("numbersClose").addEventListener("click", ()=>
     document.getElementById("numbersOverlay").classList.remove("show"));
+
+  // Готовый список лежит рядом с программой — жать ничего не надо, кроме кнопки
+  document.getElementById("numbersBuiltin").addEventListener("click", async ()=>{
+    const info = document.getElementById("numbersFileInfo");
+    info.textContent = "Читаю готовый список...";
+    try{
+      const resp = await fetch("/order-numbers.txt", { cache: "no-store" });
+      if(!resp.ok) throw new Error("файл order-numbers.txt не найден на сервере");
+      const text = await resp.text();
+      document.getElementById("numbersText").value = text;
+      const lines = text.split(/[\r\n]+/).filter(l=>/\d{1,7}\D+\d{6,20}/.test(l)).length;
+      info.innerHTML = `Готовый список — подходящих строк: <b>${lines}</b>`;
+      checkNumbers();
+    }catch(e){
+      info.textContent = "";
+      document.getElementById("numbersError").textContent =
+        "Не получилось взять готовый список: " + e.message + ". Выберите файл вручную.";
+    }
+  });
 
   // Файл со списком — чтобы не мучиться с копированием тысяч строк.
   // Понимаем и обычный текст, и Excel: колонки «номер» и «код Kaspi».
