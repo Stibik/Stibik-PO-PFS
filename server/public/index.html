@@ -5068,7 +5068,8 @@
         <td></td>
         <td style="white-space:nowrap;">
           ${i.nextAction === "fill"
-            ? `<button class="btn amber" style="padding:3px 9px; font-size:11.5px;" data-wh-fill="${esc(i.id)}">Забить</button>`
+            ? `<button class="btn amber" style="padding:3px 9px; font-size:11.5px;" data-wh-send="${esc(i.id)}" title="Поставить в очередь производства">На забивку</button>
+               <button class="btn secondary" style="padding:3px 9px; font-size:11.5px;" data-wh-fill="${esc(i.id)}" title="Забили прямо сейчас">Забито</button>`
             : i.nextAction === "issue"
               ? `<button class="btn amber" style="padding:3px 9px; font-size:11.5px;" data-wh-give-one="${esc(i.id)}">Выдать</button>`
               : ""}
@@ -5085,6 +5086,7 @@
     }));
     body.querySelectorAll("[data-wh-give-one]").forEach(b=>b.addEventListener("click", ()=>openWhConsumeOne(b.dataset.whGiveOne)));
     body.querySelectorAll("[data-wh-fill]").forEach(b=>b.addEventListener("click", ()=>whFill(b.dataset.whFill)));
+    body.querySelectorAll("[data-wh-send]").forEach(b=>b.addEventListener("click", ()=>whSendToProduction(b.dataset.whSend)));
     body.querySelectorAll("[data-wh-defect]").forEach(b=>b.addEventListener("click", ()=>whDefect(b.dataset.whDefect)));
     body.querySelectorAll("[data-wh-del]").forEach(b=>b.addEventListener("click", ()=>whDelete(b.dataset.whDel)));
     body.querySelectorAll("[data-wh-edit]").forEach(b=>b.addEventListener("click", ()=>openWhEdit(b.dataset.whEdit)));
@@ -5128,6 +5130,18 @@
       const r = await api(`/warehouse/${encodeURIComponent(itemId)}/stage`, { method:"POST",
         body: JSON.stringify({ employeeId: pick.employeeId }) });
       toast(r.message || "Готово");
+      loadWarehouse();
+    }catch(e){ toast("Не получилось: " + e.message); }
+  }
+
+  // Менеджер отправляет чехол в очередь на забивку — как обычный заказ
+  async function whSendToProduction(itemId){
+    const pick = await pickEmployee({ title: "Кому отправить на забивку?", allowAll: true, withComment: true });
+    if(!pick) return;
+    try{
+      const r = await api(`/warehouse/${encodeURIComponent(itemId)}/to-production`, { method:"POST",
+        body: JSON.stringify({ employeeId: pick.employeeId, comment: pick.comment }) });
+      toast(r.message);
       loadWarehouse();
     }catch(e){ toast("Не получилось: " + e.message); }
   }
