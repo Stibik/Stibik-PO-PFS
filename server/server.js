@@ -93,10 +93,21 @@ async function mountRoute(name, mountPath, guard) {
     else app.use(mountPath, mod.default);
   } catch (e) {
     console.error(`[!] Раздел ${mountPath} не подключён: ${e.message}`);
-    app.use(mountPath, (req, res) => res.status(503).json({
-      error: "module_missing",
-      message: `Этот раздел не установлен на сервере (нет файла routes/${name}.js). Залейте файл и перезапустите.`
-    }));
+    // Причины бывают разные, и путать их нельзя. Раньше во всех случаях
+    // писалось «нет файла», и человек искал файл, который на месте, — а на
+    // деле файл просил из db.js функцию, которой в залитой версии ещё нет.
+    const missingFile = e.code === "ERR_MODULE_NOT_FOUND" && e.message.includes(`routes/${name}.js`);
+    const missingExport = /does not provide an export named '([^']+)'/.exec(e.message);
+    let message;
+    if (missingFile) {
+      message = `Раздел не установлен: нет файла routes/${name}.js. Залейте файл и перезапустите.`;
+    } else if (missingExport) {
+      message = `Раздел не подключён: файл routes/${name}.js ждёт функцию «${missingExport[1]}», которой нет в залитой версии db.js. ` +
+                `Залейте свежий db.js — он должен быть новее остальных файлов.`;
+    } else {
+      message = `Раздел не подключён: ${e.message}`;
+    }
+    app.use(mountPath, (req, res) => res.status(503).json({ error: "module_missing", message }));
   }
 }
 
