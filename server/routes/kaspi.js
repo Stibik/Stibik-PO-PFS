@@ -245,7 +245,36 @@ router.post("/sync", async (req, res) => {
       console.error(`[kaspi/sync] Ошибка обновления зависших заказов (${shop.name}):`, staleErr.message);
     }
   }
-  res.json({ results });
+  // Подстраховка: заказ активен в Kaspi, а записи в «Производстве» под него нет.
+  // Так бывает у заказов, пришедших до появления этой записи, и после ручных
+  // правок. Раньше их приходилось звать кнопкой — теперь подтягиваются сами.
+  let autoPulled = 0;
+  try {
+    const missing = db.prepare(`SELECT o.* FROM orders o
+      WHERE o.source = 'kaspi'
+        AND (o.kaspi_status IS NULL OR o.kaspi_status NOT IN ('CANCELLED','CANCELLING','RETURNED','RETURN_REQUESTED','COMPLETED'))
+        AND (o.delivery_state IS NULL OR o.delivery_state != 'ARCHIVE')
+        AND NOT EXISTS (SELECT 1 FROM production p WHERE p.order_id = o.id)`).all();
+    const nowIso = new Date().toISOString();
+    const ins = db.prepare(`INSERT INTO production (id, order_id, article, product_name, quantity, shop, stage, created_at)
+                            VALUES (?,?,?,?,?,?, 'pending', ?)`);
+    for (const o of missing) {
+      let article = o.article || null;
+      if (!article && o.entries_raw) {
+        try { article = JSON.parse(o.entries_raw)?.data?.[0]?.attributes?.offer?.code || null; } catch (e) {}
+      }
+      ins.run(genId("prod"), o.id, article, o.product_name || "", Number(o.qty) || 1, o.shop || null, nowIso);
+      autoPulled++;
+    }
+    if (autoPulled) {
+      logAudit({ user: req.session.username, action: "production_auto_pull",
+                 comment: `Подтянуто в производство при синхронизации: ${autoPulled}` });
+    }
+  } catch (e) {
+    console.error("[kaspi/sync] Не получилось подтянуть заказы в производство:", e.message);
+  }
+
+  res.json({ results, autoPulled });
  } catch (fatalErr) {
   console.error("[kaspi/sync] Неожиданная ошибка:", fatalErr.message, fatalErr.stack);
   res.status(500).json({ error: "internal_error", message: fatalErr.message });
