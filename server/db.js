@@ -1,637 +1,842 @@
-import express from "express";
-import { db, logAudit, nextStockNumber } from "../db.js";
-import { requireAuth } from "../middleware/auth.js";
+import { DatabaseSync } from "node:sqlite";
+import bcrypt from "bcryptjs";
+import path from "path";
+import fs from "fs";
+import { fileURLToPath } from "url";
 
-const router = express.Router();
-router.use(requireAuth);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, "data.sqlite");
 
-function uid(prefix) { return prefix + "_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
-function num(v, def = 0) { const n = Number(v); return Number.isFinite(n) ? n : def; }
-function str(v, max = 500) { return String(v == null ? "" : v).replace(/[\r\n\t]+/g, " ").trim().slice(0, max); }
-function money(v) { return Math.round(num(v) * 100) / 100; }
+console.log(`[db] Использую путь к базе данных: ${DB_PATH}`);
 
-// В списке сотрудников после переноса из старой таблицы осели пометки, а не
-// люди. Но пометки бывают ДВУХ разных смыслов, и путать их нельзя:
-//
-// 1. Заказ закрыт возвратом или отменой — «Без оплаты», «Перекрыто», «Возврат».
-//    Работу заново не делали, платить не за что, разносить нечего. Закрыто.
-// 2. Исполнителя просто не записали — «не определено», пустая клетка.
-//    Работа была, человек был, его надо найти и разнести.
-const CLOSED_NAMES = new Set([
-  "без оплаты", "безоплаты", "перекрыто", "перекрыт", "перекрытро", "прекрыт",
-  "возврат", "отмена", "пропустим"
-]);
-const UNASSIGNED_NAMES = new Set([
-  "не определено", "не определен", "не определён", "неопределено", "хз", "-", "—", "?"
-]);
-function isClosedEmployee(name) {
-  return CLOSED_NAMES.has(String(name || "").toLowerCase().trim());
-}
-function isUnassignedEmployee(name) {
-  return UNASSIGNED_NAMES.has(String(name || "").toLowerCase().trim());
-}
-// Общее: и то и другое — не человек, выплачивать нельзя
-function isServiceEmployee(name) {
-  return isClosedEmployee(name) || isUnassignedEmployee(name);
+// Убедимся, что папка для файла БД существует (важно для /data на Render)
+const dbDir = path.dirname(DB_PATH);
+try {
+  if (!fs.existsSync(dbDir)) {
+    console.log(`[db] Папки ${dbDir} нет, создаю...`);
+    fs.mkdirSync(dbDir, { recursive: true });
+  }
+  console.log(`[db] Проверка доступности папки ${dbDir}: OK, содержимое:`, fs.readdirSync(dbDir));
+} catch (e) {
+  console.error(`[db] ОШИБКА при создании/чтении папки ${dbDir}:`, e.message);
+  throw e;
 }
 
-// Расценка берётся ТОЛЬКО из Справочника (price_items.labor_rate) — так решили
-// сознательно, чтобы сумма не зависела от того, кто что вписал руками.
-// Найденное значение копируется в строку начисления и дальше не меняется:
-// правка расценки в Справочнике не переписывает уже принятые работы.
-function findRate(itemId, article) {
-  let row = null;
-  if (itemId) row = db.prepare("SELECT * FROM price_items WHERE id = ?").get(itemId);
-  if (!row && article) row = db.prepare("SELECT * FROM price_items WHERE article = ?").get(article);
-  if (!row) return { rate: 0, found: false, item: null };
-  return { rate: num(row.labor_rate), found: true, item: row };
+export let db;
+try {
+  db = new DatabaseSync(DB_PATH);
+  console.log(`[db] База данных SQLite успешно открыта: ${DB_PATH}`);
+} catch (e) {
+  console.error(`[db] ОШИБКА при открытии базы данных ${DB_PATH}:`, e.message, e.stack);
+  throw e;
 }
 
-// Запись в журнал правок строки. Пишем даже мелочи — потом именно по этим
-// строчкам разбираются, откуда у человека взялась сумма.
-function logChange(entryId, user, action, field, oldValue, newValue, comment) {
-  db.prepare(`INSERT INTO payroll_entry_log (id, entry_id, at, user, action, field, old_value, new_value, comment)
-              VALUES (?,?,?,?,?,?,?,?,?)`)
-    .run(uid("plog"), entryId, new Date().toISOString(), user || "", action, field || null,
-         oldValue == null ? null : String(oldValue), newValue == null ? null : String(newValue),
-         comment ? str(comment) : null);
-}
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  username TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'admin',
+  created_at TEXT
+);
 
-// Номер заказа и код Kaspi — то, по чему заказ ищут глазами. Держим отдельной
-// функцией: строка начисления хранит только order_id, а показывать надо номер.
-function orderInfo(orderId) {
-  if (!orderId) return null;
-  return db.prepare("SELECT display_number, kaspi_code, shop, kaspi_creation_date, created_at, total_price, product_name FROM orders WHERE id = ?")
-    .get(orderId) || null;
-}
+CREATE TABLE IF NOT EXISTS orders (
+  id TEXT PRIMARY KEY,
+  source TEXT NOT NULL DEFAULT 'manual',
+  kaspi_order_id TEXT UNIQUE,
+  kaspi_code TEXT,
+  shop TEXT,
+  receipt_number INTEGER,
+  display_number INTEGER,
+  article TEXT,
+  name TEXT,
+  qty REAL,
+  note TEXT,
+  photo TEXT,
+  receive_status TEXT DEFAULT 'transit', -- 'transit'/'arrived'/'problem' — статус "Прихода" (поставка от поставщика)
+  status TEXT NOT NULL DEFAULT 'preorder', -- статус обработки заказа Kaspi (сборка/отгрузка), для source='kaspi'
+  kaspi_status TEXT,
+  delivery_state TEXT,
+  pre_order INTEGER DEFAULT 0,
+  assembled INTEGER DEFAULT 0,
+  courier_transmission_date TEXT,
+  courier_handover_date TEXT,
+  total_price REAL,
+  product_name TEXT,
+  waybill_url TEXT,
+  printed INTEGER DEFAULT 0,
+  print_count INTEGER DEFAULT 0,
+  last_printed_at TEXT,
+  last_printed_by TEXT,
+  claim_note TEXT,
+  claim_resolved INTEGER DEFAULT 0,
+  raw TEXT,
+  created_at TEXT,
+  updated_at TEXT
+);
 
-function entryToJson(e, joined) {
-  const emp = e.employee_id ? db.prepare("SELECT name FROM employees WHERE id = ?").get(e.employee_id) : null;
-  // joined — строка уже с полями заказа из общего запроса (чтобы не долбить
-  // базу по разу на каждую работу в списке из тысячи строк)
-  const o = joined !== undefined ? joined : orderInfo(e.order_id);
-  return {
-    id: e.id,
-    employeeId: e.employee_id,
-    employeeName: emp ? emp.name : "",
-    employeeIsService: emp ? isServiceEmployee(emp.name) : false,
-    employeeIsClosed: emp ? isClosedEmployee(emp.name) : false,
-    employeeIsUnassigned: emp ? isUnassignedEmployee(emp.name) : false,
-    orderNumber: o ? o.display_number : null,
-    kaspiCode: o ? o.kaspi_code : null,
-    orderDate: o ? (o.kaspi_creation_date || o.created_at || null) : null,
-    orderTotal: o ? num(o.total_price) : 0,
-    assignedBy: e.assigned_by || null,
-    assignedAt: e.assigned_at || null,
-    archivedAt: e.archived_at || null,
-    archivedBy: e.archived_by || null,
-    productionId: e.production_id,
-    orderId: e.order_id,
-    shop: e.shop,
-    warehouseStockId: e.warehouse_stock_id,
-    article: e.article,
-    productName: e.product_name,
-    qty: num(e.qty),
-    rate: num(e.rate),
-    amount: num(e.amount),
-    kind: e.kind,
-    status: e.status,
-    comment: e.comment,
-    reportedDone: !!e.reported_done,
-    reportedWeight: e.reported_weight,
-    reportedAt: e.reported_at,
-    reportedBy: e.reported_by,
-    acceptedAt: e.accepted_at,
-    acceptedBy: e.accepted_by,
-    paidAt: e.paid_at,
-    payoutId: e.payout_id,
-    createdAt: e.created_at,
-    needsRate: num(e.rate) === 0
+CREATE TABLE IF NOT EXISTS status_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_id TEXT NOT NULL,
+  from_status TEXT,
+  to_status TEXT,
+  user TEXT,
+  reason TEXT,
+  is_correction INTEGER DEFAULT 0,
+  created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS cargo_places (
+  id TEXT PRIMARY KEY,
+  order_id TEXT NOT NULL,
+  place_number INTEGER,
+  name TEXT,
+  formed INTEGER DEFAULT 0,
+  label_printed INTEGER DEFAULT 0,
+  formed_at TEXT,
+  formed_by TEXT,
+  comment TEXT
+);
+
+CREATE TABLE IF NOT EXISTS print_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_id TEXT NOT NULL,
+  user TEXT,
+  printed_at TEXT,
+  is_reprint INTEGER DEFAULT 0,
+  reason TEXT
+);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user TEXT,
+  action TEXT NOT NULL,
+  order_id TEXT,
+  old_value TEXT,
+  new_value TEXT,
+  comment TEXT,
+  ip TEXT,
+  created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS price_items (
+  id TEXT PRIMARY KEY,
+  article TEXT,
+  name TEXT,
+  type TEXT,
+  color TEXT,
+  height REAL,
+  diameter REAL,
+  weight REAL,
+  material TEXT,
+  mount TEXT,
+  buy_price_kzt REAL,
+  delivery_price REAL,
+  wholesale REAL,
+  retail REAL,
+  cost REAL,
+  note TEXT,
+  photo TEXT,
+  photo_name TEXT,
+  created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS categories (
+  name TEXT PRIMARY KEY
+);
+
+CREATE TABLE IF NOT EXISTS employees (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  active INTEGER DEFAULT 1,
+  created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS production (
+  id TEXT PRIMARY KEY,
+  -- Заказа может не быть: задание «сшить на запас» ни к какому заказу не привязано
+  order_id TEXT,
+  article TEXT,
+  product_name TEXT,
+  decision TEXT,              -- 'stock' | 'assigned' | 'return_offset' | NULL (пока не решено)
+  employee_id TEXT,
+  paid INTEGER DEFAULT 0,      -- оплачено ли исполнителю (актуально для decision='assigned')
+  warehouse_stock_id TEXT,     -- если списано со склада — какая именно запись использована
+  created_at TEXT,
+  resolved_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS warehouse_stock (
+  id TEXT PRIMARY KEY,
+  article TEXT,
+  product_name TEXT,
+  source TEXT,                -- 'cancelled' | 'returned' | 'overproduced'
+  source_order_id TEXT,
+  qty INTEGER DEFAULT 1,
+  consumed INTEGER DEFAULT 0,
+  consumed_by_order_id TEXT,
+  created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS production_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  production_id TEXT NOT NULL,
+  from_stage TEXT,
+  to_stage TEXT,
+  user TEXT,
+  reason TEXT,
+  created_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_production_history_prod ON production_history(production_id);
+
+CREATE INDEX IF NOT EXISTS idx_production_order ON production(order_id);
+CREATE INDEX IF NOT EXISTS idx_warehouse_article ON warehouse_stock(article);
+CREATE INDEX IF NOT EXISTS idx_warehouse_consumed ON warehouse_stock(consumed);
+
+CREATE TABLE IF NOT EXISTS companies (
+  id TEXT PRIMARY KEY,
+  short_name TEXT NOT NULL,        -- краткое название (в выпадающем списке)
+  full_name TEXT,                  -- полное юридическое наименование
+  bin TEXT,                        -- ИИН/БИН
+  address TEXT,                    -- юридический адрес
+  bank_name TEXT,
+  bik TEXT,
+  iban TEXT,
+  kbe TEXT,
+  phone TEXT,
+  email TEXT,
+  website TEXT,
+  contact_person TEXT,             -- ФИО руководителя/контактного лица (необязательно)
+  logo TEXT,                       -- путь к логотипу (через тот же /api/upload, что и фото товаров)
+  brand_color TEXT,                -- основной цвет оформления (необязательно)
+  extra_text TEXT,                 -- дополнительный текст для PDF (необязательно)
+  is_active INTEGER DEFAULT 1,
+  is_default INTEGER DEFAULT 0,
+  created_at TEXT,
+  updated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS price_lists (
+  id TEXT PRIMARY KEY,
+  name TEXT,                       -- название прайса (уходит в шапку PDF)
+  kind TEXT DEFAULT 'draft',       -- 'draft' — рабочий черновик пользователя, 'saved' — сохранённый прайс
+  owner TEXT,                      -- логин владельца черновика (у каждого пользователя свой)
+  company_id TEXT,
+  settings TEXT,                   -- JSON настроек PDF
+  company_snapshot TEXT,           -- JSON реквизитов на момент сохранения (только для kind='saved')
+  created_by TEXT,
+  created_at TEXT,
+  updated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS price_list_items (
+  id TEXT PRIMARY KEY,
+  price_list_id TEXT,
+  item_id TEXT,                    -- ссылка на товар в price_items
+  sort_order INTEGER DEFAULT 0,
+  snapshot TEXT                    -- JSON товара на момент сохранения (только для kind='saved')
+);
+
+-- ---------- Контур «Китай»: контроль закупок у поставщиков ----------
+-- Это НЕ продажи: сюда не заходят Kaspi-заказы, зарплата, производство и маржа.
+-- Отдельные таблицы, потому что у закупки другая жизнь (заказ -> отправка ->
+-- путь -> получение) и свои количества: заказано / отправлено / получено.
+CREATE TABLE IF NOT EXISTS suppliers (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  contact TEXT,
+  phone TEXT,                      -- телефон или мессенджер
+  link TEXT,
+  comment TEXT,
+  is_active INTEGER DEFAULT 1,
+  created_at TEXT,
+  updated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS china_purchase_orders (
+  id TEXT PRIMARY KEY,
+  number INTEGER,                  -- внутренний номер закупки
+  supplier_id TEXT,
+  supplier_order_no TEXT,          -- номер заказа у поставщика
+  channel TEXT,                    -- площадка/канал закупки
+  order_date TEXT,
+  plan_ship_date TEXT,
+  fact_ship_date TEXT,
+  plan_arrive_date TEXT,
+  fact_receive_date TEXT,
+  status TEXT DEFAULT 'ordered',   -- ordered / ready / transit / received / cancelled
+  currency TEXT DEFAULT 'CNY',
+  rate REAL,                       -- курс к тенге на момент закупки
+  total_amount REAL DEFAULT 0,     -- считается на сервере по позициям
+  track_no TEXT,                   -- трек-номер или номер карго
+  link TEXT,
+  comment TEXT,
+  attachment TEXT,
+  created_by TEXT,
+  created_at TEXT,
+  updated_at TEXT,
+  is_archived INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS china_purchase_order_items (
+  id TEXT PRIMARY KEY,
+  purchase_order_id TEXT,
+  item_id TEXT,                    -- ссылка на price_items, если товар уже в Справочнике
+  article TEXT,
+  name TEXT,
+  photo TEXT,
+  category TEXT,
+  qty_ordered REAL DEFAULT 0,
+  qty_shipped REAL DEFAULT 0,
+  qty_received REAL DEFAULT 0,
+  unit_price REAL DEFAULT 0,
+  total_price REAL DEFAULT 0,      -- считается на сервере
+  comment TEXT,
+  sort_order INTEGER DEFAULT 0
+);
+
+-- Склад контура «Китай»: полностью отдельный от основного склада и Справочника.
+-- Сюда попадает то, что физически приехало и разложено по ячейкам.
+CREATE TABLE IF NOT EXISTS china_stock (
+  id TEXT PRIMARY KEY,
+  purchase_order_id TEXT,          -- из какой закупки приехало
+  purchase_item_id TEXT,
+  article TEXT,                    -- артикул поставщика (может повторяться у разных)
+  name TEXT,
+  photo TEXT,
+  category TEXT,
+  barcode TEXT UNIQUE,             -- НАШ внутренний код, печатается на этикетке
+  cell TEXT,                       -- ячейка хранения, напр. A-01-03
+  qty REAL DEFAULT 0,
+  unit_price REAL DEFAULT 0,
+  comment TEXT,
+  created_by TEXT,
+  created_at TEXT,
+  updated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS china_stock_moves (
+  id TEXT PRIMARY KEY,
+  stock_id TEXT,
+  kind TEXT,                       -- receive / move / adjust / write_off / inventory
+  qty_before REAL,
+  qty_after REAL,
+  cell_before TEXT,
+  cell_after TEXT,
+  comment TEXT,
+  user TEXT,
+  created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS china_inventory (
+  id TEXT PRIMARY KEY,
+  number INTEGER,
+  status TEXT DEFAULT 'open',      -- open / done / cancelled
+  cell_filter TEXT,                -- если считали только одну ячейку
+  started_at TEXT,
+  finished_at TEXT,
+  user TEXT,
+  comment TEXT
+);
+
+CREATE TABLE IF NOT EXISTS china_inventory_items (
+  id TEXT PRIMARY KEY,
+  inventory_id TEXT,
+  stock_id TEXT,
+  barcode TEXT,
+  article TEXT,
+  name TEXT,
+  cell TEXT,
+  expected_qty REAL DEFAULT 0,     -- сколько числилось на момент старта
+  counted_qty REAL,                -- сколько насчитали руками (null = ещё не считали)
+  updated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS china_purchase_history (
+  id TEXT PRIMARY KEY,
+  purchase_order_id TEXT,
+  from_status TEXT,
+  to_status TEXT,
+  user TEXT,
+  comment TEXT,
+  created_at TEXT
+);
+
+-- ---------- Зарплата: начисления, вычеты, выплаты ----------
+-- Расценка НЕ дублируется: она берётся из price_items.labor_rate в момент
+-- начисления и фиксируется в строке — чтобы потом изменение расценки в
+-- Справочнике не переписало задним числом уже принятые работы.
+CREATE TABLE IF NOT EXISTS payroll_entries (
+  id TEXT PRIMARY KEY,
+  employee_id TEXT,
+  production_id TEXT,              -- если работа выросла из заказа
+  order_id TEXT,
+  warehouse_stock_id TEXT,         -- если делали на запас, на склад
+  shop TEXT,                       -- SA / PFS / УД — откуда пришла работа
+  article TEXT,
+  product_name TEXT,
+  qty REAL DEFAULT 1,
+  rate REAL DEFAULT 0,             -- расценка за штуку на момент начисления
+  amount REAL DEFAULT 0,           -- rate * qty, считает сервер
+  kind TEXT DEFAULT 'order',       -- order | stock
+  status TEXT DEFAULT 'pending',   -- pending (ещё не принято) | payable (к выплате) | paid | cancelled
+  comment TEXT,
+  accepted_at TEXT,
+  accepted_by TEXT,
+  paid_at TEXT,
+  payout_id TEXT,
+  created_by TEXT,
+  created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS payouts (
+  id TEXT PRIMARY KEY,
+  number INTEGER,
+  employee_id TEXT,
+  accrued REAL DEFAULT 0,          -- сумма принятых работ, вошедших в выплату
+  deductions_total REAL DEFAULT 0,
+  amount REAL DEFAULT 0,           -- к выдаче на руки
+  comment TEXT,
+  created_by TEXT,
+  created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS payout_deductions (
+  id TEXT PRIMARY KEY,
+  payout_id TEXT,
+  kind TEXT,                       -- аванс / брак / материал / прочее
+  amount REAL DEFAULT 0,
+  comment TEXT
+);
+
+-- Доска задач: простые поручения сотрудникам — купить, сделать, съездить.
+-- Намеренно отдельно от «Производства»: там работа по заказам и деньги,
+-- здесь — бытовые дела, за которые зарплата не начисляется.
+CREATE TABLE IF NOT EXISTS tasks (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT,
+  kind TEXT DEFAULT 'other',       -- buy (купить) | make (сделать) | other
+  status TEXT DEFAULT 'todo',      -- todo | doing | done
+  priority TEXT DEFAULT 'normal',  -- low | normal | high
+  employee_id TEXT,                -- кому поручено
+  due_date TEXT,
+  created_by TEXT,
+  created_at TEXT,
+  updated_at TEXT,
+  done_at TEXT,
+  done_by TEXT,
+  is_archived INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT
+);
+
+CREATE TABLE IF NOT EXISTS meta (
+  key TEXT PRIMARY KEY,
+  value TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_orders_source ON orders(source);
+CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
+CREATE INDEX IF NOT EXISTS idx_status_history_order ON status_history(order_id);
+CREATE INDEX IF NOT EXISTS idx_cargo_places_order ON cargo_places(order_id);
+CREATE INDEX IF NOT EXISTS idx_print_log_order ON print_log(order_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_order ON audit_log(order_id);
+CREATE INDEX IF NOT EXISTS idx_price_list_items_list ON price_list_items(price_list_id);
+CREATE INDEX IF NOT EXISTS idx_price_lists_owner ON price_lists(owner, kind);
+CREATE INDEX IF NOT EXISTS idx_china_po_status ON china_purchase_orders(status, is_archived);
+CREATE INDEX IF NOT EXISTS idx_china_po_supplier ON china_purchase_orders(supplier_id);
+CREATE INDEX IF NOT EXISTS idx_china_po_dates ON china_purchase_orders(order_date, plan_arrive_date);
+CREATE INDEX IF NOT EXISTS idx_china_po_items_order ON china_purchase_order_items(purchase_order_id);
+CREATE INDEX IF NOT EXISTS idx_china_history_order ON china_purchase_history(purchase_order_id);
+CREATE INDEX IF NOT EXISTS idx_china_stock_cell ON china_stock(cell);
+CREATE INDEX IF NOT EXISTS idx_china_stock_barcode ON china_stock(barcode);
+CREATE INDEX IF NOT EXISTS idx_china_stock_order ON china_stock(purchase_order_id);
+CREATE INDEX IF NOT EXISTS idx_china_stock_moves_stock ON china_stock_moves(stock_id);
+CREATE INDEX IF NOT EXISTS idx_china_inv_items ON china_inventory_items(inventory_id);
+CREATE INDEX IF NOT EXISTS idx_payroll_employee ON payroll_entries(employee_id, status);
+CREATE INDEX IF NOT EXISTS idx_payroll_production ON payroll_entries(production_id);
+CREATE INDEX IF NOT EXISTS idx_payroll_payout ON payroll_entries(payout_id);
+CREATE INDEX IF NOT EXISTS idx_payouts_employee ON payouts(employee_id);
+CREATE INDEX IF NOT EXISTS idx_payout_deductions ON payout_deductions(payout_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status, is_archived);
+CREATE INDEX IF NOT EXISTS idx_tasks_employee ON tasks(employee_id);
+`;
+
+export function ensureSchema() {
+  db.exec(SCHEMA);
+
+  // Безопасно добавляем колонки, которых не было в самых первых версиях схемы
+  // (SQLite не поддерживает "ADD COLUMN IF NOT EXISTS", поэтому просто игнорируем
+  // ошибку "duplicate column", если колонка уже есть)
+  const safeAddColumn = (table, def) => {
+    try { db.exec(`ALTER TABLE ${table} ADD COLUMN ${def}`); } catch (e) { /* уже есть — ок */ }
   };
+  safeAddColumn("orders", "order_date TEXT");
+  safeAddColumn("orders", "arrived_date TEXT");
+  safeAddColumn("orders", "product_photo TEXT");
+  safeAddColumn("orders", "buy_price_cny REAL");
+  safeAddColumn("orders", "buy_price_kzt REAL");
+  safeAddColumn("orders", "delivery_price REAL");
+  safeAddColumn("orders", "entries_raw TEXT");
+  safeAddColumn("orders", "sale_price REAL");
+  safeAddColumn("orders", "category TEXT");
+  safeAddColumn("orders", "actual_qty REAL");
+  safeAddColumn("orders", "kaspi_creation_date TEXT"); // настоящая дата создания заказа В KASPI (не в нашей базе!)
+  safeAddColumn("orders", "manual_packing INTEGER DEFAULT 0"); // пользователь вручную перенёс предзаказ в нашу "Упаковку" — не зависит от того, что говорит Kaspi
+  safeAddColumn("orders", "courier_transmission_planning_date TEXT"); // срок упаковки от Kaspi — по нему кабинет переводит заказ в "Упаковка"
+
+  // ── Единоразовая доначистка: для заказов, у которых kaspi_creation_date ещё
+  // пуст, достаём creationDate из уже сохранённого raw (сырой JSON от Kaspi) —
+  // это чинит СУЩЕСТВУЮЩИЕ старые заказы сразу, не дожидаясь их пересинхронизации
+  // (которая для по-настоящему зависших заказов и так не происходит — в этом и
+  // была вся проблема).
+  {
+    const needsBackfill = db.prepare(
+      "SELECT id, raw FROM orders WHERE source = 'kaspi' AND kaspi_creation_date IS NULL AND raw IS NOT NULL"
+    ).all();
+    for (const row of needsBackfill) {
+      try {
+        const raw = JSON.parse(row.raw || "{}");
+        if (raw.creationDate) {
+          const iso = new Date(raw.creationDate).toISOString();
+          db.prepare("UPDATE orders SET kaspi_creation_date = ? WHERE id = ?").run(iso, row.id);
+        }
+      } catch (e) { /* битый raw — пропускаем, забэкфилится при следующей синхронизации */ }
+    }
+    if (needsBackfill.length) {
+      console.log(`[db] Доначистка kaspi_creation_date: обработано ${needsBackfill.length} заказов`);
+    }
+  }
+
+  // ── Справочник товаров: поля, подтягиваемые из выгрузки Kaspi "Активные товары" ──
+  // article (уже существующее поле) используется как SKU для сопоставления.
+  // name/type/cost/retail — остаются ручными полями (название для печати,
+  // категория, себестоимость, наша розница) и НИКОГДА не перезаписываются импортом.
+  safeAddColumn("price_items", "kaspi_name TEXT");              // сырое название с Kaspi (авто)
+  safeAddColumn("price_items", "kaspi_price REAL");             // цена на Kaspi (авто)
+  safeAddColumn("price_items", "kaspi_in_stock_points INTEGER"); // сколько ПВЗ из общего числа — есть в наличии
+  safeAddColumn("price_items", "kaspi_total_points INTEGER");    // всего ПВЗ в выгрузке
+  safeAddColumn("price_items", "kaspi_preorder_days INTEGER");   // дни допоставки
+  safeAddColumn("price_items", "kaspi_synced_at TEXT");          // когда последний раз обновлено импортом
+  safeAddColumn("price_items", "subgroup TEXT");                 // "Подраздел" — второй уровень группировки внутри категории (type), для печатного прайса
+
+  // ── Поля по образцу справочника PRODIX (расценка труда нужна для "Зарплаты") ──
+  // Права и привязка пользователя к сотруднику (для зарплаты забивщика)
+  safeAddColumn("users", "permissions TEXT");            // JSON-список разрешённых разделов
+  safeAddColumn("users", "employee_id TEXT");            // кто это из сотрудников — чтобы работа падала ему
+  safeAddColumn("users", "is_active INTEGER DEFAULT 1"); // уволился — отключаем, история остаётся
+  // Первый вход по временному паролю обязывает сменить его: так пароли
+  // сотрудников не знает даже администратор
+  safeAddColumn("users", "must_change_password INTEGER DEFAULT 0");
+  safeAddColumn("users", "last_login_at TEXT");
+  safeAddColumn("users", "last_login_ip TEXT");
+  // Забивщик отмечает «готово», менеджер подтверждает — только тогда к выплате
+  // Метка переноса из старой системы: чтобы повторный импорт не задвоил деньги
+  safeAddColumn("payroll_entries", "legacy_key TEXT");
+  safeAddColumn("payroll_entries", "reported_done INTEGER DEFAULT 0");
+  // Вес наполнителя, который забивщик указывает при сдаче: по нему потом
+  // списывается общий запас наполнителя
+  safeAddColumn("payroll_entries", "reported_weight REAL");
+  safeAddColumn("payroll_entries", "reported_at TEXT");
+  safeAddColumn("payroll_entries", "reported_by TEXT");
+  // Кто и когда разнёс работу на человека. Раньше в базе оставался только сам
+  // исполнитель, и спросить «а кто его вписал» было не у кого.
+  safeAddColumn("payroll_entries", "assigned_by TEXT");
+  safeAddColumn("payroll_entries", "assigned_at TEXT");
+  // Архив: строку не удаляем (на ней висят деньги и история), но из рабочих
+  // списков и из подсчёта долга она уходит
+  safeAddColumn("payroll_entries", "archived_at TEXT");
+  safeAddColumn("payroll_entries", "archived_by TEXT");
+
+  // Журнал правок по каждому начислению: кто, когда и что именно поменял.
+  // Отдельной таблицей, а не в общий аудит, чтобы историю строки можно было
+  // показать прямо в карточке работы.
+  db.exec(`CREATE TABLE IF NOT EXISTS payroll_entry_log (
+    id TEXT PRIMARY KEY,
+    entry_id TEXT NOT NULL,
+    at TEXT,
+    user TEXT,
+    action TEXT,        -- assign | edit | archive | unarchive | accept | cancel
+    field TEXT,         -- employee | qty | rate | comment | ...
+    old_value TEXT,
+    new_value TEXT,
+    comment TEXT
+  )`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_payroll_log_entry ON payroll_entry_log(entry_id, at)`);
+
+  // Позицию можно убрать в архив: не удаляем (на неё ссылаются заказы и
+  // начисления), но из списков и прайса она уходит
+  safeAddColumn("price_items", "is_archived INTEGER DEFAULT 0");
+  // GTIN — штрихкод товара (EAN-13). Нужен для маркировки и Kaspi,
+  // заполняется вручную, поэтому пустые надо видеть сразу
+  safeAddColumn("price_items", "gtin TEXT");
+  // Полные затраты: доставка в тенге за штуку и налог с комиссией в процентах
+  // от розницы. Раньше они сидели внутри себестоимости молча, и было непонятно,
+  // из чего она сложилась.
+  safeAddColumn("price_items", "delivery_cost REAL");
+  safeAddColumn("price_items", "tax_percent REAL");
+
+  safeAddColumn("price_items", "labor_rate REAL");     // РАСЦЕНКА ТРУДА — ставка за 1 шт, читает раздел "Зарплата"
+  // Изделие делают двое: швея шьёт чехол, забивщик набивает. Раньше расценка
+  // была одна и вся уходила одному человеку. Теперь labor_rate — это ОБЩАЯ
+  // сумма за изделие, а sew_rate — доля швеи. Забивщику достаётся остаток,
+  // поэтому итог по изделию не меняется, как ни дели.
+  safeAddColumn("price_items", "sew_rate REAL DEFAULT 0");
+
+  // Стадия изделия на складе: сшито (чехол готов) → забито (набито, готово).
+  // Бывает, что сшито, но ещё не забито — это разные работы и разные люди.
+  safeAddColumn("warehouse_stock", "stage TEXT DEFAULT 'ready'");
+  safeAddColumn("warehouse_stock", "sewn_by TEXT");        // кто сшил
+  safeAddColumn("warehouse_stock", "filled_by TEXT");      // кто забил
+  safeAddColumn("warehouse_stock", "sewn_at TEXT");
+  safeAddColumn("warehouse_stock", "filled_at TEXT");
+  safeAddColumn("warehouse_stock", "sew_entry_id TEXT");   // начисление швее
+  safeAddColumn("warehouse_stock", "fill_entry_id TEXT");  // начисление забивщику
+  // Брак: изделие испортили — отдельное место, чтобы не мешалось в остатках
+  safeAddColumn("warehouse_stock", "defect_reason TEXT");
+  safeAddColumn("warehouse_stock", "deleted_at TEXT");
+  safeAddColumn("warehouse_stock", "deleted_by TEXT");
+  safeAddColumn("price_items", "material_cost REAL");  // Затраты на материал
+  safeAddColumn("price_items", "misc_cost REAL");      // Прочие затраты
+  safeAddColumn("price_items", "rags_cost REAL");      // Ветошь (расходники на производстве)
+
+  // ── Поля специально для нового конструктора "Прайс" (компании + PDF) ──
+  safeAddColumn("price_items", "show_in_price INTEGER DEFAULT 1"); // "Показывать в прайсе" — по умолчанию да, чтобы старые товары не пропали молча
+  safeAddColumn("price_items", "sort_order INTEGER DEFAULT 0");    // порядок внутри группы (Ø/материал)
+  safeAddColumn("price_items", "price_display_name TEXT");         // отдельное название для печати, если отличается от обычного name
+
+  // ── Разовая доначистка: старые ручные заказы (созданные до фикса), у которых
+  // в поле "магазин" оказался произвольный текст из формы — приводим к
+  // единому "УД", как и должно быть у всех заказов, созданных вручную.
+  db.prepare("UPDATE orders SET shop = 'УД' WHERE source = 'manual' AND kaspi_code LIKE 'УД-%' AND shop != 'УД'").run();
+
+  // ── Полная цепочка стадий заказа в производстве (доработка по ТЗ) ──
+  // pending -> in_production/from_stock -> ready -> packed -> issued
+  // плюс отдельные ветки: cancelled, returned_to_stock, archived
+  safeAddColumn("production", "stage TEXT DEFAULT 'pending'");
+  safeAddColumn("production", "cancellation_reason TEXT"); // при отмене: одна из 5 причин (см. resolveCancellation)
+  safeAddColumn("production", "archived_at TEXT");
+  safeAddColumn("production", "quantity INTEGER DEFAULT 1");
+  safeAddColumn("production", "shop TEXT");
+  // Заявка на забивку сшитого изделия со склада: менеджер отправляет чехол
+  // в очередь производства, забивщик берёт его так же, как обычный заказ
+  safeAddColumn("production", "warehouse_stock_id TEXT");
+  // Отмены и возвраты: разобранное можно убрать в архив, а лишнее — скрыть
+  // из списка. Сам заказ при этом остаётся: он живёт в Kaspi и в «Заказах».
+  safeAddColumn("orders", "claim_archived INTEGER DEFAULT 0");
+  safeAddColumn("orders", "claim_hidden INTEGER DEFAULT 0");
+
+  // Снимаем NOT NULL с production.order_id. Он мешает заданиям «сшить на запас»:
+  // у них заказа нет, и вставка падала с «NOT NULL constraint failed».
+  // Изменить ограничение на месте SQLite не умеет — перестраиваем таблицу,
+  // сохраняя все данные и все колонки, какие в ней сейчас есть.
+  try {
+    const info = db.prepare("PRAGMA table_info(production)").all();
+    const orderCol = info.find(c => c.name === "order_id");
+    if (orderCol && orderCol.notnull === 1) {
+      const cols = info.map(c => {
+        let def = `${c.name} ${c.type || "TEXT"}`;
+        if (c.pk) def += " PRIMARY KEY";
+        else if (c.name !== "order_id" && c.notnull) def += " NOT NULL";
+        if (c.dflt_value != null) def += ` DEFAULT ${c.dflt_value}`;
+        return def;
+      }).join(", ");
+      const names = info.map(c => c.name).join(", ");
+      db.exec("PRAGMA foreign_keys=off");
+      db.exec(`CREATE TABLE production_rebuild (${cols})`);
+      db.exec(`INSERT INTO production_rebuild (${names}) SELECT ${names} FROM production`);
+      db.exec("DROP TABLE production");
+      db.exec("ALTER TABLE production_rebuild RENAME TO production");
+      db.exec("PRAGMA foreign_keys=on");
+      console.log("[db] production.order_id: запрет на пустое значение снят, данные сохранены");
+    }
+  } catch (e) {
+    console.error("[db] Не удалось снять NOT NULL с production.order_id:", e.message);
+  }
+  // Менеджер решает, что уходит забивщикам: пока заказ не «опубликован»,
+  // в мониторе его не видно — иначе там висело бы всё подряд
+  safeAddColumn("production", "published INTEGER DEFAULT 0");
+  safeAddColumn("production", "published_at TEXT");
+  safeAddColumn("production", "published_by TEXT");
+  // Заказ можно отправить конкретному человеку, а не всем: тогда в мониторе
+  // его увидит только он. Пусто — значит забирает кто первый успел.
+  safeAddColumn("production", "published_for TEXT");
+  safeAddColumn("production", "manager_comment TEXT");
+
+  // ── Богаче поля для "Остатков" ──
+  safeAddColumn("warehouse_stock", "location TEXT");   // место хранения (свободный текст)
+  safeAddColumn("warehouse_stock", "status TEXT DEFAULT 'available'"); // available | reserved | damaged
+  safeAddColumn("warehouse_stock", "comment TEXT");
+  // Свой номер у каждой позиции: без него нельзя ни сослаться на вещь,
+  // ни отдать её забивщику — «та груша, которая слева» не работает
+  safeAddColumn("warehouse_stock", "stock_number INTEGER");
+  // Кто сшил и какое начисление за это висит. Пока вещь лежит на складе,
+  // начисление в состоянии «отложено»; выдали в заказ — оно идёт к выплате.
+  safeAddColumn("warehouse_stock", "employee_id TEXT");
+  safeAddColumn("warehouse_stock", "payroll_entry_id TEXT");
+  safeAddColumn("warehouse_stock", "created_by TEXT");
+  safeAddColumn("warehouse_stock", "consumed_at TEXT");
+  safeAddColumn("warehouse_stock", "consumed_by TEXT");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_stock_number ON warehouse_stock(stock_number)");
+
+  // История движения: откуда пришло, куда ушло, кто трогал
+  db.exec(`CREATE TABLE IF NOT EXISTS warehouse_moves (
+    id TEXT PRIMARY KEY,
+    stock_id TEXT NOT NULL,
+    stock_number INTEGER,
+    at TEXT,
+    user TEXT,
+    action TEXT,        -- in | out | edit | damaged | restored
+    order_id TEXT,
+    order_number INTEGER,
+    employee_id TEXT,
+    amount REAL,
+    comment TEXT
+  )`);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_moves_stock ON warehouse_moves(stock_id, at)");
+
+  // Раздаём номера тем позициям, что появились раньше этой доработки:
+  // старые записи иначе остались бы безымянными навсегда
+  const noNumber = db.prepare("SELECT id FROM warehouse_stock WHERE stock_number IS NULL ORDER BY created_at").all();
+  if (noNumber.length) {
+    const upd = db.prepare("UPDATE warehouse_stock SET stock_number = ? WHERE id = ?");
+    for (const r of noNumber) upd.run(nextStockNumber(), r.id);
+  }
+
+  const kaspiShopsRow = db.prepare("SELECT value FROM settings WHERE key = 'kaspi_shops'").get();
+  if (!kaspiShopsRow) {
+    const defaultShops = [
+      { name: "Магазин 1", token: "" },
+      { name: "Магазин 2", token: "" },
+      { name: "Магазин 3", token: "" }
+    ];
+    db.prepare("INSERT INTO settings (key, value) VALUES ('kaspi_shops', ?)").run(JSON.stringify(defaultShops));
+  }
+
+  const ensureMeta = (key, def) => {
+    const row = db.prepare("SELECT value FROM meta WHERE key = ?").get(key);
+    if (!row) db.prepare("INSERT INTO meta (key, value) VALUES (?, ?)").run(key, String(def));
+  };
+  ensureMeta("next_receipt_number", 1);
+  ensureMeta("next_kaspi_number", 1); // старый общий счётчик — оставлен только для миграции ниже, дальше не используется
+  ensureMeta("version", "1.0.0");
+
+  // ── Переход на раздельную нумерацию по магазинам ──
+  // Раньше был один общий счётчик на все магазины сразу (номера SA и PFS шли
+  // вперемешку). Теперь у каждого магазина свой счётчик. Чтобы новые номера не
+  // столкнулись с уже использованными старыми, для каждого настроенного
+  // магазина создаём отдельный счётчик, инициализируя его текущим значением
+  // старого общего — дальше можно развести по-своему через настройки.
+  {
+    const oldShared = db.prepare("SELECT value FROM meta WHERE key = 'next_kaspi_number'").get();
+    const startFrom = oldShared ? oldShared.value : "1";
+    const shopsRow2 = db.prepare("SELECT value FROM settings WHERE key = 'kaspi_shops'").get();
+    const shopsList = shopsRow2 ? JSON.parse(shopsRow2.value) : [];
+    for (const s of shopsList) {
+      if (!s.name) continue;
+      const perShopKey = `next_kaspi_number:${s.name}`;
+      const existing = db.prepare("SELECT value FROM meta WHERE key = ?").get(perShopKey);
+      if (!existing) db.prepare("INSERT INTO meta (key, value) VALUES (?, ?)").run(perShopKey, startFrom);
+    }
+  }
 }
 
-function insertEntry(data) {
-  const id = uid("pay");
-  const amount = money(num(data.rate) * num(data.qty, 1));
-  db.prepare(`INSERT INTO payroll_entries
-    (id, employee_id, production_id, order_id, warehouse_stock_id, shop, article, product_name,
-     qty, rate, amount, kind, status, comment, created_by, created_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?,?)`)
-    .run(id, data.employeeId, data.productionId || null, data.orderId || null, data.warehouseStockId || null,
-         data.shop || null, data.article || "", data.productName || "", num(data.qty, 1), num(data.rate), amount,
-         data.kind || "order", str(data.comment), data.user, new Date().toISOString());
-  return db.prepare("SELECT * FROM payroll_entries WHERE id = ?").get(id);
+export function ensureBootstrapUser() {
+  const userCount = db.prepare("SELECT COUNT(*) as c FROM users").get().c;
+  if (userCount === 0) {
+    const bootstrapUser = process.env.ADMIN_USER || "admin";
+    const bootstrapPass = process.env.ADMIN_PASS || "admin";
+    db.prepare("INSERT INTO users (id, username, password_hash, role, created_at) VALUES (?, ?, ?, 'admin', ?)")
+      .run("u_admin", bootstrapUser, bcrypt.hashSync(bootstrapPass, 10), new Date().toISOString());
+    console.log(`[init] Создан пользователь по умолчанию: ${bootstrapUser} / ${bootstrapPass} (смените пароль после первого входа)`);
+  }
 }
 
-// Основной исполнитель: у вас швей двое-трое, но одна основная — храним её
-// на сервере, а не в браузере, потому что за программой сидят разные люди
-router.get("/settings", (req, res) => {
-  const row = db.prepare("SELECT value FROM meta WHERE key = 'payroll_default_employee'").get();
-  const id = row ? row.value : null;
-  const emp = id ? db.prepare("SELECT * FROM employees WHERE id = ?").get(id) : null;
-  res.json({ defaultEmployeeId: emp ? emp.id : null, defaultEmployeeName: emp ? emp.name : "" });
-});
+export function initDb() {
+  ensureSchema();
+  ensureBootstrapUser();
+}
 
-router.put("/settings", (req, res) => {
-  const id = req.body?.defaultEmployeeId || "";
-  if (id && !db.prepare("SELECT id FROM employees WHERE id = ?").get(id)) {
-    return res.status(400).json({ error: "no_employee", message: "Сотрудник не найден" });
+export function getMeta(key) {
+  const row = db.prepare("SELECT value FROM meta WHERE key = ?").get(key);
+  return row ? row.value : null;
+}
+export function setMeta(key, value) {
+  db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+    .run(key, String(value));
+}
+export function nextReceiptNumber() {
+  const n = parseInt(getMeta("next_receipt_number") || "1", 10);
+  setMeta("next_receipt_number", n + 1);
+  return n;
+}
+export function nextKaspiNumber(shopName) {
+  // Свой счётчик на каждый магазин (SA/PFS не путаются). Без имени магазина —
+  // старый общий счётчик, оставлен только для обратной совместимости на случай
+  // вызова откуда-то ещё без параметра.
+  const key = shopName ? `next_kaspi_number:${shopName}` : "next_kaspi_number";
+  const n = parseInt(getMeta(key) || "1", 10);
+  setMeta(key, n + 1);
+  return n;
+}
+
+// Номер складской позиции. Начинаем с 50000, чтобы номера склада ни при каких
+// обстоятельствах не спутались с номерами заказов — глядя на число, сразу
+// понятно, это склад или заказ.
+// Сквозной номер заказа — ОДИН на всю программу, без деления по магазинам.
+// Раньше у SA и PFS были свои счётчики, и номера налезали друг на друга:
+// в одном магазине 541, в другом 9941, а в старой таблице тот же заказ 4226.
+// Единая нумерация продолжается от самого большого номера, который уже есть.
+export function nextOrderNumber() {
+  let n = parseInt(getMeta("next_order_number") || "0", 10);
+  if (!n) {
+    const row = db.prepare("SELECT MAX(display_number) AS m FROM orders").get();
+    n = (row && row.m ? row.m : 0) + 1;
   }
-  db.prepare("INSERT INTO meta (key, value) VALUES ('payroll_default_employee', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
-    .run(id);
-  res.json({ ok: true, defaultEmployeeId: id || null });
-});
+  setMeta("next_order_number", n + 1);
+  return n;
+}
 
-// ---------- Начисления ----------
-router.get("/entries", (req, res) => {
-  const where = [];
-  const params = [];
-  if (req.query.employeeId) { where.push("e.employee_id = ?"); params.push(req.query.employeeId); }
-  // «Не разнесено» — работа есть, а кому платить, непонятно. В старом файле это
-  // просто пустая клетка «Исполнитель», и таких строк набирается прилично.
-  if (req.query.unassigned === "1") where.push("(e.employee_id IS NULL OR e.employee_id = '')");
-  if (req.query.status) { where.push("e.status = ?"); params.push(req.query.status); }
-  if (req.query.kind) { where.push("e.kind = ?"); params.push(req.query.kind); }
-  if (req.query.shop) { where.push("e.shop = ?"); params.push(req.query.shop); }
-  if (req.query.from) { where.push("e.created_at >= ?"); params.push(String(req.query.from)); }
-  if (req.query.to) { where.push("e.created_at <= ?"); params.push(String(req.query.to) + "T23:59:59"); }
-  // Архив по умолчанию скрыт: archived=1 — только архив, archived=all — вместе
-  const arch = String(req.query.archived || "0");
-  if (arch === "1") where.push("e.archived_at IS NOT NULL");
-  else if (arch !== "all") where.push("e.archived_at IS NULL");
-  if (req.query.includeCancelled !== "1") where.push("e.status != 'cancelled'");
+// Сдвинуть счётчик вперёд — после простановки номеров из старой таблицы,
+// чтобы новые заказы продолжили ряд, а не начали затирать уже занятые номера
+export function bumpOrderNumber(minNext) {
+  const cur = parseInt(getMeta("next_order_number") || "0", 10);
+  if (minNext > cur) setMeta("next_order_number", minNext);
+  return parseInt(getMeta("next_order_number"), 10);
+}
 
-  let rows = db.prepare(`
-    SELECT e.*, o.display_number, o.kaspi_code, o.kaspi_creation_date, o.total_price, o.created_at AS order_created_at
-    FROM payroll_entries e
-    LEFT JOIN orders o ON o.id = e.order_id
-    ${where.length ? "WHERE " + where.join(" AND ") : ""}
-    ORDER BY o.display_number DESC, e.created_at DESC`).all(...params);
+export function nextStockNumber() {
+  const n = parseInt(getMeta("next_stock_number") || "50000", 10);
+  setMeta("next_stock_number", n + 1);
+  return n;
+}
 
-  // Поиск — по номеру заказа, коду Kaspi, артикулу и названию.
-  // Сознательно фильтруем здесь, а не через lower(...) LIKE в SQL: у SQLite
-  // встроенный lower() работает только с латиницей, поэтому запрос «макивара»
-  // не находил «Макивара» — русские названия не искались вообще.
-  if (req.query.q) {
-    const q = String(req.query.q).trim().toLowerCase();
-    if (q) {
-      rows = rows.filter(r =>
-        String(r.article || "").toLowerCase().includes(q) ||
-        String(r.product_name || "").toLowerCase().includes(q) ||
-        String(r.display_number == null ? "" : r.display_number).includes(q) ||
-        String(r.kaspi_code || "").toLowerCase().includes(q));
-    }
-  }
+export function getKaspiShops() {
+  const row = db.prepare("SELECT value FROM settings WHERE key = 'kaspi_shops'").get();
+  let shops = row ? JSON.parse(row.value) : [];
+  // Защита: массив всегда должен быть ровно из 3 элементов — если после
+  // старых миграций/данных он короче или длиннее, выравниваем
+  while (shops.length < 3) shops.push({ name: `Магазин ${shops.length + 1}`, token: "" });
+  if (shops.length > 3) shops = shops.slice(0, 3);
+  return shops;
+}
+export function setKaspiShops(shops) {
+  db.prepare("INSERT INTO settings (key, value) VALUES ('kaspi_shops', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+    .run(JSON.stringify(shops));
+}
 
-  res.json(rows.map(r => entryToJson(r, r.order_id ? {
-    display_number: r.display_number, kaspi_code: r.kaspi_code,
-    kaspi_creation_date: r.kaspi_creation_date, created_at: r.order_created_at,
-    total_price: r.total_price
-  } : null)));
-});
-
-// Сколько всего лежит в архиве — чтобы убранное не выглядело «пропавшим»
-router.get("/archive-stats", (req, res) => {
-  const r = db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(amount),0) AS s
-                        FROM payroll_entries WHERE archived_at IS NOT NULL AND status != 'cancelled'`).get();
-  const unpaid = db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(amount),0) AS s
-                             FROM payroll_entries WHERE archived_at IS NOT NULL AND status IN ('pending','payable')`).get();
-  res.json({ count: r.n, sum: money(r.s), unpaidCount: unpaid.n, unpaidSum: money(unpaid.s) });
-});
-
-// История правок одной строки
-router.get("/entries/:id/log", (req, res) => {
-  const rows = db.prepare("SELECT * FROM payroll_entry_log WHERE entry_id = ? ORDER BY at DESC").all(req.params.id);
-  res.json(rows.map(r => ({
-    at: r.at, user: r.user, action: r.action, field: r.field,
-    oldValue: r.old_value, newValue: r.new_value, comment: r.comment
-  })));
-});
-
-// Начисление из записи «Производства» — вызывается сразу после назначения
-// исполнителя. Повторный вызов не создаёт второе начисление.
-router.post("/from-production/:productionId", (req, res) => {
-  const prod = db.prepare("SELECT * FROM production WHERE id = ?").get(req.params.productionId);
-  if (!prod) return res.status(404).json({ error: "not_found", message: "Запись производства не найдена" });
-  if (!prod.employee_id) return res.status(400).json({ error: "no_employee", message: "У записи не назначен исполнитель" });
-
-  const existing = db.prepare("SELECT * FROM payroll_entries WHERE production_id = ? AND status != 'cancelled'").get(prod.id);
-  if (existing) return res.json(Object.assign(entryToJson(existing), { alreadyExists: true }));
-
-  const order = prod.order_id ? db.prepare("SELECT * FROM orders WHERE id = ?").get(prod.order_id) : null;
-  const { rate, found } = findRate(null, prod.article);
-  // Количество: сначала из самого заказа (там оно настоящее и для Kaspi, и для
-  // ручных УД), и только потом из записи производства. Наоборот нельзя:
-  // у старых записей production.quantity по умолчанию равен 1 и перебил бы
-  // реальное количество из заказа.
-  const qty = num(order?.qty, 0) || num(prod.quantity, 0) || 1;
-  const entry = insertEntry({
-    employeeId: prod.employee_id, productionId: prod.id, orderId: prod.order_id,
-    shop: prod.shop || order?.shop || null,
-    article: prod.article, productName: prod.product_name,
-    qty, rate, kind: "order", user: req.session.username
-  });
-  // Разнесение произошло здесь же — фиксируем, кто именно назначил исполнителя
-  db.prepare("UPDATE payroll_entries SET assigned_by = ?, assigned_at = ? WHERE id = ?")
-    .run(req.session.username, new Date().toISOString(), entry.id);
-  logChange(entry.id, req.session.username, "assign", "employee", "не разнесено",
-            db.prepare("SELECT name FROM employees WHERE id = ?").get(prod.employee_id)?.name || "", "Назначено в «Производстве»");
-  logAudit({ user: req.session.username, action: "payroll_accrue", orderId: prod.order_id,
-             comment: `${prod.product_name || prod.article}: ${money(entry.amount)} ₸` });
-  // Перечитываем: строку только что дополнили автором разноски, и в ответ
-  // должна уйти уже обновлённая версия, а не та, что была сразу после вставки
-  const fresh = db.prepare("SELECT * FROM payroll_entries WHERE id = ?").get(entry.id);
-  res.json(Object.assign(entryToJson(fresh), { rateFound: found }));
-});
-
-// Работа на запас: изделие уходит на склад, начисление создаётся сразу,
-// но остаётся отложенным — платим, когда сами решим (так договорились).
-router.post("/stock-production", (req, res) => {
- try {
-  const b = req.body || {};
-  const emp = b.employeeId ? db.prepare("SELECT * FROM employees WHERE id = ?").get(b.employeeId) : null;
-  if (!emp) return res.status(400).json({ error: "no_employee", message: "Выберите, кто шьёт" });
-  // «не определено» и «Без оплаты» — пометки из старой таблицы, а не люди.
-  // Вешать на них работу нельзя, иначе потом непонятно, кто шил.
-  if (isServiceEmployee(emp.name)) {
-    return res.status(400).json({ error: "service_employee",
-      message: `«${emp.name}» — это пометка из старой таблицы, а не сотрудник. Выберите настоящего человека.` });
-  }
-  const qty = num(b.qty, 1);
-  if (qty <= 0) return res.status(400).json({ error: "bad_qty", message: "Количество должно быть больше нуля" });
-  const { rate, found, item } = findRate(b.itemId, b.article);
-  if (!found) return res.status(400).json({ error: "item_not_found", message: "Товар не найден в Справочнике — расценка берётся только оттуда" });
-  // Расценки может не быть — работа всё равно делается. Тогда просим осознанно
-  // согласиться: изделие сошьют, а сумму проставите потом, когда решите.
-  if (!(rate > 0) && b.confirmNoRate !== true) {
-    return res.status(400).json({ error: "no_rate",
-      message: `У товара «${item.name || item.article}» не задана расценка в Справочнике. ` +
-               `Можно создать задание без неё — тогда сумму проставите позже.` });
-  }
-
-  // «Сшить на запас» — это ЗАДАНИЕ, а не готовое изделие. Оно встаёт в
-  // «Производство» и ждёт, пока швея действительно сошьёт. Только после отметки
-  // «Сшито» вещь попадает на склад. Раньше она падала на склад сразу, и на
-  // остатках висело то, чего ещё не существует.
-  const now = new Date().toISOString();
-  const prodId = uid("prod");
-  db.prepare(`INSERT INTO production (id, order_id, article, product_name, quantity, shop,
-              stage, employee_id, manager_comment, created_at)
-              VALUES (?, NULL, ?, ?, ?, NULL, 'to_stock', ?, ?, ?)`)
-    .run(prodId, item.article || "", item.name || item.kaspi_name || "", qty,
-         b.employeeId, str(b.comment) || null, now);
-
-  const who = db.prepare("SELECT name FROM employees WHERE id = ?").get(b.employeeId)?.name || "";
-  logAudit({ user: req.session.username, action: "payroll_stock_production",
-             comment: `Задание на запас: ${item.name || item.article} ×${qty}, шьёт ${who}` });
-  res.json({ ok: true, productionId: prodId, rate,
-             message: `Задание создано: шьёт ${who}. Появилось в «Производстве» — отметьте «Сшито», когда будет готово.` +
-                      (rate > 0 ? "" : " Расценка не задана — проставьте её в Справочнике до выплаты.") });
- } catch (err) {
-  // Без этого сервер отдавал голый HTTP 500, и понять причину было нельзя
-  console.error("[payroll/stock-production] Ошибка:", err.message, err.stack);
-  res.status(500).json({ error: "internal_error",
-    message: "Не получилось создать задание: " + err.message +
-             ". Обычно это значит, что на сервере старая версия db.js — залейте свежую." });
- }
-});
-
-// Ручное начисление (доработка, ремонт, нестандартная работа)
-router.post("/entries", (req, res) => {
-  const b = req.body || {};
-  if (!b.employeeId || !db.prepare("SELECT id FROM employees WHERE id = ?").get(b.employeeId)) {
-    return res.status(400).json({ error: "no_employee", message: "Выберите исполнителя" });
-  }
-  const { rate, found, item } = findRate(b.itemId, b.article);
-  if (!found) return res.status(400).json({ error: "item_not_found", message: "Товар не найден в Справочнике — расценка берётся только оттуда" });
-  const entry = insertEntry({
-    employeeId: b.employeeId, article: item.article, productName: item.name || item.kaspi_name || "",
-    qty: num(b.qty, 1), rate, kind: str(b.kind, 20) === "stock" ? "stock" : "order",
-    comment: str(b.comment), user: req.session.username
-  });
-  res.json(entryToJson(entry));
-});
-
-// «Работа принята» — только после этого сумма попадает в выплату
-router.post("/entries/:id/accept", (req, res) => {
-  const e = db.prepare("SELECT * FROM payroll_entries WHERE id = ?").get(req.params.id);
-  if (!e) return res.status(404).json({ error: "not_found" });
-  if (e.status === "paid") return res.status(400).json({ error: "already_paid", message: "Работа уже оплачена" });
-  if (e.status === "cancelled") return res.status(400).json({ error: "cancelled", message: "Начисление отменено" });
-  if (num(e.rate) === 0) {
-    return res.status(400).json({ error: "no_rate",
-      message: `Не заполнена расценка труда для «${e.product_name || e.article}» — укажите её в Справочнике и создайте начисление заново` });
-  }
-  db.prepare("UPDATE payroll_entries SET status = 'payable', accepted_at = ?, accepted_by = ? WHERE id = ?")
-    .run(new Date().toISOString(), req.session.username, e.id);
-  logChange(e.id, req.session.username, "accept", "status", "отложено", "к выплате", null);
-  logAudit({ user: req.session.username, action: "payroll_accept", comment: `${e.product_name || e.article}: ${money(e.amount)} ₸` });
-  res.json(entryToJson(db.prepare("SELECT * FROM payroll_entries WHERE id = ?").get(e.id)));
-});
-
-// Разнесение работы на другого человека: сумма уже посчитана по расценке,
-// меняется только исполнитель. Оплаченное не трогаем — там деньги уже ушли.
-router.put("/entries/:id", (req, res) => {
-  const e = db.prepare("SELECT * FROM payroll_entries WHERE id = ?").get(req.params.id);
-  if (!e) return res.status(404).json({ error: "not_found" });
-  if (e.status === "paid") return res.status(400).json({ error: "already_paid", message: "Работа уже оплачена — исполнителя не поменять" });
-
-  const b = req.body || {};
-  const updates = [];
-  const params = [];
-  const user = req.session.username;
-  const now = new Date().toISOString();
-  const changes = [];   // что записать в журнал после успешного UPDATE
-
-  if (b.employeeId !== undefined) {
-    const newId = b.employeeId || null;
-    if (newId && !db.prepare("SELECT id FROM employees WHERE id = ?").get(newId)) {
-      return res.status(400).json({ error: "no_employee", message: "Сотрудник не найден" });
-    }
-    if (newId !== e.employee_id) {
-      const nameOf = (id) => id ? (db.prepare("SELECT name FROM employees WHERE id = ?").get(id)?.name || id) : "не разнесено";
-      updates.push("employee_id = ?", "assigned_by = ?", "assigned_at = ?");
-      params.push(newId, newId ? user : null, newId ? now : null);
-      changes.push(["assign", "employee", nameOf(e.employee_id), nameOf(newId)]);
-    }
-  }
-  // Количество можно поправить (например, сделали не всё) — сумму пересчитает сервер
-  if (b.qty !== undefined) {
-    const qty = num(b.qty);
-    if (qty <= 0) return res.status(400).json({ error: "bad_qty", message: "Количество должно быть больше нуля" });
-    if (qty !== num(e.qty)) {
-      updates.push("qty = ?"); params.push(qty);
-      changes.push(["edit", "qty", num(e.qty), qty]);
-    }
-  }
-  // Расценку обычно берём из Справочника и не трогаем. Но в перенесённых из
-  // старой таблицы строках она бывает неверной, а починить их иначе нечем —
-  // поэтому правка разрешена и всегда попадает в журнал, с именем правившего.
-  if (b.rate !== undefined) {
-    const rate = num(b.rate);
-    if (rate < 0) return res.status(400).json({ error: "bad_rate", message: "Расценка не может быть отрицательной" });
-    if (rate !== num(e.rate)) {
-      updates.push("rate = ?"); params.push(rate);
-      changes.push(["edit", "rate", num(e.rate), rate]);
-    }
-  }
-  if (b.comment !== undefined && str(b.comment) !== str(e.comment)) {
-    updates.push("comment = ?"); params.push(str(b.comment));
-    changes.push(["edit", "comment", e.comment || "", str(b.comment)]);
-  }
-  if (!updates.length) return res.json(entryToJson(e));
-
-  // Сумму всегда пересчитываем сами — руками её вписать нельзя, чтобы
-  // «кол-во × расценка» и итог не разъезжались
-  const finalQty = b.qty !== undefined ? num(b.qty) : num(e.qty);
-  const finalRate = b.rate !== undefined ? num(b.rate) : num(e.rate);
-  const newAmount = money(finalQty * finalRate);
-  if (newAmount !== money(e.amount)) changes.push(["edit", "amount", money(e.amount), newAmount]);
-  updates.push("amount = ?"); params.push(newAmount);
-
-  params.push(e.id);
-  db.prepare(`UPDATE payroll_entries SET ${updates.join(", ")} WHERE id = ?`).run(...params);
-  changes.forEach(([action, field, oldV, newV]) => logChange(e.id, user, action, field, oldV, newV, str(b.reason)));
-
-  const updated = db.prepare("SELECT * FROM payroll_entries WHERE id = ?").get(e.id);
-  logAudit({ user, action: "payroll_edit",
-             comment: `${updated.product_name || updated.article}: ${changes.map(c => c[1]).join(", ")} → ${money(updated.amount)} ₸` });
-  res.json(entryToJson(updated));
-});
-
-// Разнести пачку строк на одного человека — то самое «пусто = не разнесено»
-router.post("/entries/assign", (req, res) => {
-  const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
-  const employeeId = req.body?.employeeId || null;
-  if (!ids.length) return res.status(400).json({ error: "no_ids", message: "Не выбрано ни одной работы" });
-  const emp = employeeId ? db.prepare("SELECT * FROM employees WHERE id = ?").get(employeeId) : null;
-  if (employeeId && !emp) return res.status(400).json({ error: "no_employee", message: "Сотрудник не найден" });
-
-  const user = req.session.username;
-  const now = new Date().toISOString();
-  let assigned = 0, skippedPaid = 0;
-  for (const id of ids) {
-    const e = db.prepare("SELECT * FROM payroll_entries WHERE id = ?").get(id);
-    if (!e) continue;
-    // Оплаченное не перекидываем: деньги уже выданы конкретному человеку
-    if (e.status === "paid") { skippedPaid++; continue; }
-    if (e.employee_id === employeeId) continue;
-    const oldName = e.employee_id ? (db.prepare("SELECT name FROM employees WHERE id = ?").get(e.employee_id)?.name || "") : "не разнесено";
-    db.prepare("UPDATE payroll_entries SET employee_id = ?, assigned_by = ?, assigned_at = ? WHERE id = ?")
-      .run(employeeId, employeeId ? user : null, employeeId ? now : null, e.id);
-    logChange(e.id, user, "assign", "employee", oldName, emp ? emp.name : "не разнесено", str(req.body?.reason));
-    assigned++;
-  }
-  logAudit({ user, action: "payroll_assign_bulk",
-             comment: `${emp ? emp.name : "снято"}: ${assigned} работ${skippedPaid ? `, пропущено оплаченных ${skippedPaid}` : ""}` });
-  res.json({ ok: true, assigned, skippedPaid, employeeName: emp ? emp.name : "" });
-});
-
-// Архив: строку не удаляем, но убираем из рабочих списков и из подсчёта долга
-router.post("/entries/archive", (req, res) => {
-  const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
-  if (!ids.length) return res.status(400).json({ error: "no_ids", message: "Не выбрано ни одной работы" });
-  const toArchive = req.body?.archived !== false;
-  const user = req.session.username;
-  const now = new Date().toISOString();
-
-  let count = 0, unpaid = 0;
-  for (const id of ids) {
-    const e = db.prepare("SELECT * FROM payroll_entries WHERE id = ?").get(id);
-    if (!e) continue;
-    if (toArchive && (e.status === "pending" || e.status === "payable")) unpaid++;
-    db.prepare("UPDATE payroll_entries SET archived_at = ?, archived_by = ? WHERE id = ?")
-      .run(toArchive ? now : null, toArchive ? user : null, e.id);
-    logChange(e.id, user, toArchive ? "archive" : "unarchive", null, null, null, str(req.body?.reason));
-    count++;
-  }
-  logAudit({ user, action: toArchive ? "payroll_archive" : "payroll_unarchive",
-             comment: `Работ: ${count}${unpaid ? `, из них невыплаченных ${unpaid}` : ""}` });
-  res.json({ ok: true, count, unpaid });
-});
-
-router.post("/entries/:id/cancel", (req, res) => {
-  const e = db.prepare("SELECT * FROM payroll_entries WHERE id = ?").get(req.params.id);
-  if (!e) return res.status(404).json({ error: "not_found" });
-  if (e.status === "paid") return res.status(400).json({ error: "already_paid", message: "Оплаченное начисление отменить нельзя" });
-  db.prepare("UPDATE payroll_entries SET status = 'cancelled', comment = ? WHERE id = ?")
-    .run(str(req.body?.comment) || e.comment, e.id);
-  logChange(e.id, req.session.username, "cancel", "status", e.status, "отменено", str(req.body?.comment));
-  logAudit({ user: req.session.username, action: "payroll_cancel", comment: `${e.product_name || e.article}` });
-  res.json({ ok: true });
-});
-
-// ---------- Сводка по сотрудникам ----------
-router.get("/summary", (req, res) => {
-  const employees = db.prepare("SELECT * FROM employees ORDER BY name").all();
-  const rows = employees.map(emp => {
-    const agg = (status, kind) => {
-      const params = [emp.id, status];
-      let sql = "SELECT COUNT(*) AS n, COALESCE(SUM(amount),0) AS s FROM payroll_entries WHERE employee_id = ? AND status = ? AND archived_at IS NULL";
-      if (kind) { sql += " AND kind = ?"; params.push(kind); }
-      const r = db.prepare(sql).all(...params)[0];
-      return { count: r.n, sum: money(r.s) };
-    };
-    const pending = agg("pending");
-    const payable = agg("payable");
-    const paid = agg("paid");
-    const paidOut = db.prepare("SELECT COALESCE(SUM(amount),0) AS s FROM payouts WHERE employee_id = ?").get(emp.id);
-    return {
-      employeeId: emp.id,
-      name: emp.name,
-      // Две разные пометки: закрытое возвратом и то, что надо разнести
-      isService: isServiceEmployee(emp.name),
-      isClosed: isClosedEmployee(emp.name),
-      isUnassigned: isUnassignedEmployee(emp.name),
-      pendingCount: pending.count, pendingSum: pending.sum,       // отложено (работа не принята)
-      pendingStockSum: agg("pending", "stock").sum,               // из них — на запас
-      payableCount: payable.count, payableSum: payable.sum,       // к выплате
-      paidCount: paid.count, paidSum: paid.sum,                   // всего начислено и выплачено
-      payoutsSum: money(paidOut.s)                                // фактически выдано на руки (после вычетов)
-    };
-  });
-  // Итог считаем без служебных пометок — иначе «не определено» раздувает долг
-  const totals = rows.filter(r => !r.isService).reduce((acc, r) => ({
-    pendingSum: money(acc.pendingSum + r.pendingSum),
-    payableSum: money(acc.payableSum + r.payableSum),
-    paidSum: money(acc.paidSum + r.paidSum),
-    payoutsSum: money(acc.payoutsSum + r.payoutsSum)
-  }), { pendingSum: 0, payableSum: 0, paidSum: 0, payoutsSum: 0 });
-  res.json({ employees: rows, totals });
-});
-
-// Выплаты по месяцам — как в вашей таблице: строки месяцы, столбцы люди.
-// Долгом считается всё принятое и отложенное, что ещё не выплачено.
-router.get("/by-months", (req, res) => {
-  const entries = db.prepare(`SELECT e.*, em.name AS emp_name FROM payroll_entries e
-                              LEFT JOIN employees em ON em.id = e.employee_id
-                              WHERE e.status != 'cancelled' AND e.archived_at IS NULL`).all();
-  const months = new Map();
-  const debts = new Map();
-  const people = new Set();
-  let paidTotal = 0, debtTotal = 0, undistributed = 0, undistributedCount = 0;
-  let closedSum = 0, closedCount = 0;   // закрыто возвратом — разносить нечего
-
-  for (const e of entries) {
-    const name = e.emp_name || "не разнесено";
-    const amount = num(e.amount);
-    // «Без оплаты» и «Перекрыто» — заказ закрыт возвратом. Работу заново не
-    // делали, платить не за что и разносить нечего: это НЕ «без разноски».
-    if (isClosedEmployee(e.emp_name)) { closedSum += amount; closedCount++; continue; }
-    // А вот пустая клетка и «не определено» — это как раз то, что надо разнести.
-    // Считаем штуки, а не деньги: это не долг, а работа, которую надо разобрать.
-    if (!e.employee_id || !e.emp_name || isUnassignedEmployee(e.emp_name)) { undistributed += amount; undistributedCount++; continue; }
-    people.add(name);
-    if (e.status === "paid") {
-      const when = String(e.paid_at || e.accepted_at || e.created_at || "").slice(0, 7);
-      if (!months.has(when)) months.set(when, new Map());
-      const m = months.get(when);
-      m.set(name, money((m.get(name) || 0) + amount));
-      paidTotal += amount;
-    } else {
-      debts.set(name, money((debts.get(name) || 0) + amount));
-      debtTotal += amount;
-    }
-  }
-
-  const MONTH_NAMES = ["январь","февраль","март","апрель","май","июнь","июль","август","сентябрь","октябрь","ноябрь","декабрь"];
-  res.json({
-    people: Array.from(people).sort(),
-    months: Array.from(months.entries()).sort().map(([key, m]) => {
-      const mm = parseInt(key.slice(5, 7), 10);
-      return {
-        key,
-        label: `${MONTH_NAMES[mm - 1] || key} ${key.slice(0, 4)}`,
-        byPerson: Object.fromEntries(m),
-        total: money(Array.from(m.values()).reduce((s, v) => s + v, 0))
-      };
-    }),
-    debts: Array.from(debts.entries()).map(([name, sum]) => ({ name, sum })).sort((a, b) => b.sum - a.sum),
-    totals: { paid: money(paidTotal), debt: money(debtTotal),
-              undistributed: money(undistributed), undistributedCount,
-              closed: money(closedSum), closedCount }
-  });
-});
-
-// ---------- Выплаты ----------
-router.post("/payouts", (req, res) => {
-  const b = req.body || {};
-  const emp = b.employeeId ? db.prepare("SELECT * FROM employees WHERE id = ?").get(b.employeeId) : null;
-  if (!emp) return res.status(400).json({ error: "no_employee", message: "Выберите сотрудника" });
-  // «не определено», «Без оплаты» — это пометки из старой таблицы, а не люди.
-  // Спрятать кнопку на экране мало: запрет должен стоять здесь, иначе выплату
-  // всё равно можно провести, и деньги уйдут в никуда.
-  if (isServiceEmployee(emp.name)) {
-    return res.status(400).json({ error: "service_employee",
-      message: `«${emp.name}» — это пометка из старой таблицы, а не сотрудник. Сначала разнесите эти работы на людей.` });
-  }
-
-  // Берём только принятые работы: что не принято — в выплату не попадает
-  let entries;
-  if (Array.isArray(b.entryIds) && b.entryIds.length) {
-    const ph = b.entryIds.map(() => "?").join(",");
-    entries = db.prepare(`SELECT * FROM payroll_entries WHERE id IN (${ph}) AND employee_id = ? AND status = 'payable'`)
-      .all(...b.entryIds, emp.id);
-  } else {
-    entries = db.prepare("SELECT * FROM payroll_entries WHERE employee_id = ? AND status = 'payable'").all(emp.id);
-  }
-  if (!entries.length) return res.status(400).json({ error: "nothing_to_pay", message: "Нет принятых работ к выплате" });
-
-  const deductions = Array.isArray(b.deductions) ? b.deductions.filter(d => num(d.amount) > 0) : [];
-  const accrued = money(entries.reduce((s, e) => s + num(e.amount), 0));
-  const deductionsTotal = money(deductions.reduce((s, d) => s + num(d.amount), 0));
-  if (deductionsTotal > accrued) {
-    return res.status(400).json({ error: "deductions_too_big",
-      message: `Вычеты (${deductionsTotal}) больше начисленного (${accrued}) — проверьте суммы` });
-  }
-  const amount = money(accrued - deductionsTotal);
-
-  const now = new Date().toISOString();
-  const numberRow = db.prepare("SELECT MAX(number) AS n FROM payouts").get();
-  const id = uid("po");
-  db.prepare(`INSERT INTO payouts (id, number, employee_id, accrued, deductions_total, amount, comment, created_by, created_at)
-              VALUES (?,?,?,?,?,?,?,?,?)`)
-    .run(id, (numberRow && numberRow.n ? numberRow.n : 0) + 1, emp.id, accrued, deductionsTotal, amount,
-         str(b.comment), req.session.username, now);
-
-  const insD = db.prepare("INSERT INTO payout_deductions (id, payout_id, kind, amount, comment) VALUES (?,?,?,?,?)");
-  deductions.forEach(d => insD.run(uid("ded"), id, str(d.kind, 60) || "прочее", money(d.amount), str(d.comment)));
-
-  const upd = db.prepare("UPDATE payroll_entries SET status = 'paid', paid_at = ?, payout_id = ? WHERE id = ?");
-  entries.forEach(e => upd.run(now, id, e.id));
-
-  logAudit({ user: req.session.username, action: "payroll_payout",
-             comment: `${emp.name}: начислено ${accrued}, вычеты ${deductionsTotal}, к выдаче ${amount}` });
-  res.json({ ok: true, id, accrued, deductionsTotal, amount, entries: entries.length });
-});
-
-router.get("/payouts", (req, res) => {
-  const where = [];
-  const params = [];
-  if (req.query.employeeId) { where.push("employee_id = ?"); params.push(req.query.employeeId); }
-  const rows = db.prepare(`SELECT * FROM payouts ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY created_at DESC LIMIT 200`).all(...params);
-  res.json(rows.map(r => {
-    const emp = db.prepare("SELECT name FROM employees WHERE id = ?").get(r.employee_id);
-    return {
-      id: r.id, number: r.number, employeeId: r.employee_id, employeeName: emp ? emp.name : "",
-      accrued: num(r.accrued), deductionsTotal: num(r.deductions_total), amount: num(r.amount),
-      comment: r.comment, createdBy: r.created_by, createdAt: r.created_at
-    };
-  }));
-});
-
-router.get("/payouts/:id", (req, res) => {
-  const r = db.prepare("SELECT * FROM payouts WHERE id = ?").get(req.params.id);
-  if (!r) return res.status(404).json({ error: "not_found" });
-  const emp = db.prepare("SELECT name FROM employees WHERE id = ?").get(r.employee_id);
-  res.json({
-    id: r.id, number: r.number, employeeName: emp ? emp.name : "",
-    accrued: num(r.accrued), deductionsTotal: num(r.deductions_total), amount: num(r.amount),
-    comment: r.comment, createdBy: r.created_by, createdAt: r.created_at,
-    deductions: db.prepare("SELECT * FROM payout_deductions WHERE payout_id = ?").all(r.id)
-      .map(d => ({ kind: d.kind, amount: num(d.amount), comment: d.comment })),
-    entries: db.prepare("SELECT * FROM payroll_entries WHERE payout_id = ?").all(r.id).map(entryToJson)
-  });
-});
-
-export default router;
+export function logAudit({ user, action, orderId = null, oldValue = null, newValue = null, comment = null, ip = null }) {
+  db.prepare(`INSERT INTO audit_log (user, action, order_id, old_value, new_value, comment, ip, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(
+      user || "unknown", action, orderId,
+      oldValue != null ? String(oldValue) : null,
+      newValue != null ? String(newValue) : null,
+      comment, ip, new Date().toISOString()
+    );
+}
