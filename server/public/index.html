@@ -823,12 +823,10 @@
         <button class="btn secondary" id="btnSalaryHistory">История выплат</button>
         <button class="btn secondary admin-only" id="btnLegacyImport">📄 Загрузить файл заказов и зарплаты</button>
         <input type="file" id="legacyFile" accept=".xlsx,.xls" style="display:none">
+        <button class="btn secondary admin-only" id="btnLegacyRollback">↺ Убрать залитое из старого файла</button>
         <span style="margin-left:auto; font-size:12.5px; color:var(--ink-soft);">Расценки берутся из Справочника</span>
       </div>
-      <div class="panel" style="background:#F7FAFF; border-color:#CFE0F5; display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
-        <span style="font-size:12.5px;"><b>Здесь только выплата.</b> Работы отмечаются в «Производстве» кнопкой «✓ Сделали».</span>
-        <span style="font-size:12.5px; color:var(--ink-soft);">Отложено — ещё не отметили, что сделано · К выплате — можно платить · Выдано — уже отдали на руки</span>
-      </div>
+      <div id="salaryHero" style="margin-bottom:14px;"></div>
       <div id="salaryCards" style="display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-bottom:16px;"></div>
       <div class="panel" style="padding:0; overflow:hidden;">
         <div style="padding:12px 16px; border-bottom:1px solid var(--line);"><b style="font-size:14px;">Сотрудники</b></div>
@@ -1064,10 +1062,18 @@
         </select>
       </div>
       <div id="whCards" style="display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:16px;"></div>
+      <div id="whUnnamedWarn"></div>
       <div class="panel" style="padding:0; overflow:hidden;">
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border-bottom:1px solid var(--line); flex-wrap:wrap; gap:8px;">
+          <span style="font-size:12.5px; color:var(--ink-soft);">Нажмите на строку, чтобы увидеть каждую штуку с её номером</span>
+          <span style="display:flex; gap:8px;">
+            <button class="btn secondary" id="whExport" style="padding:5px 12px; font-size:12px;">Выгрузить в Excel</button>
+            <button class="btn secondary" id="whMoves" style="padding:5px 12px; font-size:12px;">История движения</button>
+          </span>
+        </div>
         <div class="tbl-wrap">
           <table>
-            <thead><tr><th>Фото</th><th>Товар</th><th>Группа</th><th class="num">На складе</th><th>Откуда</th><th class="num">По рознице</th><th></th></tr></thead>
+            <thead><tr><th style="width:20px;"></th><th>Фото</th><th>Товар</th><th>Группа</th><th class="num">На складе</th><th>Откуда</th><th class="num">Ждёт выплаты</th><th class="num">По рознице</th><th></th></tr></thead>
             <tbody id="whBody"></tbody>
           </table>
         </div>
@@ -1234,6 +1240,29 @@
     <div class="modal-actions">
       <div></div>
       <div><button class="btn secondary" id="manualOrderCancelBtn">Отмена</button> <button class="btn amber" id="manualOrderSaveBtn">Создать</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="whMovesOverlay">
+  <div class="modal" style="max-width:820px;">
+    <h3>История движения склада</h3>
+    <div class="tbl-wrap" style="max-height:60vh; overflow:auto;">
+      <table><thead><tr><th>Когда</th><th class="num">№</th><th>Товар</th><th>Что</th><th>Заказ</th><th>Кто сшил</th><th class="num">Сумма</th><th>Кто сделал</th></tr></thead>
+      <tbody id="whMovesBody"></tbody></table>
+    </div>
+    <div class="modal-actions"><div></div><button class="btn secondary" id="whMovesClose">Закрыть</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="rollbackOverlay">
+  <div class="modal" style="max-width:600px;">
+    <h3>Убрать всё, что залито из старого файла</h3>
+    <div id="rollbackBody" style="font-size:13px;"></div>
+    <div class="error" id="rollbackError"></div>
+    <div class="modal-actions">
+      <div id="rollbackActions"></div>
+      <button class="btn secondary" id="rollbackClose">Закрыть</button>
     </div>
   </div>
 </div>
@@ -4927,14 +4956,25 @@
     const bs = t.bySource || {};
     document.getElementById("whCards").innerHTML =
       card("var(--navy)", money(t.units) + " шт", "Всего на складе", `${t.positions} наименований`) +
-      card("#2563EB", money(bs.overproduced || 0) + " шт", "Сшито на запас", "работа уже оплачена") +
+      card("#2563EB", money(bs.overproduced || 0) + " шт", "Сшито на запас", "оплата — после выдачи в заказ") +
       card("#7C3AED", money((bs.returned || 0) + (bs.cancelled || 0)) + " шт", "С возвратов и отмен", "платить не нужно") +
-      card("var(--amber)", money(t.retailValue) + " ₸", "По розничным ценам", "во что оценивается склад");
+      card("var(--amber)", money(t.pendingPayroll || 0) + " ₸", "Ждёт выплаты", "начислится, когда уйдёт в заказ");
+
+    // Безымянные позиции надо подписать, иначе их не выдать: непонятно, что выдаёшь
+    document.getElementById("whUnnamedWarn").innerHTML = t.unnamed
+      ? `<div class="panel" style="background:#FFF8E6; border-color:var(--amber); display:flex; align-items:center; gap:10px;">
+           <span style="font-size:18px;">⚠️</span>
+           <span style="font-size:13px;"><b>Без названия: ${t.unnamed} шт.</b> Это пришло с возвратов, где Kaspi не отдал наименование.
+             Раскройте строку и подпишите — у каждой штуки есть свой номер.</span></div>`
+      : "";
 
     const q = (document.getElementById("whSearch").value || "").trim().toLowerCase();
     const src = document.getElementById("whSource").value;
     let groups = whData.groups;
-    if(q) groups = groups.filter(g=>String(g.name).toLowerCase().includes(q) || String(g.article).toLowerCase().includes(q));
+    // Ищем и по номеру позиции: обычно именно его называют вслух
+    if(q) groups = groups.filter(g=>String(g.name).toLowerCase().includes(q)
+      || String(g.article).toLowerCase().includes(q)
+      || g.items.some(i=>String(i.number || "").includes(q)));
     if(src) groups = groups.filter(g=>g.bySource[src]);
 
     const body = document.getElementById("whBody");
@@ -4943,39 +4983,172 @@
         ${whData.groups.length ? "Ничего не найдено" : "Склад пуст. Сюда попадает то, что сшили на запас, и то, что вернулось с возвратов."}</td></tr>`;
       return;
     }
-    body.innerHTML = groups.map(g=>`
-      <tr>
+    body.innerHTML = groups.map((g, gi)=>{
+      const key = g.article || ("__" + gi);
+      const free = g.items.filter(i=>!i.consumed);
+      const head = `
+      <tr class="wh-head" data-wh-toggle="${esc(key)}" style="cursor:pointer;">
+        <td style="color:var(--ink-soft);" id="whArrow_${esc(key)}">▸</td>
         <td>${g.photo?`<img class="thumb" src="${esc(g.photo)}">`:`<div class="thumb-empty">—</div>`}</td>
-        <td><b>${esc(g.name)}</b><div style="font-size:11px; color:var(--ink-soft);">${esc(g.article || "")}</div></td>
+        <td><b>${esc(g.name)}</b>
+          <div style="font-size:11px; color:var(--ink-soft);">${esc(g.article || "без артикула")}</div></td>
         <td style="font-size:12.5px;">${esc(g.category || "—")}</td>
         <td class="num"><b style="font-size:15px;">${money(g.qty)}</b></td>
         <td>${Object.entries(g.bySource).map(([k,v])=>{
               const s = WH_SOURCE[k] || { label:k, color:"#4B5563", bg:"#F3F4F6" };
               return `<span class="cn-badge" style="color:${s.color}; background:${s.bg}; padding:2px 9px; border-radius:20px; font-size:11px; margin-right:4px;">${s.label} ${v}</span>`;
             }).join("")}</td>
+        <td class="num">${g.pendingAmount ? `<b style="color:var(--amber);">${money(g.pendingAmount)} ₸</b>` : "—"}</td>
         <td class="num">${g.retail ? money(g.qty * g.retail) + " ₸" : "—"}</td>
         <td style="white-space:nowrap;">
-          <button class="btn amber" style="padding:4px 10px; font-size:12px;" data-wh-give="${esc(g.article)}">Выдать в заказ</button>
+          <button class="btn amber" style="padding:4px 10px; font-size:12px;" data-wh-give="${esc(key)}">Выдать в заказ</button>
+        </td>
+      </tr>`;
+      // Каждая штука отдельно: номер, кто сшил, сколько ждёт выплаты
+      const rows = free.map(i=>`
+      <tr class="wh-detail wh-of-${esc(key)}" style="display:none; background:#FAFAF7;">
+        <td></td><td></td>
+        <td colspan="2" style="font-size:12.5px;">
+          <span class="mono"><b>№ ${i.number || "—"}</b></span>
+          ${i.location ? ` · ${esc(i.location)}` : ""}
+          ${i.comment ? `<div style="font-size:11px; color:var(--ink-soft);">${esc(i.comment)}</div>` : ""}
+        </td>
+        <td class="num" style="font-size:12.5px;">${money(i.qty)}</td>
+        <td style="font-size:12px;">${esc(i.sourceLabel)}
+          <div style="font-size:11px; color:var(--ink-soft);">${esc(String(i.createdAt||"").slice(0,10))}</div></td>
+        <td class="num" style="font-size:12.5px;">
+          ${i.payable
+            ? (i.employeeName
+                ? `${money(i.amount)} ₸<div style="font-size:11px; color:var(--ink-soft);">${esc(i.employeeName)}</div>`
+                : `<span style="color:var(--red); font-size:11.5px;">не указан, кто сшил</span>`)
+            : `<span style="color:var(--ink-soft); font-size:11.5px;">платить не нужно</span>`}</td>
+        <td></td>
+        <td style="white-space:nowrap;">
+          <button class="btn secondary" style="padding:3px 9px; font-size:11.5px;" data-wh-edit="${esc(i.id)}">✎</button>
+          <button class="btn amber" style="padding:3px 9px; font-size:11.5px;" data-wh-give-one="${esc(i.id)}">Выдать</button>
         </td>
       </tr>`).join("");
+      return head + rows;
+    }).join("");
 
-    body.querySelectorAll("[data-wh-give]").forEach(b=>b.addEventListener("click", ()=>openWhConsume(b.dataset.whGive)));
+    body.querySelectorAll("[data-wh-give]").forEach(b=>b.addEventListener("click", (ev)=>{
+      ev.stopPropagation(); openWhConsume(b.dataset.whGive);
+    }));
+    body.querySelectorAll("[data-wh-give-one]").forEach(b=>b.addEventListener("click", ()=>openWhConsumeOne(b.dataset.whGiveOne)));
+    body.querySelectorAll("[data-wh-edit]").forEach(b=>b.addEventListener("click", ()=>openWhEdit(b.dataset.whEdit)));
+    body.querySelectorAll("[data-wh-toggle]").forEach(r=>r.addEventListener("click", ()=>{
+      const key = r.dataset.whToggle;
+      const rows = body.querySelectorAll(".wh-of-" + CSS.escape(key));
+      const open = rows.length && rows[0].style.display !== "none";
+      rows.forEach(x=>{ x.style.display = open ? "none" : ""; });
+      const arrow = document.getElementById("whArrow_" + key);
+      if(arrow) arrow.textContent = open ? "▸" : "▾";
+    }));
   }
+
+  // Выдача конкретной штуки по её номеру
+  async function openWhConsumeOne(itemId){
+    for(const g of (whData?.groups || [])){
+      const it = g.items.find(i=>i.id === itemId);
+      if(it){ whConsumeItem = it;
+        document.getElementById("whConsumeTitle").textContent = `Выдать № ${it.number || "—"}: ${g.name}`;
+        document.getElementById("whOrderSearch").value = "";
+        document.getElementById("whConsumeOverlay").classList.add("show");
+        renderWhOrders();
+        return; }
+    }
+  }
+
+  // Правка штуки: кто сшил, место, название для безымянных
+  async function openWhEdit(itemId){
+    let found = null, group = null;
+    for(const g of (whData?.groups || [])){
+      const it = g.items.find(i=>i.id === itemId);
+      if(it){ found = it; group = g; break; }
+    }
+    if(!found) return;
+    const pick = await pickEmployee({ title: `№ ${found.number || "—"} — кто это сшил?` });
+    if(!pick) return;
+    const body = { employeeId: pick.employeeId || null };
+    if(group.unnamed){
+      const nm = prompt("Название изделия (сейчас его нет):", "");
+      if(nm && nm.trim()) body.name = nm.trim();
+    }
+    try{
+      await api("/warehouse/item/" + encodeURIComponent(itemId), { method:"PUT", body: JSON.stringify(body) });
+      toast("Сохранено");
+      loadWarehouse();
+    }catch(e){ toast("Не получилось: " + e.message); }
+  }
+
+  // Выгрузка склада — по штукам, с номерами
+  document.getElementById("whExport").addEventListener("click", ()=>{
+    if(!whData || !whData.groups.length){ toast("Склад пуст"); return; }
+    const rows = [];
+    whData.groups.forEach(g=>g.items.filter(i=>!i.consumed).forEach(i=>rows.push({
+      "№ склада": i.number || "",
+      "Артикул": g.article || "",
+      "Наименование": g.name,
+      "Группа": g.category || "",
+      "Кол-во": i.qty,
+      "Откуда": i.sourceLabel,
+      "Кто сшил": i.employeeName || "",
+      "Ждёт выплаты": i.payable ? i.amount : "",
+      "По рознице": g.retail || "",
+      "Место": i.location || "",
+      "Положили": String(i.createdAt || "").slice(0,10)
+    })));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Склад");
+    XLSX.writeFile(wb, `склад_${new Date().toISOString().slice(0,10)}.xlsx`);
+    toast(`Выгружено позиций: ${rows.length}`);
+  });
+
+  // История движения: кто, когда, откуда, куда, за сколько
+  document.getElementById("whMoves").addEventListener("click", async ()=>{
+    const body = document.getElementById("whMovesBody");
+    body.innerHTML = `<tr><td colspan="8" style="padding:16px; text-align:center; color:var(--ink-soft);">Загрузка...</td></tr>`;
+    document.getElementById("whMovesOverlay").classList.add("show");
+    try{
+      const moves = await api("/warehouse/moves");
+      body.innerHTML = moves.length ? moves.map(m=>`
+        <tr>
+          <td style="font-size:12px; white-space:nowrap;">${esc(String(m.at||"").slice(0,16).replace("T"," "))}</td>
+          <td class="num mono" style="font-size:12px;">${m.number || "—"}</td>
+          <td style="font-size:12.5px;">${esc(m.name || m.article || "—")}</td>
+          <td style="font-size:12.5px;">${esc(m.actionLabel)}${m.comment ? `<div style="font-size:11px; color:var(--ink-soft);">${esc(m.comment)}</div>` : ""}</td>
+          <td class="num" style="font-size:12px;">${m.orderNumber || "—"}</td>
+          <td style="font-size:12px;">${esc(m.employeeName || "—")}</td>
+          <td class="num" style="font-size:12px;">${m.amount ? money(m.amount) + " ₸" : "—"}</td>
+          <td style="font-size:12px;">${esc(m.user || "")}</td>
+        </tr>`).join("")
+        : `<tr><td colspan="8" style="padding:20px; text-align:center; color:var(--ink-soft);">Движений пока не было</td></tr>`;
+    }catch(e){
+      body.innerHTML = `<tr><td colspan="8" style="padding:16px; color:var(--red);">${esc(e.message)}</td></tr>`;
+    }
+  });
+  document.getElementById("whMovesClose").addEventListener("click", ()=>
+    document.getElementById("whMovesOverlay").classList.remove("show"));
   ["whSearch","whSource"].forEach(id=>document.getElementById(id).addEventListener("input", ()=>{ if(whData) renderWarehouse(); }));
   document.getElementById("whSource").addEventListener("change", ()=>{ if(whData) renderWarehouse(); });
 
-  async function openWhConsume(article){
-    const group = whData.groups.find(g=>g.article === article);
+  async function openWhConsume(key){
+    // У безымянных позиций артикула нет — тогда ключ вида «__3», по индексу
+    const group = key.startsWith("__")
+      ? whData.groups[parseInt(key.slice(2), 10)]
+      : whData.groups.find(g=>g.article === key);
     if(!group) return;
     whConsumeItem = group.items.find(i=>!i.consumed);
     if(!whConsumeItem){ toast("Свободных изделий не осталось"); return; }
-    document.getElementById("whConsumeTitle").textContent = `Выдать: ${group.name}`;
+    document.getElementById("whConsumeTitle").textContent =
+      `Выдать № ${whConsumeItem.number || "—"}: ${group.name}`;
     document.getElementById("whOrderSearch").value = "";
     document.getElementById("whConsumeOverlay").classList.add("show");
     try{
       whPendingOrders = await api("/warehouse/pending-orders");
     }catch(e){ whPendingOrders = []; }
-    renderWhOrders(article);
+    renderWhOrders(group.article);
   }
 
   function renderWhOrders(article){
@@ -5255,39 +5428,100 @@
     const body = document.getElementById("salaryBody");
     body.innerHTML = `<tr><td colspan="5" style="padding:20px; text-align:center; color:var(--ink-soft);">Загрузка...</td></tr>`;
     try{
-      salarySummary = await api("/payroll/summary");
+      // Обе сводки сразу: в шапке нужны и суммы, и счётчики «без разноски»
+      const [sum, months] = await Promise.all([
+        api("/payroll/summary"),
+        api("/payroll/by-months").catch(()=>null)
+      ]);
+      salarySummary = sum;
+      if(months) monthsData = months;
     }catch(e){
       body.innerHTML = `<tr><td colspan="5" style="padding:20px; color:var(--red);">Ошибка загрузки: ${esc(e.message)}</td></tr>`;
       return;
     }
     const t = salarySummary.totals;
-    const card = (color, big, lbl, extra) => `
-      <div class="panel" style="border-left:4px solid ${color}; margin:0;">
-        <div style="font-size:11px; text-transform:uppercase; color:var(--ink-soft);">${lbl}</div>
-        <div style="font-family:var(--serif); font-size:24px;">${money(big)} ₸</div>
-        <div style="font-size:11.5px; color:var(--ink-soft); margin-top:4px;">${extra}</div>
+    // Главное — одна цифра: сколько людям должны прямо сейчас. Всё остальное
+    // мельче и ниже, иначе взгляд не находит, с чего начинать.
+    const people = salarySummary.employees.filter(e=>!e.isService);
+    const owedPeople = people.filter(e=>e.payableSum > 0).length;
+    document.getElementById("salaryHero").innerHTML = `
+      <div class="panel" style="margin:0; border-left:4px solid ${t.payableSum ? "var(--red)" : "var(--green)"};
+           display:flex; align-items:center; gap:20px; flex-wrap:wrap;">
+        <div>
+          <div style="font-size:12px; text-transform:uppercase; color:var(--ink-soft); letter-spacing:.4px;">Надо выплатить</div>
+          <div style="font-family:var(--serif); font-size:34px; line-height:1.1; color:${t.payableSum ? "var(--red)" : "var(--green)"};">
+            ${money(t.payableSum)} ₸</div>
+          <div style="font-size:12.5px; color:var(--ink-soft); margin-top:2px;">
+            ${t.payableSum ? `${owedPeople} чел. · принятые работы, ждут выплаты` : "Долгов нет"}</div>
+        </div>
+        <div style="margin-left:auto; text-align:right; font-size:12.5px; color:var(--ink-soft); line-height:1.9;">
+          Отложено <b style="color:var(--ink);">${money(t.pendingSum)} ₸</b> — ещё не приняты<br>
+          Выдано всего <b style="color:var(--ink);">${money(t.payoutsSum)} ₸</b>
+        </div>
       </div>`;
-    document.getElementById("salaryCards").innerHTML =
-      card("var(--amber)", t.pendingSum, "Отложено", "Работы сделаны, но ещё не приняты") +
-      card("var(--green)", t.payableSum, "К выплате", "Принятые работы, ждут выплаты") +
-      card("var(--navy)", t.payoutsSum, "Выдано на руки", "Всего выплачено после вычетов");
+
+    // Две отдельные полосы: что надо разнести и что закрыто возвратом.
+    // Это разные вещи, и складывать их в одну цифру нельзя.
+    const warn = [];
+    if(monthsData && monthsData.totals && monthsData.totals.undistributedCount){
+      warn.push(`<div class="panel" style="margin:0; background:#FFF8E6; border-color:var(--amber); display:flex; align-items:center; gap:10px; cursor:pointer;" id="salaryGoUnassigned">
+        <span style="font-size:18px;">⚠️</span>
+        <span style="font-size:13px; flex:1;"><b>Без разноски: ${monthsData.totals.undistributedCount} работ</b> — не указан исполнитель.
+          Это надо разнести, а не выплатить.</span>
+        <span style="font-size:12px; color:var(--ink-soft);">Показать →</span></div>`);
+    }
+    if(monthsData && monthsData.totals && monthsData.totals.closedCount){
+      warn.push(`<div class="panel" style="margin:0; background:#F4F4F0; display:flex; align-items:center; gap:10px;">
+        <span style="font-size:13px; color:var(--ink-soft);">Закрыто возвратом или отменой: <b>${monthsData.totals.closedCount}</b> работ
+          на ${money(monthsData.totals.closed)} ₸ — платить не нужно, разносить нечего.</span></div>`);
+    }
+    document.getElementById("salaryCards").style.gridTemplateColumns = "1fr";
+    document.getElementById("salaryCards").innerHTML = warn.join("");
+    const goUn = document.getElementById("salaryGoUnassigned");
+    if(goUn) goUn.addEventListener("click", ()=>{
+      workStatusFilter = "unassigned";
+      loadSalaryWorks();
+      document.getElementById("workStatusFilters").scrollIntoView({behavior:"smooth", block:"center"});
+    });
 
     if(!salarySummary.employees.length){
       body.innerHTML = `<tr><td colspan="5" style="padding:24px; text-align:center; color:var(--ink-soft);">
         Сотрудников пока нет. Нажмите «Сотрудники» и добавьте — тогда их можно будет назначать в «Производстве».</td></tr>`;
       return;
     }
-    body.innerHTML = salarySummary.employees.map(e=>`
-      <tr${e.isService ? ' style="opacity:.6;"' : ""}>
-        <td><b>${esc(e.name)}</b>${e.isService ? `<div style="font-size:10.5px; color:var(--ink-soft);">пометка из старой таблицы, в итог не входит</div>` : ""}</td>
+    // Сначала люди и по убыванию долга: наверху тот, кому должны больше всех.
+    // Служебные пометки уходят вниз и выглядят иначе — их нельзя выплатить.
+    const sorted = salarySummary.employees.slice().sort((a,b)=>
+      (a.isService?1:0) - (b.isService?1:0) || b.payableSum - a.payableSum || a.name.localeCompare(b.name,"ru"));
+
+    body.innerHTML = sorted.map(e=>{
+      if(e.isService){
+        const why = e.isClosed
+          ? "закрыто возвратом — платить не нужно"
+          : "исполнитель не указан — это надо разнести на людей";
+        return `<tr style="background:#FAFAF7; color:var(--ink-soft);">
+          <td><b>${esc(e.name)}</b>
+            <div style="font-size:10.5px;">пометка из старой таблицы, не человек · ${why}</div></td>
+          <td class="num">${e.pendingSum ? money(e.pendingSum) + " ₸" : "—"}</td>
+          <td class="num">${e.payableSum ? money(e.payableSum) + " ₸" : "—"}</td>
+          <td class="num">—</td>
+          <td style="white-space:nowrap;">
+            <button class="btn secondary" style="padding:4px 10px; font-size:12px;" data-entries="${esc(e.employeeId)}">Показать работы</button>
+          </td></tr>`;
+      }
+      return `
+      <tr>
+        <td><b>${esc(e.name)}</b></td>
         <td class="num">${e.pendingSum ? `${money(e.pendingSum)} ₸<div style="font-size:11px; color:var(--ink-soft);">${e.pendingCount} раб.${e.pendingStockSum ? ` · на запас ${money(e.pendingStockSum)} ₸` : ""}</div>` : "—"}</td>
-        <td class="num">${e.payableSum ? `<b style="color:var(--green);">${money(e.payableSum)} ₸</b><div style="font-size:11px; color:var(--ink-soft);">${e.payableCount} раб.</div>` : "—"}</td>
+        <td class="num">${e.payableSum ? `<b style="color:var(--red); font-size:15px;">${money(e.payableSum)} ₸</b><div style="font-size:11px; color:var(--ink-soft);">${e.payableCount} раб.</div>` : "—"}</td>
         <td class="num">${e.payoutsSum ? money(e.payoutsSum) + " ₸" : "—"}</td>
         <td style="white-space:nowrap;">
           <button class="btn secondary" style="padding:4px 10px; font-size:12px;" data-entries="${esc(e.employeeId)}">Начисления</button>
-          <button class="btn amber" style="padding:4px 10px; font-size:12px; ${e.payableSum ? "" : "opacity:.5;"}" data-payout="${esc(e.employeeId)}">Выплатить</button>
+          ${e.payableSum
+            ? `<button class="btn amber" style="padding:4px 10px; font-size:12px;" data-payout="${esc(e.employeeId)}">Выплатить</button>`
+            : `<button class="btn secondary" style="padding:4px 10px; font-size:12px; opacity:.45;" disabled title="Нечего выплачивать">Выплатить</button>`}
         </td>
-      </tr>`).join("");
+      </tr>`;}).join("");
 
     body.querySelectorAll("[data-entries]").forEach(b=>b.addEventListener("click", ()=>openPayEntries(b.dataset.entries)));
     body.querySelectorAll("[data-payout]").forEach(b=>b.addEventListener("click", ()=>openPayout(b.dataset.payout)));
@@ -5296,6 +5530,71 @@
     loadSalaryWorks();
     loadSalaryMonths();
   }
+
+  // ---------- Откат импорта ----------
+  // Единственное место, которое удаляет начисления. Поэтому сначала всегда
+  // показываем, что именно исчезнет, и просим подтвердить словом.
+  document.getElementById("btnLegacyRollback").addEventListener("click", async ()=>{
+    const box = document.getElementById("rollbackBody");
+    document.getElementById("rollbackError").textContent = "";
+    document.getElementById("rollbackActions").innerHTML = "";
+    box.innerHTML = "Считаю, что было залито...";
+    document.getElementById("rollbackOverlay").classList.add("show");
+    let s;
+    try{ s = await api("/legacy-import/imported"); }
+    catch(e){ box.innerHTML = `<span style="color:var(--red);">${esc(e.message)}</span>`; return; }
+
+    if(!s.entries && !s.payouts){
+      box.innerHTML = `Из старого файла ничего не залито — удалять нечего.`;
+      return;
+    }
+    box.innerHTML = `
+      <div class="panel" style="margin:0 0 12px; background:#FCEEEE; border-color:var(--red);">
+        <b style="font-size:14px;">Будет удалено</b>
+        <div style="margin-top:6px; line-height:1.9;">
+          Начислений: <b>${s.entries}</b> на <b>${money(s.entriesSum)} ₸</b><br>
+          Из них уже помеченных выплаченными: <b>${s.paidEntries}</b><br>
+          Выплат, созданных импортом: <b>${s.payouts}</b> на ${money(s.payoutsSum)} ₸
+        </div>
+      </div>
+      <div class="panel" style="margin:0 0 12px; background:#EAF6EE; border-color:var(--green);">
+        <b style="font-size:14px;">НЕ будет тронуто</b>
+        <div style="margin-top:6px; line-height:1.9;">
+          Живых начислений по заказам Kaspi: <b>${s.liveEntries}</b><br>
+          ${s.blocked ? `Импортных строк, уже вошедших в настоящую выплату: <b>${s.blocked}</b> на ${money(s.blockedSum)} ₸ — оставим` : "Ваши выплаты и заказы"}
+        </div>
+      </div>
+      ${s.employees.length ? `<b style="font-size:13px;">По людям</b>
+        <table style="width:100%; margin-top:6px;"><thead><tr><th>Кто</th><th class="num">Работ</th><th class="num">Сумма</th></tr></thead>
+        <tbody>${s.employees.map(e=>`<tr><td>${esc(e.name)}</td><td class="num">${e.count}</td><td class="num">${money(e.sum)} ₸</td></tr>`).join("")}</tbody></table>` : ""}
+      <div style="margin-top:14px; padding:10px 12px; background:#FFF8E6; border:1px solid var(--amber); border-radius:8px;">
+        Это действие <b>нельзя отменить</b>. После него залейте файл заново — суммы возьмутся из колонки «К выплате».<br>
+        <div style="margin-top:8px;">Чтобы подтвердить, впишите слово <b>УДАЛИТЬ</b>:
+          <input type="text" id="rollbackConfirm" style="width:140px; margin-left:6px;" placeholder="УДАЛИТЬ"></div>
+      </div>`;
+    document.getElementById("rollbackActions").innerHTML =
+      `<button class="btn" id="rollbackGo" style="background:var(--red); color:#fff;">Удалить залитое</button>`;
+    document.getElementById("rollbackGo").addEventListener("click", async ()=>{
+      const word = document.getElementById("rollbackConfirm").value.trim();
+      if(word !== "УДАЛИТЬ"){
+        document.getElementById("rollbackError").textContent = "Впишите слово УДАЛИТЬ, чтобы подтвердить";
+        return;
+      }
+      const btn = document.getElementById("rollbackGo");
+      btn.disabled = true; btn.textContent = "Удаляю...";
+      try{
+        const r = await api("/legacy-import/rollback", { method:"POST", body: JSON.stringify({ confirm:"УДАЛИТЬ" })});
+        document.getElementById("rollbackOverlay").classList.remove("show");
+        toast(r.message || "Готово");
+        loadSalary();
+      }catch(e){
+        document.getElementById("rollbackError").textContent = e.message;
+        btn.disabled = false; btn.textContent = "Удалить залитое";
+      }
+    });
+  });
+  document.getElementById("rollbackClose").addEventListener("click", ()=>
+    document.getElementById("rollbackOverlay").classList.remove("show"));
 
   // ---------- Перенос из старой системы ----------
   // Excel разбираем прямо в браузере, на сервер уходит уже готовый список строк
