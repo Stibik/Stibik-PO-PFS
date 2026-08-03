@@ -909,7 +909,8 @@
       <div class="toolbar">
         <button class="btn amber" id="btnStockProduction" title="То же окно, что «Положить на склад» в разделе Склад">+ Сшить на запас</button>
 
-        <button class="btn secondary" id="btnManageEmployees" style="margin-left:auto;">Сотрудники</button>
+        <button class="btn secondary" id="btnPullMissing" style="margin-left:auto;" title="Заказы, которых нет в производстве">↧ Подтянуть заказы</button>
+        <button class="btn secondary" id="btnManageEmployees">Сотрудники</button>
       </div>
       <div id="prodStats" style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:14px;"></div>
       <div class="panel" style="display:flex; gap:12px; flex-wrap:wrap; align-items:center; background:#F7FAFF; border-color:#CFE0F5;">
@@ -6888,6 +6889,23 @@
   let prodStep = localStorage.getItem("prodStep") || "pending";
   let selectedProdIds = new Set();
   let prodDefaultEmployeeId = null, prodDefaultEmployeeName = "";
+
+  // Заказы, по которым нет записи в производстве — обычно старые, пришедшие
+  // до того, как эта запись стала создаваться автоматически
+  document.getElementById("btnPullMissing").addEventListener("click", async ()=>{
+    let info;
+    try{ info = await api("/dispatch/pull-missing", { method:"POST", body: JSON.stringify({}) }); }
+    catch(e){ toast("Не получилось: " + e.message); return; }
+    if(!info.count){ toast("Все заказы уже в производстве"); return; }
+    const list = info.examples.map(o=>`№${o.number ?? "—"} ${String(o.name||"").slice(0,32)}`).join("\n");
+    if(!confirm(`Подтянуть в производство ${info.count} заказов?\n\n${list}${info.count > 10 ? "\n…и другие" : ""}\n\n` +
+      `Они появятся в «Ждут решения» — там выберете, делать заново или брать со склада.`)) return;
+    try{
+      const r = await api("/dispatch/pull-missing", { method:"POST", body: JSON.stringify({ confirm: true }) });
+      toast(r.message);
+      loadProduction();
+    }catch(e){ toast("Не получилось: " + e.message); }
+  });
 
   async function loadProduction(){
     const body = document.getElementById("prodList");
