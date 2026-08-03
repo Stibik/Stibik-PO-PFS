@@ -1647,8 +1647,9 @@
   <div class="modal" style="max-width:520px;">
     <h3>Сделать на запас</h3>
     <div style="font-size:12.5px; color:var(--ink-soft); margin-bottom:12px;">
-      Изделие встанет на склад без привязки к заказу. Начисление создастся сразу,
-      но останется отложенным — заплатите, когда сами решите.
+      Создаётся <b>задание</b>: швея шьёт чехол. Он появится в «Производстве», и когда
+      будет готов — отметите «Сшито», и изделие ляжет на склад со своим номером.
+      Денег за пошив не начисляется: платим забивщику, когда изделие забьют.
     </div>
     <div class="grid2">
       <div class="full"><label>Группа</label><select id="spGroup" style="width:100%;"></select></div>
@@ -1659,6 +1660,9 @@
       <div class="full"><label>Комментарий</label><input type="text" id="spComment" style="width:100%;"></div>
     </div>
     <div id="spPreview" style="margin-top:10px; font-size:13px;"></div>
+    <label id="spNoRateWrap" style="display:none; margin-top:8px; font-size:12.5px;">
+      <input type="checkbox" id="spNoRate"> Расценки нет — всё равно создать, сумму проставлю позже
+    </label>
     <div class="error" id="spError"></div>
     <div class="modal-actions">
       <div></div>
@@ -6696,10 +6700,14 @@
     document.getElementById("spPreview").innerHTML = "";
     document.getElementById("spError").textContent = "";
     document.getElementById("spQty").value = "1";
+    document.getElementById("spNoRate").checked = false;
+    document.getElementById("spNoRateWrap").style.display = "none";
     if(!employeesList.length){ try{ employeesList = await api("/employees"); }catch(e){} }
     if(!catalogItems.length){ try{ catalogItems = await api("/catalog"); }catch(e){} }
+    // «не определено» и «Без оплаты» — пометки из старой таблицы, не люди
     document.getElementById("spEmployee").innerHTML = `<option value="">— выберите —</option>` +
-      employeesList.map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join("");
+      employeesList.filter(e=>!isServiceName(e.name))
+        .map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join("");
     // Выбор сужается по шагам: группа → материал → товар
     fillCascade(document.getElementById("spGroup"), document.getElementById("spMaterial"), document.getElementById("spItem"));
     document.getElementById("spItem").onchange = ()=>{
@@ -6714,11 +6722,15 @@
     if(!spItem){ box.innerHTML = ""; return; }
     const qty = parseFloat(document.getElementById("spQty").value) || 0;
     if(!spItem.laborRate){
-      box.innerHTML = `<span style="color:var(--red);">У товара не заполнена «Расценка труда» в Справочнике — начислить не получится.</span>`;
+      // Работу всё равно делают — просто попросим согласиться, что суммы пока нет
+      box.innerHTML = `<span style="color:var(--amber);">У товара не заполнена «Расценка труда» в Справочнике.
+        Задание создать можно — сумму проставите позже.</span>`;
+      document.getElementById("spNoRateWrap").style.display = "block";
       return;
     }
-    box.innerHTML = `К начислению: <b>${money(spItem.laborRate)} × ${money(qty)} = ${money(spItem.laborRate * qty)} ₸</b>
-      <span style="color:var(--ink-soft);">(останется отложенным, пока не примете работу)</span>`;
+    document.getElementById("spNoRateWrap").style.display = "none";
+    box.innerHTML = `Забивщику за это изделие: <b>${money(spItem.laborRate)} × ${money(qty)} = ${money(spItem.laborRate * qty)} ₸</b>
+      <span style="color:var(--ink-soft);">(начислится, когда забьют; за пошив не платим)</span>`;
   }
   document.getElementById("spQty").addEventListener("input", updateSpPreview);
   document.getElementById("spCancel").addEventListener("click", ()=>document.getElementById("stockProdOverlay").classList.remove("show"));
@@ -6727,16 +6739,25 @@
     if(!spItem){ err.textContent = "Выберите товар из Справочника"; return; }
     const employeeId = document.getElementById("spEmployee").value;
     if(!employeeId){ err.textContent = "Выберите исполнителя"; return; }
+    err.textContent = "";
     try{
       const r = await api("/payroll/stock-production", { method:"POST", body: JSON.stringify({
         employeeId, itemId: spItem.id,
         qty: parseFloat(document.getElementById("spQty").value) || 1,
-        comment: document.getElementById("spComment").value
+        comment: document.getElementById("spComment").value,
+        confirmNoRate: document.getElementById("spNoRate").checked
       })});
       document.getElementById("stockProdOverlay").classList.remove("show");
-      toast(`На склад: ${r.entry.productName} ×${money(r.entry.qty)}, начислено ${money(r.entry.amount)} ₸ (отложено)`);
+      toast(r.message || "Задание создано");
       loadProduction();
-    }catch(e){ err.textContent = e.message; }
+    }catch(e){
+      err.textContent = e.message;
+      // Расценки нет — показываем галочку согласия прямо здесь, чтобы не
+      // гонять человека в Справочник посреди работы
+      if(String(e.message).includes("не задана расценка")){
+        document.getElementById("spNoRateWrap").style.display = "block";
+      }
+    }
   });
 
   // ---------- Подсказки «i» в каждом разделе ----------
@@ -6898,12 +6919,31 @@
     let info;
     try{ info = await api("/dispatch/pull-missing", { method:"POST", body: JSON.stringify({}) }); }
     catch(e){ toast("Не получилось: " + e.message); return; }
-    if(!info.count){ toast("Все заказы уже в производстве"); return; }
-    const list = info.examples.map(o=>`№${o.number ?? "—"} ${String(o.name||"").slice(0,32)}`).join("\n");
-    if(!confirm(`Подтянуть в производство ${info.count} заказов?\n\n${list}${info.count > 10 ? "\n…и другие" : ""}\n\n` +
-      `Они появятся в «Ждут решения» — там выберете, делать заново или брать со склада.`)) return;
+    // Показываем разбор целиком: без него непонятно, почему «нечего подтягивать»,
+    // хотя в Kaspi заказы явно есть
+    const разбор = `Активных заказов в Kaspi: ${info.activeTotal}\n` +
+      `Сейчас в очереди «Ждут решения»: ${info.inQueue}\n` +
+      `Без записи в производстве: ${info.noRowCount}\n` +
+      `Запись есть, но закрыта (а заказ ещё в работе): ${info.closedRowCount}`;
+
+    if(!info.noRowCount && !info.closedRowCount){
+      alert(`Подтягивать нечего.\n\n${разбор}`);
+      return;
+    }
+    let includeClosed = false;
+    if(!info.noRowCount && info.closedRowCount){
+      const cl = info.closedExamples.map(o=>`№${o.number ?? "—"} ${String(o.name||"").slice(0,32)}`).join("\n");
+      if(!confirm(`${разбор}\n\nУ этих заказов запись в производстве уже закрыта — например, помечена ` +
+        `«перекрыто» или «со склада», хотя заказ в Kaspi ещё в работе:\n\n${cl}\n\nВернуть их в очередь?`)) return;
+      includeClosed = true;
+    }else{
+      const list = info.examples.map(o=>`№${o.number ?? "—"} ${String(o.name||"").slice(0,32)}`).join("\n");
+      const msg = `${разбор}\n\nПодтянуть ${info.noRowCount}:\n${list}${info.noRowCount > 10 ? "\n…и другие" : ""}` +
+        (info.closedRowCount ? `\n\nЕщё ${info.closedRowCount} с закрытой записью — нажмите «Отмена» и повторите, если нужны и они.` : "");
+      if(!confirm(msg)) return;
+    }
     try{
-      const r = await api("/dispatch/pull-missing", { method:"POST", body: JSON.stringify({ confirm: true }) });
+      const r = await api("/dispatch/pull-missing", { method:"POST", body: JSON.stringify({ confirm: true, includeClosed }) });
       toast(r.message);
       loadProduction();
     }catch(e){ toast("Не получилось: " + e.message); }
