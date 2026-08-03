@@ -581,6 +581,25 @@ export function ensureSchema() {
   safeAddColumn("price_items", "tax_percent REAL");
 
   safeAddColumn("price_items", "labor_rate REAL");     // РАСЦЕНКА ТРУДА — ставка за 1 шт, читает раздел "Зарплата"
+  // Изделие делают двое: швея шьёт чехол, забивщик набивает. Раньше расценка
+  // была одна и вся уходила одному человеку. Теперь labor_rate — это ОБЩАЯ
+  // сумма за изделие, а sew_rate — доля швеи. Забивщику достаётся остаток,
+  // поэтому итог по изделию не меняется, как ни дели.
+  safeAddColumn("price_items", "sew_rate REAL DEFAULT 0");
+
+  // Стадия изделия на складе: сшито (чехол готов) → забито (набито, готово).
+  // Бывает, что сшито, но ещё не забито — это разные работы и разные люди.
+  safeAddColumn("warehouse_stock", "stage TEXT DEFAULT 'ready'");
+  safeAddColumn("warehouse_stock", "sewn_by TEXT");        // кто сшил
+  safeAddColumn("warehouse_stock", "filled_by TEXT");      // кто забил
+  safeAddColumn("warehouse_stock", "sewn_at TEXT");
+  safeAddColumn("warehouse_stock", "filled_at TEXT");
+  safeAddColumn("warehouse_stock", "sew_entry_id TEXT");   // начисление швее
+  safeAddColumn("warehouse_stock", "fill_entry_id TEXT");  // начисление забивщику
+  // Брак: изделие испортили — отдельное место, чтобы не мешалось в остатках
+  safeAddColumn("warehouse_stock", "defect_reason TEXT");
+  safeAddColumn("warehouse_stock", "deleted_at TEXT");
+  safeAddColumn("warehouse_stock", "deleted_by TEXT");
   safeAddColumn("price_items", "material_cost REAL");  // Затраты на материал
   safeAddColumn("price_items", "misc_cost REAL");      // Прочие затраты
   safeAddColumn("price_items", "rags_cost REAL");      // Ветошь (расходники на производстве)
