@@ -247,14 +247,27 @@ router.post("/from-production/:productionId", (req, res) => {
 // Работа на запас: изделие уходит на склад, начисление создаётся сразу,
 // но остаётся отложенным — платим, когда сами решим (так договорились).
 router.post("/stock-production", (req, res) => {
+ try {
   const b = req.body || {};
-  if (!b.employeeId || !db.prepare("SELECT id FROM employees WHERE id = ?").get(b.employeeId)) {
-    return res.status(400).json({ error: "no_employee", message: "Выберите, кто шьёт" });
+  const emp = b.employeeId ? db.prepare("SELECT * FROM employees WHERE id = ?").get(b.employeeId) : null;
+  if (!emp) return res.status(400).json({ error: "no_employee", message: "Выберите, кто шьёт" });
+  // «не определено» и «Без оплаты» — пометки из старой таблицы, а не люди.
+  // Вешать на них работу нельзя, иначе потом непонятно, кто шил.
+  if (isServiceEmployee(emp.name)) {
+    return res.status(400).json({ error: "service_employee",
+      message: `«${emp.name}» — это пометка из старой таблицы, а не сотрудник. Выберите настоящего человека.` });
   }
   const qty = num(b.qty, 1);
   if (qty <= 0) return res.status(400).json({ error: "bad_qty", message: "Количество должно быть больше нуля" });
   const { rate, found, item } = findRate(b.itemId, b.article);
   if (!found) return res.status(400).json({ error: "item_not_found", message: "Товар не найден в Справочнике — расценка берётся только оттуда" });
+  // Расценки может не быть — работа всё равно делается. Тогда просим осознанно
+  // согласиться: изделие сошьют, а сумму проставите потом, когда решите.
+  if (!(rate > 0) && b.confirmNoRate !== true) {
+    return res.status(400).json({ error: "no_rate",
+      message: `У товара «${item.name || item.article}» не задана расценка в Справочнике. ` +
+               `Можно создать задание без неё — тогда сумму проставите позже.` });
+  }
 
   // «Сшить на запас» — это ЗАДАНИЕ, а не готовое изделие. Оно встаёт в
   // «Производство» и ждёт, пока швея действительно сошьёт. Только после отметки
@@ -272,7 +285,15 @@ router.post("/stock-production", (req, res) => {
   logAudit({ user: req.session.username, action: "payroll_stock_production",
              comment: `Задание на запас: ${item.name || item.article} ×${qty}, шьёт ${who}` });
   res.json({ ok: true, productionId: prodId, rate,
-             message: `Задание создано: шьёт ${who}. Появилось в «Производстве» — отметьте «Сшито», когда будет готово.` });
+             message: `Задание создано: шьёт ${who}. Появилось в «Производстве» — отметьте «Сшито», когда будет готово.` +
+                      (rate > 0 ? "" : " Расценка не задана — проставьте её в Справочнике до выплаты.") });
+ } catch (err) {
+  // Без этого сервер отдавал голый HTTP 500, и понять причину было нельзя
+  console.error("[payroll/stock-production] Ошибка:", err.message, err.stack);
+  res.status(500).json({ error: "internal_error",
+    message: "Не получилось создать задание: " + err.message +
+             ". Обычно это значит, что на сервере старая версия db.js — залейте свежую." });
+ }
 });
 
 // Ручное начисление (доработка, ремонт, нестандартная работа)
