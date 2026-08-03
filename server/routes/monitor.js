@@ -112,6 +112,14 @@ router.post("/take/:productionId", (req, res) => {
                 VALUES (?,?,?,?,'assign','employee','не разнесено',?,?)`)
       .run(uid("plog"), entryId, now, req.session.username, empName, "Взял заказ в мониторе");
   }
+  // Если это заявка на забивку сшитого чехла — сразу отмечаем на складе,
+  // кто его забивает. Иначе изделие так и висело бы «сшито, не забито».
+  if (prod.warehouse_stock_id) {
+    db.prepare("UPDATE warehouse_stock SET stage = 'ready', filled_by = ?, filled_at = ?, fill_entry_id = COALESCE(fill_entry_id, ?) WHERE id = ?")
+      .run(employeeId, now,
+           db.prepare("SELECT id FROM payroll_entries WHERE production_id = ? AND status != 'cancelled'").get(prod.id)?.id || null,
+           prod.warehouse_stock_id);
+  }
   logAudit({ user: req.session.username, action: "monitor_take", orderId: prod.order_id, comment: prod.product_name || prod.article });
   res.json({ ok: true });
 });
