@@ -306,6 +306,43 @@ router.post("/:id/stage", (req, res) => {
              message: `Готово. ${empName(employeeId)} получит ${amount} ₸ за забивку — после выдачи в заказ.` });
 });
 
+// Отправить сшитый чехол на забивку. Он встаёт в общую очередь производства
+// и виден забивщикам так же, как обычный заказ: взял — забил — получил деньги.
+router.post("/:id/to-production", (req, res) => {
+  const row = db.prepare("SELECT * FROM warehouse_stock WHERE id = ?").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  if (row.consumed) return res.status(400).json({ error: "consumed", message: "Изделие уже выдано в заказ" });
+  if ((row.stage || "ready") !== "sewn") {
+    return res.status(400).json({ error: "bad_stage", message: "На забивку отправляют только сшитое и ещё не забитое" });
+  }
+  const exists = db.prepare("SELECT id FROM production WHERE warehouse_stock_id = ? AND decision IS NULL").get(row.id);
+  if (exists) return res.status(400).json({ error: "already", message: "Это изделие уже в очереди на забивку" });
+
+  const now = new Date().toISOString();
+  const forEmployee = req.body?.employeeId
+    && db.prepare("SELECT id FROM employees WHERE id = ?").get(req.body.employeeId)
+    ? req.body.employeeId : null;
+  const comment = str(req.body?.comment, 500) || null;
+  const prodId = uid("prod");
+  db.prepare(`INSERT INTO production (id, warehouse_stock_id, article, product_name, quantity, shop,
+              stage, published, published_at, published_by, published_for, manager_comment, created_at)
+              VALUES (?,?,?,?,?,?, 'pending', 1, ?, ?, ?, ?, ?)`)
+    .run(prodId, row.id, row.article, row.product_name, num(row.qty) || 1, row.shop || null,
+         now, req.session.username, forEmployee,
+         comment || `Забить со склада №${row.stock_number || "—"}`, now);
+
+  logMove(row, req.session.username, "edit", {
+    employeeId: forEmployee,
+    comment: `Отправлено на забивку${forEmployee ? ` — ${empName(forEmployee)}` : " (всем)"}`
+  });
+  logAudit({ user: req.session.username, action: "warehouse_to_production",
+             comment: `№${row.stock_number}: на забивку${forEmployee ? ` (${empName(forEmployee)})` : ""}` });
+  res.json({ ok: true, productionId: prodId,
+             message: forEmployee
+               ? `Отправлено на забивку — ${empName(forEmployee)}. Появится у него в мониторе.`
+               : "Отправлено на забивку. Появится в очереди у забивщиков — заберёт кто первый." });
+});
+
 // Брак: изделие испортили. Со склада уходит, начисления отменяются —
 // платить за испорченное не за что.
 router.post("/:id/defect", (req, res) => {
