@@ -1083,15 +1083,24 @@
       <div id="whUnnamedWarn"></div>
       <div class="panel" style="padding:0; overflow:hidden;">
         <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border-bottom:1px solid var(--line); flex-wrap:wrap; gap:8px;">
-          <span style="font-size:12.5px; color:var(--ink-soft);">Нажмите на строку, чтобы увидеть каждую штуку с её номером</span>
+          <span style="display:flex; gap:6px;">
+            <button class="pill" id="whViewList" style="font-size:12.5px;">По номерам</button>
+            <button class="pill" id="whViewGroups" style="font-size:12.5px;">По товарам</button>
+          </span>
           <span style="display:flex; gap:8px;">
             <button class="btn secondary" id="whExport" style="padding:5px 12px; font-size:12px;">Выгрузить в Excel</button>
             <button class="btn secondary" id="whMoves" style="padding:5px 12px; font-size:12px;">История движения</button>
           </span>
         </div>
+        <div class="panel" id="whBulkBar" style="display:none; margin:0; border-radius:0; background:var(--navy); color:#fff; align-items:center; gap:10px; flex-wrap:wrap;">
+          <b id="whBulkCount" style="font-size:13px;"></b>
+          <button class="btn amber" id="whBulkToFill" style="padding:5px 12px; font-size:12px;">🥊 На забивку</button>
+          <button class="btn secondary" id="whBulkDelete" style="padding:5px 12px; font-size:12px; color:var(--red);">✕ Удалить</button>
+          <button class="btn secondary" id="whBulkClear" style="padding:5px 12px; font-size:12px; margin-left:auto;">Снять выбор</button>
+        </div>
         <div class="tbl-wrap">
           <table>
-            <thead><tr><th style="width:20px;"></th><th>Фото</th><th>Товар</th><th>Группа</th><th class="num">На складе</th><th>Откуда</th><th class="num">Ждёт выплаты</th><th class="num">По рознице</th><th></th></tr></thead>
+            <thead id="whHead"></thead>
             <tbody id="whBody"></tbody>
           </table>
         </div>
@@ -5057,6 +5066,48 @@
         ${whData.groups.length ? "Ничего не найдено" : "Склад пуст. Сюда попадает то, что сшили на запас, и то, что вернулось с возвратов."}</td></tr>`;
       return;
     }
+    // Вид «по номерам» — плоский список, отсортированный по номеру. Именно его
+    // просили: номер должен быть на виду, а не прятаться внутри группы.
+    if(whView === "list"){
+      const rows = [];
+      groups.forEach(g=>g.items.filter(i=>!i.consumed).forEach(i=>rows.push({ g, i })));
+      rows.sort((a,b)=>(a.i.number || 0) - (b.i.number || 0));
+      document.getElementById("whHead").innerHTML = `<tr>
+        <th style="width:28px;"><input type="checkbox" id="whCheckAll"></th>
+        <th class="num" style="width:70px;">№</th><th>Фото</th><th>Товар</th>
+        <th>Стадия</th><th>Откуда</th><th>Кто</th><th class="num">Ждёт выплаты</th><th></th></tr>`;
+      if(!rows.length){
+        body.innerHTML = `<tr><td colspan="9" style="padding:20px; text-align:center; color:var(--ink-soft);">На складе пусто</td></tr>`;
+        updateWhBulk(); return;
+      }
+      body.innerHTML = rows.map(({g, i})=>`
+        <tr${i.stage === "defect" ? ' style="opacity:.6;"' : ""}>
+          <td><input type="checkbox" data-wsel="${esc(i.id)}" ${whSelected.has(i.id)?"checked":""}></td>
+          <td class="num mono"><b>${i.number || "—"}</b></td>
+          <td>${g.photo?`<img class="thumb" src="${esc(g.photo)}">`:`<div class="thumb-empty">—</div>`}</td>
+          <td><b>${esc(g.name)}</b>
+            <div style="font-size:11px; color:var(--ink-soft);">${esc(g.article || "без артикула")}</div></td>
+          <td>${whStageBadge(i) || `<span style="font-size:11.5px; color:var(--ink-soft);">готово</span>`}</td>
+          <td style="font-size:12px;">${esc(i.sourceLabel)}
+            <div style="font-size:11px; color:var(--ink-soft);">${esc(String(i.createdAt||"").slice(0,10))}</div></td>
+          <td style="font-size:12px;">${i.sewnByName ? esc(i.sewnByName) : "—"}
+            ${i.filledByName ? `<div style="font-size:11px; color:var(--ink-soft);">забил ${esc(i.filledByName)}</div>` : ""}</td>
+          <td class="num" style="font-size:12px;">${whMoneyCell(i)}</td>
+          <td style="white-space:nowrap;">
+            ${i.nextAction === "fill"
+              ? `<button class="btn amber" style="padding:3px 9px; font-size:11.5px;" data-wh-send="${esc(i.id)}">На забивку</button>`
+              : i.nextAction === "issue"
+                ? `<button class="btn amber" style="padding:3px 9px; font-size:11.5px;" data-wh-give-one="${esc(i.id)}">Выдать</button>` : ""}
+            <button class="btn secondary" style="padding:3px 9px; font-size:11.5px;" data-wh-edit="${esc(i.id)}" title="Изменить">✎</button>
+            <button class="btn secondary" style="padding:3px 9px; font-size:11.5px; color:var(--red);" data-wh-del="${esc(i.id)}" title="Удалить">✕</button>
+          </td>
+        </tr>`).join("");
+      window.__whRows = rows.map(r=>r.i);
+      bindWhRowActions(body);
+      return;
+    }
+
+    document.getElementById("whHead").innerHTML = `<tr><th style="width:20px;"></th><th>Фото</th><th>Товар</th><th>Группа</th><th class="num">На складе</th><th>Откуда</th><th class="num">Ждёт выплаты</th><th class="num">По рознице</th><th></th></tr>`;
     body.innerHTML = groups.map((g, gi)=>{
       const key = g.article || ("__" + gi);
       const free = g.items.filter(i=>!i.consumed);
@@ -5109,6 +5160,7 @@
       return head + rows;
     }).join("");
 
+    bindWhRowActions(body);
     body.querySelectorAll("[data-wh-give]").forEach(b=>b.addEventListener("click", (ev)=>{
       ev.stopPropagation(); openWhConsume(b.dataset.whGive);
     }));
@@ -5127,6 +5179,96 @@
       if(arrow) arrow.textContent = open ? "▸" : "▾";
     }));
   }
+
+  // Вид склада: список по номерам или группы по товарам
+  let whView = localStorage.getItem("whView") || "list";
+  let whSelected = new Set();
+
+  function bindWhRowActions(body){
+    body.querySelectorAll("[data-wh-give-one]").forEach(b=>b.addEventListener("click", ()=>openWhConsumeOne(b.dataset.whGiveOne)));
+    body.querySelectorAll("[data-wh-send]").forEach(b=>b.addEventListener("click", ()=>whSendToProduction(b.dataset.whSend)));
+    body.querySelectorAll("[data-wh-edit]").forEach(b=>b.addEventListener("click", ()=>openWhEdit(b.dataset.whEdit)));
+    body.querySelectorAll("[data-wh-del]").forEach(b=>b.addEventListener("click", ()=>whDelete(b.dataset.whDel)));
+    body.querySelectorAll("[data-wsel]").forEach(c=>c.addEventListener("change", ()=>{
+      if(c.checked) whSelected.add(c.dataset.wsel); else whSelected.delete(c.dataset.wsel);
+      updateWhBulk();
+    }));
+    const all = document.getElementById("whCheckAll");
+    if(all){
+      all.checked = false;
+      all.addEventListener("change", ()=>{
+        const rows = window.__whRows || [];
+        if(all.checked) rows.forEach(i=>whSelected.add(i.id)); else whSelected.clear();
+        body.querySelectorAll("[data-wsel]").forEach(c=>{ c.checked = whSelected.has(c.dataset.wsel); });
+        updateWhBulk();
+      });
+    }
+    updateWhBulk();
+  }
+
+  function updateWhBulk(){
+    const bar = document.getElementById("whBulkBar");
+    if(!bar) return;
+    // Выделение чистим от строк, которых уже нет на экране
+    const present = new Set((window.__whRows || []).map(i=>i.id));
+    whSelected = new Set(Array.from(whSelected).filter(id=>present.has(id)));
+    bar.style.display = whSelected.size ? "flex" : "none";
+    if(whSelected.size) document.getElementById("whBulkCount").textContent = `Выбрано: ${whSelected.size}`;
+  }
+
+  function setWhView(v){
+    whView = v;
+    localStorage.setItem("whView", v);
+    whSelected.clear();
+    document.getElementById("whViewList").classList.toggle("active", v === "list");
+    document.getElementById("whViewGroups").classList.toggle("active", v === "groups");
+    renderWarehouse();
+  }
+  document.getElementById("whViewList").addEventListener("click", ()=>setWhView("list"));
+  document.getElementById("whViewGroups").addEventListener("click", ()=>setWhView("groups"));
+  document.getElementById("whViewList").classList.toggle("active", whView === "list");
+  document.getElementById("whViewGroups").classList.toggle("active", whView === "groups");
+
+  document.getElementById("whBulkClear").addEventListener("click", ()=>{
+    whSelected.clear();
+    document.querySelectorAll("[data-wsel]").forEach(c=>{ c.checked = false; });
+    updateWhBulk();
+  });
+
+  document.getElementById("whBulkToFill").addEventListener("click", async ()=>{
+    const ids = Array.from(whSelected);
+    const rows = (window.__whRows || []).filter(i=>ids.includes(i.id) && i.nextAction === "fill");
+    if(!rows.length){ toast("Среди выбранных нет сшитых, ждущих забивки"); return; }
+    const pick = await pickEmployee({ title: "Кому отправить на забивку?", allowAll: true, withComment: true });
+    if(!pick) return;
+    let ok = 0;
+    for(const i of rows){
+      try{
+        await api(`/warehouse/${encodeURIComponent(i.id)}/to-production`, { method:"POST",
+          body: JSON.stringify({ employeeId: pick.employeeId, comment: pick.comment }) });
+        ok++;
+      }catch(e){}
+    }
+    whSelected.clear();
+    toast(`Отправлено на забивку: ${ok}`);
+    loadWarehouse();
+  });
+
+  document.getElementById("whBulkDelete").addEventListener("click", async ()=>{
+    const ids = Array.from(whSelected);
+    const rows = (window.__whRows || []).filter(i=>ids.includes(i.id));
+    if(!confirm(`Удалить ${ids.length} позиций со склада?\n\n` +
+      `Номера: ${rows.slice(0,10).map(i=>i.number).join(", ")}${ids.length>10?" и другие":""}\n\n` +
+      `Начисления по ним будут отменены. Уже оплаченные пропустятся.`)) return;
+    let ok = 0, skip = 0;
+    for(const id of ids){
+      try{ await api(`/warehouse/${encodeURIComponent(id)}`, { method:"DELETE" }); ok++; }
+      catch(e){ skip++; }
+    }
+    whSelected.clear();
+    toast(`Удалено: ${ok}` + (skip ? `, пропущено: ${skip}` : ""));
+    loadWarehouse();
+  });
 
   // Стадия изделия: сшито — значит работа ещё не закончена
   const WH_STAGE_STYLE = {
@@ -6196,6 +6338,9 @@
     if(workStatusFilter === "unassigned") p.set("unassigned", "1");
     else if(workStatusFilter === "archived") p.set("archived", "1");
     else if(workStatusFilter) p.set("status", workStatusFilter);
+    // Заказы без начисления — это тоже работа, которую надо разнести.
+    // В архиве их не показываем: там разбирают уже закрытое.
+    if(workStatusFilter !== "archived") p.set("includeOrders", "1");
     try{
       workRows = await api("/payroll/entries" + (p.toString() ? "?" + p.toString() : ""));
     }catch(e){
@@ -6277,6 +6422,8 @@
         ? `<span class="mono" style="font-size:11.5px;">${esc(r.kaspiCode)}</span>` +
           (r.orderDate ? `<div style="font-size:11px; color:var(--ink-soft);">${esc(String(r.orderDate).slice(0,10))}</div>` : "")
         : `<span style="color:var(--ink-soft); font-size:11.5px;">${r.kind === "stock" ? "на запас" : "без заказа"}</span>`;
+      const noEntry = r.noEntry
+        ? `<div style="font-size:10.5px; color:var(--amber);">начисления ещё нет</div>` : "";
       const who = (r.employeeName && !r.employeeIsService)
         ? esc(r.employeeName) + (r.assignedBy ? `<div style="font-size:10.5px; color:var(--ink-soft);">разнёс: ${esc(r.assignedBy)}</div>` : "")
         : `<span style="color:var(--red); font-weight:600;" title="Работа без разноски — не указан исполнитель">Без разноски</span>` +
@@ -6287,7 +6434,7 @@
         <td class="num mono" style="font-size:12px;">${esc(num)}</td>
         <td>${kaspi}</td>
         <td>${esc(r.productName || "—")}
-          <div style="font-size:11px; color:var(--ink-soft);">${esc(r.article || "без артикула")}</div></td>
+          <div style="font-size:11px; color:var(--ink-soft);">${esc(r.article || "без артикула")}</div>${noEntry}</td>
         <td style="font-size:12px;">${r.kind === "stock" ? "на запас" : (r.shop ? esc(r.shop) : "заказ")}</td>
         <td class="num">${money(r.qty)}${r.reportedWeight ? `<div style="font-size:11px; color:var(--ink-soft);">${money(r.reportedWeight)} кг</div>` : ""}</td>
         <td class="num">${r.needsRate ? `<span style="color:var(--red); font-size:11.5px;">не задана</span>` : money(r.rate)}</td>
@@ -6296,7 +6443,9 @@
         <td>${payBadge(r.status)}${r.archivedAt ? `<div style="font-size:10.5px; color:var(--ink-soft);">в архиве</div>` : ""}</td>
         <td style="white-space:nowrap;">
           ${r.status === "pending" && !r.archivedAt ? `<button class="btn amber" style="padding:3px 10px; font-size:11.5px;" data-wacc="${esc(r.id)}">Принята</button>` : ""}
-          <button class="btn secondary" style="padding:3px 8px; font-size:11.5px;" data-wedit="${esc(r.id)}" title="Изменить и посмотреть историю">✏️</button>
+          ${r.noEntry
+            ? `<span style="font-size:11px; color:var(--ink-soft);">отметьте и разнесите</span>`
+            : `<button class="btn secondary" style="padding:3px 8px; font-size:11.5px;" data-wedit="${esc(r.id)}" title="Изменить и посмотреть историю">✏️</button>`}
         </td>
       </tr>`;}).join("");
 
@@ -6361,7 +6510,7 @@
     try{
       const r = await api("/payroll/entries/assign", { method:"POST",
         body: JSON.stringify({ ids: Array.from(workSelected), employeeId }) });
-      toast(`Разнесено на ${r.employeeName}: ${r.assigned}` + (r.skippedPaid ? `, пропущено оплаченных: ${r.skippedPaid}` : ""));
+      toast(r.message || `Разнесено: ${r.assigned}`);
       workSelected.clear();
       await loadSalaryWorks(); loadSalary();
     }catch(e){ toast("Не получилось: " + e.message); }
@@ -7515,8 +7664,10 @@
       const mark = svc ? `<span style="color:var(--red); font-size:11.5px;"> · не человек, пометка</span>`
                  : test ? `<span style="color:var(--amber); font-size:11.5px;"> · тестовый</span>` : "";
       return `
-      <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--line);${svc||test?"opacity:.7;":""}">
-        <span>${esc(e.name)}${mark}</span>
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--line);${svc||test?"opacity:.7;":""}">
+        <span style="flex:1;">${esc(e.name)}${mark}</span>
+        <button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__renameEmployee('${e.id}')" title="Переименовать">✎</button>
+        <button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__mergeEmployee('${e.id}')" title="Передать работы другому и убрать">⇄</button>
         <button class="btn danger" style="padding:4px 10px;font-size:12px" onclick="window.__deleteEmployee('${e.id}')">Удалить</button>
       </div>`;}).join("") : `<div style="color:var(--ink-soft);">Пока нет сотрудников</div>`;
     loadEmployeesAudit();
@@ -7531,6 +7682,43 @@
       await renderEmployeesManagePanel();
     }catch(e){ toast("Ошибка: "+e.message); }
   });
+  // Правим имя, а не заводим нового: иначе у человека рвётся история начислений
+  window.__renameEmployee = async function(id){
+    const cur = (employeesList.find(e=>e.id === id) || {}).name || "";
+    const name = prompt("Новое имя сотрудника:", cur);
+    if(name === null || !name.trim() || name.trim() === cur) return;
+    try{
+      const r = await api("/dispatch/employees/" + encodeURIComponent(id), {
+        method:"PUT", body: JSON.stringify({ name: name.trim() }) });
+      toast(r.message);
+      await renderEmployeesManagePanel();
+    }catch(e){ toast("Не получилось: " + e.message); }
+  };
+
+  // Передать работы другому и убрать. Так убираются тестовые, за которыми
+  // висят деньги: удалить их просто так нельзя — суммы остались бы без хозяина.
+  window.__mergeEmployee = async function(id){
+    const from = employeesList.find(e=>e.id === id);
+    if(!from) return;
+    const others = employeesList.filter(e=>e.id !== id && !isServiceName(e.name));
+    if(!others.length){ toast("Некому передать — в списке больше никого нет"); return; }
+    const pick = await pickEmployee({ title: `Кому передать работы «${from.name}»?` });
+    if(!pick || !pick.employeeId) return;
+    let info;
+    try{
+      info = await api(`/dispatch/employees/${encodeURIComponent(id)}/merge`, {
+        method:"POST", body: JSON.stringify({ toId: pick.employeeId }) });
+    }catch(e){ toast("Не получилось: " + e.message); return; }
+    if(!confirm(`${info.message}\n\nПосле этого «${info.from}» исчезнет из списка. Отменить нельзя.`)) return;
+    try{
+      const r = await api(`/dispatch/employees/${encodeURIComponent(id)}/merge`, {
+        method:"POST", body: JSON.stringify({ toId: pick.employeeId, confirm: true }) });
+      toast(r.message);
+      await renderEmployeesManagePanel();
+      loadSalary();
+    }catch(e){ toast("Не получилось: " + e.message); }
+  };
+
   window.__deleteEmployee = async function(id){
     if(!confirm("Убрать сотрудника из списка выбора?")) return;
     await api("/employees/"+id, {method:"DELETE"});
