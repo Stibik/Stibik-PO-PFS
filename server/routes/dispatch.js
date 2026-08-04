@@ -121,7 +121,10 @@ function toItem(p, L) {
     } else if (p.published) step = "published";
 
     return {
-      id: p.id, orderId: p.order_id, number: order?.display_number || null,
+      id: p.id, orderId: p.order_id,
+      // У задания на запас заказа нет — показываем его собственный номер
+      number: order?.display_number || p.stock_number || null,
+      isStockTask: !p.order_id && !!p.stock_number,
       shop: order?.shop || p.shop || null, kaspiCode: order?.kaspi_code || null,
       article: p.article, productName: p.product_name || order?.product_name || "",
       photo: item?.photo || null, qty, rate, amount: Math.round(rate * qty),
@@ -239,16 +242,18 @@ router.post("/stock-task", (req, res) => {
 
   const now = new Date().toISOString();
   const prodId = uid("prod");
+  // Номер выдаём сразу — по нему задание называют вслух и ищут в списке
+  const stockNumber = nextStockNumber();
   db.prepare(`INSERT INTO production (id, order_id, article, product_name, quantity, shop,
-              stage, employee_id, manager_comment, created_at)
-              VALUES (?, NULL, ?, ?, ?, NULL, 'to_stock', ?, ?, ?)`)
+              stage, employee_id, manager_comment, stock_number, created_at)
+              VALUES (?, NULL, ?, ?, ?, NULL, 'to_stock', ?, ?, ?, ?)`)
     .run(prodId, item.article || "", item.name || item.kaspi_name || "", qty,
-         b.employeeId, String(b.comment || "").trim().slice(0, 500) || null, now);
+         b.employeeId, String(b.comment || "").trim().slice(0, 500) || null, stockNumber, now);
 
   logAudit({ user: req.session.username, action: "production_stock_task",
              comment: `Задание на запас: ${item.name || item.article} ×${qty}, шьёт ${emp.name}` });
-  res.json({ ok: true, productionId: prodId, rate,
-             message: `Задание создано: шьёт ${emp.name}. Отметьте «Сшито», когда будет готово.` +
+  res.json({ ok: true, productionId: prodId, rate, stockNumber,
+             message: `Задание №${stockNumber} создано: шьёт ${emp.name}. Отметьте «Сшито», когда будет готово.` +
                       (rate > 0 ? "" : " Расценка не задана — проставьте её в Справочнике до выплаты.") });
  } catch (err) {
   console.error("[dispatch/stock-task] Ошибка:", err.message, err.stack);
@@ -272,7 +277,9 @@ router.post("/:id/sewn", (req, res) => {
 
   const now = new Date().toISOString();
   const stockId = "ws_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-  const stockNumber = nextStockNumber();
+  // Номер у задания уже есть — оставляем тот же, чтобы вещь не меняла имя
+  // на полпути. Новый берём только для старых заданий, созданных без номера.
+  const stockNumber = row.stock_number || nextStockNumber();
   db.prepare(`INSERT INTO warehouse_stock (id, stock_number, article, product_name, source, qty, consumed,
               employee_id, created_by, created_at, stage, sewn_by, sewn_at)
               VALUES (?,?,?,?,'overproduced',?,0,?,?,?, 'sewn', ?, ?)`)
