@@ -7097,7 +7097,7 @@
       ${list.map(p=>`<tr${p.managerComment ? ' style="border-left:3px solid var(--amber);"' : ""}>
         <td><input type="checkbox" class="prod-select" data-id="${esc(p.id)}" ${selectedProdIds.has(p.id)?"checked":""}></td>
         <td style="white-space:nowrap;"><b>№${esc(p.number || "—")}</b>
-          <div style="font-size:11px; color:var(--ink-soft);">${esc(p.shop || "")}</div></td>
+          <div style="font-size:11px; color:var(--ink-soft);">${p.isStockTask ? "на запас" : esc(p.shop || "")}</div></td>
         <td>
           <div style="font-weight:600;">${esc(p.productName || "—")}</div>
           <div style="font-size:11px; color:var(--ink-soft);">${esc(p.article || "")}</div>
