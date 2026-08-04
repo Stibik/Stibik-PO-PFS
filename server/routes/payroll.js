@@ -183,11 +183,62 @@ router.get("/entries", (req, res) => {
     }
   }
 
-  res.json(rows.map(r => entryToJson(r, r.order_id ? {
+  // Заказы, по которым начисления ещё нет вообще. Их тоже надо видеть здесь:
+  // именно они и есть работа для разноски. Раньше «Работы» показывали только
+  // то, где начисление уже создано, и половина заказов была не видна.
+  let virtual = [];
+  if (req.query.includeOrders === "1" && arch !== "1") {
+    const free = db.prepare(`
+      SELECT o.*, p.id AS prod_id, p.employee_id AS prod_employee
+      FROM orders o
+      LEFT JOIN production p ON p.order_id = o.id
+      WHERE (o.kaspi_status IS NULL OR o.kaspi_status NOT IN ('CANCELLED','CANCELLING','RETURNED','RETURN_REQUESTED'))
+        AND NOT EXISTS (SELECT 1 FROM payroll_entries e WHERE e.order_id = o.id AND e.status != 'cancelled')
+      ORDER BY o.display_number DESC LIMIT 3000`).all();
+    virtual = free.map(o => {
+      const item = o.article ? db.prepare("SELECT labor_rate FROM price_items WHERE article = ?").get(o.article) : null;
+      const rate = num(item?.labor_rate);
+      const qty = num(o.qty, 1) || 1;
+      return {
+        id: "order:" + o.id,
+        noEntry: true,                       // начисления ещё нет — только заказ
+        orderId: o.id,
+        productionId: o.prod_id || null,
+        employeeId: null, employeeName: "",
+        employeeIsService: false, employeeIsClosed: false, employeeIsUnassigned: false,
+        orderNumber: o.display_number, kaspiCode: o.kaspi_code,
+        orderDate: o.kaspi_creation_date || o.created_at || null,
+        orderTotal: num(o.total_price),
+        shop: o.shop, article: o.article, productName: o.product_name,
+        qty, rate, amount: money(rate * qty),
+        needsRate: !(rate > 0),
+        kind: "order", status: "none", comment: null,
+        assignedBy: null, assignedAt: null, archivedAt: null, archivedBy: null,
+        createdAt: o.created_at, paidAt: null, reportedWeight: null
+      };
+    });
+  }
+
+  const real = rows.map(r => entryToJson(r, r.order_id ? {
     display_number: r.display_number, kaspi_code: r.kaspi_code,
     kaspi_creation_date: r.kaspi_creation_date, created_at: r.order_created_at,
     total_price: r.total_price
-  } : null)));
+  } : null));
+
+  // Заказы без начисления показываем вместе с остальными, сверху по номеру
+  let all = real.concat(virtual);
+  if (req.query.q) {
+    const q = String(req.query.q).trim().toLowerCase();
+    all = all.filter(r =>
+      String(r.article || "").toLowerCase().includes(q) ||
+      String(r.productName || "").toLowerCase().includes(q) ||
+      String(r.orderNumber == null ? "" : r.orderNumber).includes(q) ||
+      String(r.kaspiCode || "").toLowerCase().includes(q));
+  }
+  if (req.query.unassigned === "1") all = all.filter(r => !r.employeeId);
+  if (req.query.status) all = all.filter(r => r.status === req.query.status);
+  all.sort((a, b) => (b.orderNumber || 0) - (a.orderNumber || 0));
+  res.json(all);
 });
 
 // Сколько всего лежит в архиве — чтобы убранное не выглядело «пропавшим»
@@ -409,8 +460,38 @@ router.post("/entries/assign", (req, res) => {
 
   const user = req.session.username;
   const now = new Date().toISOString();
-  let assigned = 0, skippedPaid = 0;
-  for (const id of ids) {
+  let assigned = 0, skippedPaid = 0, created = 0;
+  for (const rawId of ids) {
+    // Строка вида «order:...» — это заказ, по которому начисления ещё нет.
+    // Разносим прямо отсюда: заводим начисление на выбранного человека.
+    let id = rawId;
+    if (String(rawId).startsWith("order:")) {
+      if (!employeeId) continue;
+      const orderId = String(rawId).slice(6);
+      const o = db.prepare("SELECT * FROM orders WHERE id = ?").get(orderId);
+      if (!o) continue;
+      const exists = db.prepare("SELECT id FROM payroll_entries WHERE order_id = ? AND status != 'cancelled'").get(orderId);
+      if (exists) { id = exists.id; }
+      else {
+        const item = o.article ? db.prepare("SELECT labor_rate FROM price_items WHERE article = ?").get(o.article) : null;
+        const rate = num(item?.labor_rate);
+        const qty = num(o.qty, 1) || 1;
+        const newId = uid("pay");
+        db.prepare(`INSERT INTO payroll_entries
+          (id, employee_id, order_id, shop, article, product_name, qty, rate, amount,
+           kind, status, created_by, created_at, reported_done, assigned_by, assigned_at)
+          VALUES (?,?,?,?,?,?,?,?,?, 'order','pending',?,?,0,?,?)`)
+          .run(newId, employeeId, o.id, o.shop || null, o.article, o.product_name,
+               qty, rate, money(rate * qty), user, now, user, now);
+        logChange(newId, user, "assign", "employee", "не разнесено", emp ? emp.name : "", "Разнесено из «Зарплаты»");
+        // Заодно закрываем запись в производстве, чтобы не ждала решения
+        const prod = db.prepare("SELECT * FROM production WHERE order_id = ? AND decision IS NULL").get(o.id);
+        if (prod) db.prepare("UPDATE production SET decision = 'assigned', employee_id = ?, resolved_at = ? WHERE id = ?")
+          .run(employeeId, now, prod.id);
+        created++; assigned++;
+        continue;
+      }
+    }
     const e = db.prepare("SELECT * FROM payroll_entries WHERE id = ?").get(id);
     if (!e) continue;
     // Оплаченное не перекидываем: деньги уже выданы конкретному человеку
@@ -423,8 +504,11 @@ router.post("/entries/assign", (req, res) => {
     assigned++;
   }
   logAudit({ user, action: "payroll_assign_bulk",
-             comment: `${emp ? emp.name : "снято"}: ${assigned} работ${skippedPaid ? `, пропущено оплаченных ${skippedPaid}` : ""}` });
-  res.json({ ok: true, assigned, skippedPaid, employeeName: emp ? emp.name : "" });
+             comment: `${emp ? emp.name : "снято"}: ${assigned} работ${created ? `, создано ${created}` : ""}${skippedPaid ? `, пропущено оплаченных ${skippedPaid}` : ""}` });
+  res.json({ ok: true, assigned, created, skippedPaid, employeeName: emp ? emp.name : "",
+             message: `Разнесено на ${emp ? emp.name : "—"}: ${assigned}` +
+                      (created ? ` (новых начислений: ${created})` : "") +
+                      (skippedPaid ? `, пропущено оплаченных: ${skippedPaid}` : "") });
 });
 
 // Архив: строку не удаляем, но убираем из рабочих списков и из подсчёта долга
