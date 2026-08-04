@@ -625,10 +625,15 @@
       </div>
     </section>
     <section id="tab-claims" style="display:none">
+      <div class="toolbar" style="flex-wrap:wrap; gap:8px;">
+        <input type="text" id="claimsSearch" placeholder="Номер, код Kaspi, товар или заметка..." style="flex:1; min-width:240px;">
+        <button class="btn secondary" id="claimsReset" style="padding:5px 12px; font-size:12px;">Сбросить</button>
+      </div>
+      <div class="pill-row" id="claimsViewPills" style="margin-bottom:10px;"></div>
       <div class="toolbar">
         <label style="font-size:13px;"><input type="checkbox" id="showClosedClaims"> Показывать закрытые</label>
-        <label style="font-size:13px;"><input type="checkbox" id="showArchivedClaims"> Показывать архив</label>
-        <label style="font-size:13px;"><input type="checkbox" id="showHiddenClaims"> Показывать убранные</label>
+        <label style="font-size:13px;" id="showArchivedWrap" hidden><input type="checkbox" id="showArchivedClaims"></label>
+        <label style="font-size:13px;" id="showHiddenWrap" hidden><input type="checkbox" id="showHiddenClaims"></label>
         <span id="claimsCount" style="margin-left:auto; font-size:12.5px; color:var(--ink-soft);"></span>
       </div>
       <div class="panel" id="claimsBulkBar" style="display:none; background:#FFF8E6; border-color:var(--amber); align-items:center; gap:10px; flex-wrap:wrap;">
@@ -7915,7 +7920,13 @@
     DELIVERY: "Доставка",
     PICKUP: "Самовывоз"
   };
-  function stateLabelKaspi(s){ return KASPI_STATE_LABELS[s] || s || "—"; }
+  // У ручных заказов (УД) доставки Kaspi нет и быть не может — их возят сами.
+  // Раньше в колонке всё равно писалось «Доставка Kaspi», и это путало.
+  function stateLabelKaspi(s, o){
+    if(o && (o.source === "manual" || String(o.shop || "").toUpperCase() === "УД"
+             || String(o.kaspiCode || "").startsWith("УД-"))) return "своя доставка";
+    return KASPI_STATE_LABELS[s] || s || "—";
+  }
 
   document.getElementById("btnColSettings").addEventListener("click", (e)=>{
     e.stopPropagation();
@@ -8322,7 +8333,7 @@
         const colorClass = {"#7C3AED":"b-purple","#D97706":"b-orange","#2563EB":"b-blue","#0891B2":"b-cyan","#16A34A":"b-green","#DC2626":"b-red","#6B7280":"b-gray"}[sd.color] || "b-gray";
         return `<span class="o2-badge ${colorClass}">${esc(sd.label)}</span>`;
       }
-      if(key==="delivery") return esc(stateLabelKaspi(o.deliveryState));
+      if(key==="delivery") return esc(stateLabelKaspi(o.deliveryState, o));
       if(key==="waybill"){
         if(!o.waybillUrl) return `<span style="color:var(--o2-ink-soft);font-size:12px;">ещё не сформирована</span>`;
         const printedBadge = o.printed ? ` <span style="color:var(--o2-green);font-size:11px;">✓ распечатано</span>` : "";
@@ -8568,22 +8579,49 @@
 
   let selectedClaimIds = new Set();
 
+  let claimsView = "active";
+  const CLAIM_VIEWS = [
+    { k:"active",   l:"Активные" },
+    { k:"archived", l:"Архив" },
+    { k:"hidden",   l:"Убранные" },
+    { k:"all",      l:"Все" }
+  ];
+
   function renderClaims(){
     const showClosed = document.getElementById("showClosedClaims").checked;
-    const showArchived = document.getElementById("showArchivedClaims").checked;
-    const showHidden = document.getElementById("showHiddenClaims").checked;
     const all = kaspiOrders.filter(o=>CLAIM_STATUSES.includes(o.kaspiStatus));
+
+    document.getElementById("claimsViewPills").innerHTML = CLAIM_VIEWS.map(v=>{
+      const n = v.k === "archived" ? all.filter(o=>o.claimArchived).length
+              : v.k === "hidden"   ? all.filter(o=>o.claimHidden).length
+              : v.k === "active"   ? all.filter(o=>!o.claimArchived && !o.claimHidden).length
+              : all.length;
+      return `<button class="pill ${claimsView===v.k?"active":""}" data-cview="${v.k}">${v.l} <span class="count">${n}</span></button>`;
+    }).join("");
+    document.getElementById("claimsViewPills").querySelectorAll("[data-cview]").forEach(b=>
+      b.addEventListener("click", ()=>{ claimsView = b.dataset.cview; selectedClaimIds.clear(); renderClaims(); }));
+
     let list = all;
-    if(!showClosed) list = list.filter(o=>!o.claimResolved);
-    // Архив и убранные показываем только по галочке — иначе список зарастает
-    list = list.filter(o=>showArchived ? true : !o.claimArchived);
-    list = list.filter(o=>showHidden ? true : !o.claimHidden);
+    if(claimsView === "active")        list = list.filter(o=>!o.claimArchived && !o.claimHidden);
+    else if(claimsView === "archived") list = list.filter(o=>o.claimArchived);
+    else if(claimsView === "hidden")   list = list.filter(o=>o.claimHidden);
+    if(!showClosed && claimsView === "active") list = list.filter(o=>!o.claimResolved);
+
+    // Ищем по всему сразу: номеру, коду Kaspi, названию и заметке. Раньше
+    // поиска тут не было вовсе, и нужную строку приходилось искать глазами.
+    const q = (document.getElementById("claimsSearch").value || "").trim().toLowerCase();
+    if(q){
+      list = list.filter(o=>
+        String(o.displayNumber || "").includes(q) ||
+        String(o.kaspiCode || "").toLowerCase().includes(q) ||
+        String(o.productName || "").toLowerCase().includes(q) ||
+        String(o.shop || "").toLowerCase().includes(q) ||
+        String(o.claimNote || "").toLowerCase().includes(q));
+    }
     list.sort((a,b)=>(a.displayNumber||0)-(b.displayNumber||0));
 
-    const arch = all.filter(o=>o.claimArchived).length;
-    const hid = all.filter(o=>o.claimHidden).length;
     document.getElementById("claimsCount").textContent =
-      `Показано: ${list.length} из ${all.length}` + (arch ? ` · в архиве ${arch}` : "") + (hid ? ` · убрано ${hid}` : "");
+      `Показано: ${list.length} из ${all.length}` + (q ? ` · по запросу «${q}»` : "");
 
     const body = document.getElementById("claimsBody");
     window.__claimsShown = list;
@@ -8663,8 +8701,14 @@
       `Вернуть можно галочкой «Показывать убранные».`)) return;
     claimsBulkSet({ claimHidden: true }, "Убрано из списка");
   });
-  ["showArchivedClaims","showHiddenClaims"].forEach(id=>
-    document.getElementById(id).addEventListener("change", renderClaims));
+  document.getElementById("claimsSearch").addEventListener("input", renderClaims);
+  document.getElementById("claimsReset").addEventListener("click", ()=>{
+    document.getElementById("claimsSearch").value = "";
+    document.getElementById("showClosedClaims").checked = false;
+    claimsView = "active";
+    selectedClaimIds.clear();
+    renderClaims();
+  });
 
   window.__openClaim = function(id){
     editingClaimId = id;
