@@ -1083,9 +1083,18 @@
       <div id="whUnnamedWarn"></div>
       <div class="panel" style="padding:0; overflow:hidden;">
         <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border-bottom:1px solid var(--line); flex-wrap:wrap; gap:8px;">
-          <span style="display:flex; gap:6px;">
+          <span style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
             <button class="pill" id="whViewList" style="font-size:12.5px;">По номерам</button>
             <button class="pill" id="whViewGroups" style="font-size:12.5px;">По товарам</button>
+            <select id="whStage" style="font-size:12.5px; min-width:150px;">
+              <option value="">Все стадии</option>
+              <option value="sewn">Сшито, не забито</option>
+              <option value="ready">Готово</option>
+              <option value="defect">Брак</option>
+            </select>
+            <select id="whWho" style="font-size:12.5px; min-width:150px;">
+              <option value="">Все исполнители</option>
+            </select>
           </span>
           <span style="display:flex; gap:8px;">
             <button class="btn secondary" id="whExport" style="padding:5px 12px; font-size:12px;">Выгрузить в Excel</button>
@@ -5060,6 +5069,33 @@
       || g.items.some(i=>String(i.number || "").includes(q)));
     if(src) groups = groups.filter(g=>g.bySource[src]);
 
+    // Фильтры по стадии и человеку. Считаем по штукам, а не по группам:
+    // в одной группе могут лежать и сшитое, и уже готовое.
+    const stage = (document.getElementById("whStage") || {}).value || "";
+    const who = (document.getElementById("whWho") || {}).value || "";
+    if(stage || who){
+      groups = groups.map(g=>{
+        const items = g.items.filter(i=>
+          (!stage || (i.stage || "ready") === stage) &&
+          (!who || i.sewnBy === who || i.filledBy === who || i.employeeId === who));
+        return { ...g, items, qty: items.reduce((s,i)=>s + i.qty, 0) };
+      }).filter(g=>g.items.length);
+    }
+
+    // Список исполнителей собираем из того, что реально лежит на складе
+    const whoSel = document.getElementById("whWho");
+    if(whoSel){
+      const seen = new Map();
+      (whData.groups || []).forEach(g=>g.items.forEach(i=>{
+        if(i.sewnBy && i.sewnByName) seen.set(i.sewnBy, i.sewnByName);
+        if(i.filledBy && i.filledByName) seen.set(i.filledBy, i.filledByName);
+      }));
+      const prevWho = whoSel.value;
+      whoSel.innerHTML = `<option value="">Все исполнители</option>` +
+        Array.from(seen.entries()).map(([id,nm])=>`<option value="${esc(id)}">${esc(nm)}</option>`).join("");
+      whoSel.value = prevWho;
+    }
+
     const body = document.getElementById("whBody");
     if(!groups.length){
       body.innerHTML = `<tr><td colspan="7" style="padding:26px; text-align:center; color:var(--ink-soft);">
@@ -5224,6 +5260,10 @@
     document.getElementById("whViewGroups").classList.toggle("active", v === "groups");
     renderWarehouse();
   }
+  ["whStage","whWho"].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.addEventListener("change", ()=>{ whSelected.clear(); renderWarehouse(); });
+  });
   document.getElementById("whViewList").addEventListener("click", ()=>setWhView("list"));
   document.getElementById("whViewGroups").addEventListener("click", ()=>setWhView("groups"));
   document.getElementById("whViewList").classList.toggle("active", whView === "list");
@@ -5802,7 +5842,13 @@
     }
     // Сначала люди и по убыванию долга: наверху тот, кому должны больше всех.
     // Служебные пометки уходят вниз и выглядят иначе — их нельзя выплатить.
-    const sorted = salarySummary.employees.slice().sort((a,b)=>
+    // Пустых тестовых и огрызков вроде «1» в сводке не показываем: денег за ними
+    // нет, а список из-за них не читается. Если деньги есть — строка остаётся,
+    // иначе сумма пропала бы с глаз.
+    const hasMoney = (e)=>e.pendingSum || e.payableSum || e.paidSum || e.payoutsSum;
+    const sorted = salarySummary.employees
+      .filter(e=>hasMoney(e) || !isJunkEmployee(e.name))
+      .slice().sort((a,b)=>
       (a.isService?1:0) - (b.isService?1:0) || b.payableSum - a.payableSum || a.name.localeCompare(b.name,"ru"));
 
     body.innerHTML = sorted.map(e=>{
@@ -6370,7 +6416,7 @@
     const empSel = document.getElementById("workEmployee");
     if(empSel.options.length <= 1 && employeesList.length){
       empSel.innerHTML = `<option value="">Все сотрудники</option>` +
-        employeesList.map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join("");
+        realEmployees().map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join("");
     }
     const shops = Array.from(new Set(workRows.map(r=>r.shop).filter(Boolean))).sort();
     const shopSel = document.getElementById("workShop");
@@ -6417,7 +6463,10 @@
     }
 
     body.innerHTML = rows.map(r=>{
-      const num = r.orderNumber != null ? String(r.orderNumber) : (r.kind === "stock" ? "—" : "—");
+      // УД показываем с приставкой: у них своя нумерация, и без неё №2 из УД
+      // выглядит как заказ Kaspi номер два
+      const isUD = String(r.shop || "").toUpperCase() === "УД" || String(r.kaspiCode || "").startsWith("УД-");
+      const num = r.orderNumber != null ? (isUD ? `УД-${r.orderNumber}` : String(r.orderNumber)) : "—";
       const kaspi = r.kaspiCode
         ? `<span class="mono" style="font-size:11.5px;">${esc(r.kaspiCode)}</span>` +
           (r.orderDate ? `<div style="font-size:11px; color:var(--ink-soft);">${esc(String(r.orderDate).slice(0,10))}</div>` : "")
@@ -6486,7 +6535,7 @@
     const sel = document.getElementById("workBulkEmployee");
     if(sel.options.length <= 1 && employeesList.length){
       sel.innerHTML = `<option value="">— выберите исполнителя —</option>` +
-        employeesList.map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join("");
+        realEmployees().map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join("");
     }
   }
 
@@ -6555,7 +6604,7 @@
     if(!employeesList.length){ try{ employeesList = await api("/employees"); }catch(e){} }
     document.getElementById("workEdit_employee").innerHTML =
       `<option value="">— Без разноски —</option>` +
-      employeesList.map(e=>`<option value="${esc(e.id)}" ${e.id===r.employeeId?"selected":""}>${esc(e.name)}</option>`).join("");
+      realEmployees().map(e=>`<option value="${esc(e.id)}" ${e.id===r.employeeId?"selected":""}>${esc(e.name)}</option>`).join("");
     document.getElementById("workEdit_qty").value = r.qty;
     document.getElementById("workEdit_rate").value = r.rate;
     document.getElementById("workEdit_comment").value = r.comment || "";
@@ -6639,8 +6688,15 @@
     const rows = window.__workRowsShown || [];
     if(!rows.length){ toast("Нечего выгружать"); return; }
     const STATUS = { pending:"отложено", payable:"Доплатить", paid:"выплачено" };
+    // УД — заказы, заведённые руками. У них свой ряд номеров, и в выгрузке
+    // они должны читаться как «УД-1», иначе сливаются с номерами Kaspi.
+    const numberOf = (r)=>{
+      if(r.orderNumber == null) return "";
+      const isUD = String(r.shop || "").toUpperCase() === "УД" || String(r.kaspiCode || "").startsWith("УД-");
+      return isUD ? `УД-${r.orderNumber}` : r.orderNumber;
+    };
     const data = rows.map(r=>({
-      "№ IN": r.orderNumber ?? "",
+      "№ IN": numberOf(r),
       "Заказ": r.kaspiCode || "",
       "Компания": r.shop || "",
       "наим-е": r.productName || "",
@@ -6880,8 +6936,7 @@
     if(!catalogItems.length){ try{ catalogItems = await api("/catalog"); }catch(e){} }
     // «не определено» и «Без оплаты» — пометки из старой таблицы, не люди
     document.getElementById("spEmployee").innerHTML = `<option value="">— выберите —</option>` +
-      employeesList.filter(e=>!isServiceName(e.name))
-        .map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join("");
+      realEmployees().map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join("");
     // Выбор сужается по шагам: группа → материал → товар
     fillCascade(document.getElementById("spGroup"), document.getElementById("spMaterial"), document.getElementById("spItem"));
     document.getElementById("spItem").onchange = ()=>{
@@ -7406,6 +7461,14 @@
   const SERVICE_EMPLOYEE_NAMES = new Set(["не определено","не определен","не определён","без оплаты",
     "перекрыто","перекрыт","возврат","отмена","пропустим","хз","-","—"]);
   const isServiceName = (n)=>SERVICE_EMPLOYEE_NAMES.has(String(n||"").toLowerCase().trim());
+  const isTestName = (n)=>/тест|test|проб|demo|демо/i.test(String(n||""));
+  // Мусор в списке: пометки, тестовые заглушки и огрызки вроде «1».
+  // Назначать на них работу нельзя, поэтому в выборе исполнителя их не показываем.
+  const isJunkEmployee = (n)=>{
+    const s = String(n||"").trim();
+    return isServiceName(s) || isTestName(s) || s.length < 2;
+  };
+  const realEmployees = ()=>employeesList.filter(e=>!isJunkEmployee(e.name));
 
   // Выбор исполнителя списком кнопок. Раньше здесь был системный prompt,
   // и в нём вместо переносов строк печаталось «\n1. Андрей\n2. ...» —
@@ -7426,7 +7489,7 @@
           style="text-align:left; padding:10px 14px; font-size:14px;">${label}</button>`;
         // «не определено», «Без оплаты» и прочие пометки из старой таблицы —
         // это не люди, назначать на них работу нельзя
-        const people = employeesList.filter(e=>!isServiceName(e.name));
+        const people = realEmployees();
         list.innerHTML = (allowAll ? btn("__all__", "📣 Всем — заберёт кто первый", "amber") : "") +
           (people.length ? people.map(e=>btn(e.id, esc(e.name), "secondary")).join("")
                          : `<div style="color:var(--ink-soft);">Настоящих сотрудников в списке нет — добавьте кнопкой «Сотрудники».</div>`);
@@ -7505,8 +7568,7 @@
     const prev = sel.value;
     // Служебные пометки не предлагаем: на них нельзя вешать работу
     sel.innerHTML = `<option value="">— выберите сотрудника —</option>` +
-      employeesList.filter(e=>!isServiceName(e.name))
-        .map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join("");
+      realEmployees().map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join("");
     sel.value = prev || prodDefaultEmployeeId || "";
     document.getElementById("prodBulkCount").textContent = `Выбрано: ${n}`;
 
