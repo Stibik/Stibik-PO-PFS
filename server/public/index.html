@@ -6583,8 +6583,10 @@
 
   async function acceptPayEntry(id, after){
     try{
-      const r = await api(`/payroll/entries/${id}/accept`, { method:"POST" });
-      toast(`Принято: ${money(r.amount)} ₸ к выплате`);
+      // Через модуль производства: подтверждение работы — дело менеджера,
+      // и оно не должно требовать права «Зарплата»
+      const r = await api(`/dispatch/accept/${id}`, { method:"POST" });
+      toast(r.message || "Принято");
       if(after) await after();
       loadSalary();
     }catch(e){ toast(e.message); }
@@ -6762,7 +6764,8 @@
     if(!employeeId){ err.textContent = "Выберите исполнителя"; return; }
     err.textContent = "";
     try{
-      const r = await api("/payroll/stock-production", { method:"POST", body: JSON.stringify({
+      // Метод живёт в модуле производства: право «Производство», а не «Зарплата»
+      const r = await api("/dispatch/stock-task", { method:"POST", body: JSON.stringify({
         employeeId, itemId: spItem.id,
         qty: parseFloat(document.getElementById("spQty").value) || 1,
         comment: document.getElementById("spComment").value,
@@ -7181,7 +7184,7 @@
     // Починка строки, у которой пропало начисление: пересоздаём по расценке из Справочника
     wrap.querySelectorAll(".prod-fix-entry").forEach(b=>b.addEventListener("click", async ()=>{
       try{
-        const r = await api("/payroll/from-production/" + b.dataset.prodId, { method:"POST" });
+        const r = await api("/dispatch/accrue/" + b.dataset.prodId, { method:"POST" });
         toast(r.rateFound === false ? "Начисление создано, но расценка в Справочнике не заполнена" : "Начисление создано");
         loadProduction();
       }catch(e){ toast("Не получилось: " + e.message); }
@@ -7329,7 +7332,7 @@
       await api("/production/"+prodId+"/resolve", {method:"POST", body:JSON.stringify({decision, ...(extra||{})})});
       if(decision === "assigned"){
         try{
-          const r = await api("/payroll/from-production/" + prodId, {method:"POST"});
+          const r = await api("/dispatch/accrue/" + prodId, {method:"POST"});
           toast(r.needsRate ? "Назначено, но расценка не заполнена в Справочнике"
                             : `Назначено, начислено ${money(r.amount)} ₸ (ждёт приёмки)`);
         }catch(e){ toast("Назначено, но начисление не создалось: " + e.message); }
@@ -7368,7 +7371,7 @@
       try{
         await api("/production/"+id+"/resolve", {method:"POST", body:JSON.stringify({decision, ...(extra||{})})});
         if(decision === "assigned"){
-          try{ await api("/payroll/from-production/" + id, {method:"POST"}); }catch(e){ errors.push("начисление: " + e.message); }
+          try{ await api("/dispatch/accrue/" + id, {method:"POST"}); }catch(e){ errors.push("начисление: " + e.message); }
         }
         ok++;
       }catch(e){ errors.push(e.message); }
@@ -7396,7 +7399,7 @@
       const employeeId = employeesList[i % employeesList.length].id;
       try{
         await api("/production/"+ids[i]+"/resolve", {method:"POST", body:JSON.stringify({decision:"assigned", employeeId})});
-        try{ await api("/payroll/from-production/" + ids[i], {method:"POST"}); }catch(e){}
+        try{ await api("/dispatch/accrue/" + ids[i], {method:"POST"}); }catch(e){}
         ok++;
       }catch(e){ errors.push(e.message); }
     }
@@ -7425,7 +7428,7 @@
       try{
         await api("/production/"+id+"/resolve", {method:"POST", body:JSON.stringify({decision, ...(extra||{})})});
         if(decision === "assigned"){
-          try{ await api("/payroll/from-production/" + id, {method:"POST"}); }catch(e){ errors.push(e.message); }
+          try{ await api("/dispatch/accrue/" + id, {method:"POST"}); }catch(e){ errors.push(e.message); }
         }
         ok++;
       }catch(e){ errors.push(e.message); }
