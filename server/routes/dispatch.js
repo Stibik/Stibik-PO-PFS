@@ -125,6 +125,7 @@ function toItem(p, L) {
       // У задания на запас заказа нет — показываем его собственный номер
       number: order?.display_number || p.stock_number || null,
       isStockTask: !p.order_id && !!p.stock_number,
+      stockId: p.warehouse_stock_id || null,   // чтобы отправить на забивку прямо отсюда
       shop: order?.shop || p.shop || null, kaspiCode: order?.kaspi_code || null,
       article: p.article, productName: p.product_name || order?.product_name || "",
       photo: item?.photo || null, qty, rate, amount: Math.round(rate * qty),
@@ -208,6 +209,68 @@ router.post("/accrue/:productionId", (req, res) => {
              comment: `${prod.product_name || prod.article}: ${Math.round(rate * qty)} ₸` });
   res.json({ ok: true, rateFound: rate > 0, amount: Math.round(rate * qty),
              message: rate > 0 ? "Начисление создано." : "Начисление создано, но расценка в Справочнике не заполнена." });
+});
+
+// ---------- Разбор списка сотрудников ----------
+// В списке намешаны настоящие люди, тестовые заглушки и пометки из старой
+// таблицы. Пока непонятно, кто есть кто, работу назначают наугад.
+const SERVICE_NAMES = ["не определено","не определен","не определён","без оплаты",
+  "перекрыто","перекрыт","возврат","отмена","пропустим","хз","-","—"];
+const isTestName = (n) => /тест|test|проб|demo|демо/i.test(String(n || ""));
+const isServiceName = (n) => SERVICE_NAMES.includes(String(n || "").toLowerCase().trim());
+
+router.get("/employees-audit", (req, res) => {
+  const rows = db.prepare("SELECT * FROM employees ORDER BY name").all();
+  const list = rows.map(e => {
+    const money = db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(amount),0) AS s
+                              FROM payroll_entries WHERE employee_id = ? AND status != 'cancelled'`).get(e.id);
+    const prod = db.prepare("SELECT COUNT(*) AS n FROM production WHERE employee_id = ?").get(e.id);
+    const stock = db.prepare("SELECT COUNT(*) AS n FROM warehouse_stock WHERE employee_id = ? OR sewn_by = ? OR filled_by = ?").get(e.id, e.id, e.id);
+    const kind = isServiceName(e.name) ? "service" : (isTestName(e.name) ? "test" : "real");
+    return {
+      id: e.id, name: e.name, kind,
+      works: money.n, sum: Math.round(money.s),
+      productionRows: prod.n, stockRows: stock.n,
+      // Удалять можно только тех, за кем ничего не числится
+      canDelete: kind !== "real" && money.n === 0 && prod.n === 0 && stock.n === 0
+    };
+  });
+  res.json({
+    employees: list,
+    real: list.filter(e => e.kind === "real").length,
+    test: list.filter(e => e.kind === "test").length,
+    service: list.filter(e => e.kind === "service").length,
+    canDelete: list.filter(e => e.canDelete).length
+  });
+});
+
+// Убрать тестовых и пометки. Только тех, за кем нет ни денег, ни работ —
+// иначе оборвётся история и суммы повиснут без хозяина.
+router.post("/employees-cleanup", (req, res) => {
+  const rows = db.prepare("SELECT * FROM employees").all();
+  const target = rows.filter(e => {
+    if (!isServiceName(e.name) && !isTestName(e.name)) return false;
+    const money = db.prepare("SELECT COUNT(*) AS n FROM payroll_entries WHERE employee_id = ? AND status != 'cancelled'").get(e.id).n;
+    const prod = db.prepare("SELECT COUNT(*) AS n FROM production WHERE employee_id = ?").get(e.id).n;
+    const stock = db.prepare("SELECT COUNT(*) AS n FROM warehouse_stock WHERE employee_id = ? OR sewn_by = ? OR filled_by = ?").get(e.id, e.id, e.id).n;
+    return money === 0 && prod === 0 && stock === 0;
+  });
+
+  if (req.body?.confirm !== true) {
+    const blocked = rows.filter(e => (isServiceName(e.name) || isTestName(e.name)) && !target.includes(e));
+    return res.json({ dryRun: true, count: target.length,
+      names: target.map(e => e.name),
+      blocked: blocked.map(e => e.name),
+      message: `Можно убрать: ${target.length}.` +
+               (blocked.length ? ` Останутся ${blocked.length} — за ними числятся работы или деньги.` : "") });
+  }
+
+  const del = db.prepare("DELETE FROM employees WHERE id = ?");
+  for (const e of target) del.run(e.id);
+  logAudit({ user: req.session.username, action: "employees_cleanup",
+             comment: `Убрано: ${target.map(e => e.name).join(", ")}` });
+  res.json({ ok: true, deleted: target.length,
+             message: `Убрано сотрудников: ${target.length}.` });
 });
 
 // «Сшить на запас» — задание швее. Живёт ЗДЕСЬ, а не в модуле зарплаты:
