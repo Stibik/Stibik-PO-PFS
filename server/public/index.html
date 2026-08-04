@@ -954,6 +954,7 @@
         <button class="btn secondary" id="prodBulkSpread" style="padding:6px 12px; font-size:12.5px;">🎲 Распределить поровну</button>
         <button class="btn secondary" id="prodBulkStock" style="padding:6px 12px; font-size:12.5px;">📦 Списать с остатков</button>
         <button class="btn secondary" id="prodBulkReturn" style="padding:6px 12px; font-size:12.5px;">↩️ Перекрыть возвратом</button>
+        <button class="btn amber" id="prodBulkToFill" style="padding:6px 12px; font-size:12.5px;">🥊 Отправить на забивку</button>
         <button class="btn secondary" id="prodBulkArchive" style="padding:6px 12px; font-size:12.5px;">🗄 В архив</button>
         <button class="btn secondary" id="prodBulkDelete" style="padding:6px 12px; font-size:12.5px; color:var(--red);" title="Убрать из монитора совсем">✕ Удалить</button>
         <button class="btn secondary" id="prodBulkClear" style="padding:6px 12px; font-size:12.5px; margin-left:auto;">Снять выбор</button>
@@ -7077,6 +7078,7 @@
     shopSel.value = prevShop;
 
     const list = prodVisible();
+    window.__prodShown = list;   // нужно групповым действиям: по ним ищем складские позиции
     const step = PROD_STEP[prodStep] || PROD_STEPS[0];
     document.getElementById("prodCount").textContent = `${step.label}: ${list.length}${step.hint ? " · " + step.hint : ""}`;
 
@@ -7132,8 +7134,9 @@
     if(p.step === "to_stock") return `
       <button class="btn amber prod-sewn" data-prod-id="${esc(p.id)}" ${small}>✓ Сшито</button>
       <button class="btn secondary prod-edit" data-prod-id="${esc(p.id)}" ${small}>✎</button>`;
-    if(p.step === "sewn") return `
-      <span style="font-size:11.5px; color:var(--ink-soft);">на складе, ждёт забивки</span>`;
+    if(p.step === "sewn") return p.stockId ? `
+      <button class="btn amber prod-to-fill" data-stock-id="${esc(p.stockId)}" ${small}>🥊 На забивку</button>` : `
+      <span style="font-size:11.5px; color:var(--ink-soft);">на складе</span>`;
     // У «в работе» и «сдано» начисление может отсутствовать: так бывает, если
     // работу освободили или строка приехала из старой системы. Раньше здесь
     // читалось p.entry.id и вся вкладка падала с «Cannot read properties of null».
@@ -7169,6 +7172,16 @@
       });
     }
     // Швея отчиталась — изделие уходит на склад со своим номером
+    wrap.querySelectorAll(".prod-to-fill").forEach(b=>b.addEventListener("click", async ()=>{
+      const pick = await pickEmployee({ title: "Кому отправить на забивку?", allowAll: true, withComment: true });
+      if(!pick) return;
+      try{
+        const r = await api(`/warehouse/${encodeURIComponent(b.dataset.stockId)}/to-production`, { method:"POST",
+          body: JSON.stringify({ employeeId: pick.employeeId, comment: pick.comment }) });
+        toast(r.message);
+        loadProduction();
+      }catch(e){ toast("Не получилось: " + e.message); }
+    }));
     wrap.querySelectorAll(".prod-sewn").forEach(b=>b.addEventListener("click", async ()=>{
       const pick = await pickEmployee({ title: "Кто сшил?" });
       if(!pick || !pick.employeeId) return;
@@ -7313,6 +7326,25 @@
     }catch(e){ toast("Не получилось: " + e.message); }
   }
 
+  // На каждом шаге свои действия. Раньше показывались все сразу, и над сшитым
+  // чехлом висели кнопки от заказов — «списать с остатков», «перекрыть
+  // возвратом». Для него они бессмысленны, а нужной кнопки не было вовсе.
+  const PROD_BULK_ACTIONS = {
+    pending:  ["prodBulkEmployee","prodBulkAssign","prodBulkPublish","prodBulkSpread","prodBulkStock","prodBulkReturn","prodBulkArchive","prodBulkDelete"],
+    published:["prodBulkEmployee","prodBulkAssign","prodBulkArchive","prodBulkDelete"],
+    to_stock: ["prodBulkArchive","prodBulkDelete"],
+    sewn:     ["prodBulkToFill","prodBulkArchive"],
+    in_work:  ["prodBulkArchive","prodBulkDelete"],
+    reported: ["prodBulkArchive"],
+    accepted: ["prodBulkArchive"],
+    paid:     ["prodBulkArchive"],
+    from_stock:["prodBulkArchive","prodBulkDelete"],
+    covered:  ["prodBulkArchive","prodBulkDelete"],
+    archived: ["prodBulkDelete"]
+  };
+  const PROD_BULK_ALL = ["prodBulkEmployee","prodBulkAssign","prodBulkPublish","prodBulkSpread",
+    "prodBulkStock","prodBulkReturn","prodBulkToFill","prodBulkArchive","prodBulkDelete"];
+
   function updateProdBulkBar(){
     const bar = document.getElementById("prodBulkBar");
     if(!bar) return;
@@ -7321,11 +7353,40 @@
     if(!n) return;
     const sel = document.getElementById("prodBulkEmployee");
     const prev = sel.value;
+    // Служебные пометки не предлагаем: на них нельзя вешать работу
     sel.innerHTML = `<option value="">— выберите сотрудника —</option>` +
-      employeesList.map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join("");
+      employeesList.filter(e=>!isServiceName(e.name))
+        .map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join("");
     sel.value = prev || prodDefaultEmployeeId || "";
     document.getElementById("prodBulkCount").textContent = `Выбрано: ${n}`;
+
+    const allowed = PROD_BULK_ACTIONS[prodStep] || PROD_BULK_ACTIONS.pending;
+    PROD_BULK_ALL.forEach(id=>{
+      const el = document.getElementById(id);
+      if(el) el.style.display = allowed.includes(id) ? "" : "none";
+    });
   }
+
+  // Отправить сшитые чехлы на забивку прямо из «Производства», не заходя на склад
+  document.getElementById("prodBulkToFill").addEventListener("click", async ()=>{
+    const rows = (window.__prodShown || []).filter(p=>selectedProdIds.has(p.id));
+    const withStock = rows.filter(p=>p.stockId);
+    if(!withStock.length){ toast("У выбранных нет складской позиции"); return; }
+    const pick = await pickEmployee({ title: "Кому отправить на забивку?", allowAll: true, withComment: true });
+    if(!pick) return;
+    let ok = 0; const errors = [];
+    for(const p of withStock){
+      try{
+        await api(`/warehouse/${encodeURIComponent(p.stockId)}/to-production`, { method:"POST",
+          body: JSON.stringify({ employeeId: pick.employeeId, comment: pick.comment }) });
+        ok++;
+      }catch(e){ errors.push(`№${p.number}: ${e.message}`); }
+    }
+    selectedProdIds.clear();
+    toast(`Отправлено на забивку: ${ok}` + (errors.length ? `, не вышло: ${errors.length}` : ""));
+    if(errors.length) alert("Не отправлены:\n\n" + errors.slice(0,5).join("\n"));
+    loadProduction();
+  });
 
   async function resolveProduction(prodId, decision, extra){
     try{
