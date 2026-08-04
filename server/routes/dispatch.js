@@ -244,6 +244,63 @@ router.get("/employees-audit", (req, res) => {
   });
 });
 
+// Переименование сотрудника. Нужно, чтобы поправить старые ники из переноса
+// и не плодить дубли: заводить нового человека вместо правки имени — значит
+// разорвать ему всю историю начислений.
+router.put("/employees/:id", (req, res) => {
+  const e = db.prepare("SELECT * FROM employees WHERE id = ?").get(req.params.id);
+  if (!e) return res.status(404).json({ error: "not_found", message: "Сотрудник не найден" });
+  const name = String(req.body?.name || "").replace(/[\r\n\t]+/g, " ").trim().slice(0, 60);
+  if (!name) return res.status(400).json({ error: "no_name", message: "Имя не может быть пустым" });
+  const dupe = db.prepare("SELECT id FROM employees WHERE lower(name) = lower(?) AND id != ?").get(name, e.id);
+  if (dupe) return res.status(400).json({ error: "duplicate", message: `«${name}» уже есть в списке` });
+
+  db.prepare("UPDATE employees SET name = ? WHERE id = ?").run(name, e.id);
+  logAudit({ user: req.session.username, action: "employee_rename", comment: `${e.name} → ${name}` });
+  res.json({ ok: true, id: e.id, name,
+             message: `«${e.name}» переименован в «${name}». Вся история начислений сохранена.` });
+});
+
+// Перенести всё с одного сотрудника на другого и убрать первого. Нужно, чтобы
+// избавиться от тестовых, за которыми уже висят деньги: просто удалить нельзя —
+// суммы останутся без хозяина, а история оборвётся.
+router.post("/employees/:id/merge", (req, res) => {
+  const from = db.prepare("SELECT * FROM employees WHERE id = ?").get(req.params.id);
+  if (!from) return res.status(404).json({ error: "not_found", message: "Сотрудник не найден" });
+  const toId = req.body?.toId;
+  const to = toId ? db.prepare("SELECT * FROM employees WHERE id = ?").get(toId) : null;
+  if (!to) return res.status(400).json({ error: "no_target", message: "Выберите, кому передать работы" });
+  if (to.id === from.id) return res.status(400).json({ error: "same", message: "Это тот же сотрудник" });
+
+  const count = (sql, ...a) => db.prepare(sql).get(...a).n;
+  const stats = {
+    entries: count("SELECT COUNT(*) AS n FROM payroll_entries WHERE employee_id = ?", from.id),
+    payouts: count("SELECT COUNT(*) AS n FROM payouts WHERE employee_id = ?", from.id),
+    production: count("SELECT COUNT(*) AS n FROM production WHERE employee_id = ?", from.id),
+    stock: count("SELECT COUNT(*) AS n FROM warehouse_stock WHERE employee_id = ? OR sewn_by = ? OR filled_by = ?", from.id, from.id, from.id)
+  };
+
+  if (req.body?.confirm !== true) {
+    return res.json({ dryRun: true, from: from.name, to: to.name, ...stats,
+      message: `С «${from.name}» на «${to.name}» перейдёт: начислений ${stats.entries}, выплат ${stats.payouts}, ` +
+               `позиций производства ${stats.production}, складских ${stats.stock}. Ничего ещё не изменено.` });
+  }
+
+  db.prepare("UPDATE payroll_entries SET employee_id = ? WHERE employee_id = ?").run(to.id, from.id);
+  db.prepare("UPDATE payouts SET employee_id = ? WHERE employee_id = ?").run(to.id, from.id);
+  db.prepare("UPDATE production SET employee_id = ? WHERE employee_id = ?").run(to.id, from.id);
+  db.prepare("UPDATE production SET published_for = ? WHERE published_for = ?").run(to.id, from.id);
+  db.prepare("UPDATE warehouse_stock SET employee_id = ? WHERE employee_id = ?").run(to.id, from.id);
+  db.prepare("UPDATE warehouse_stock SET sewn_by = ? WHERE sewn_by = ?").run(to.id, from.id);
+  db.prepare("UPDATE warehouse_stock SET filled_by = ? WHERE filled_by = ?").run(to.id, from.id);
+  db.prepare("DELETE FROM employees WHERE id = ?").run(from.id);
+
+  logAudit({ user: req.session.username, action: "employee_merge",
+             comment: `${from.name} → ${to.name}: начислений ${stats.entries}, выплат ${stats.payouts}` });
+  res.json({ ok: true, ...stats,
+             message: `Работы «${from.name}» переданы «${to.name}», запись убрана. Деньги и история сохранены.` });
+});
+
 // Убрать тестовых и пометки. Только тех, за кем нет ни денег, ни работ —
 // иначе оборвётся история и суммы повиснут без хозяина.
 router.post("/employees-cleanup", (req, res) => {
