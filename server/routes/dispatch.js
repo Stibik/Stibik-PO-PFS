@@ -2,6 +2,8 @@ import express from "express";
 import { db, logAudit, nextStockNumber } from "../db.js";
 import { requireAuth, requirePermission } from "../middleware/auth.js";
 
+function uid(prefix){ return prefix + "_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+
 const router = express.Router();
 router.use(requireAuth);
 router.use(requirePermission("production"));
@@ -156,6 +158,102 @@ router.get("/list", (req, res) => {
     return acc;
   }, {});
   res.json({ items, counts, total: items.length });
+});
+
+// Подтверждение работы и создание начисления — действия МЕНЕДЖЕРА, поэтому
+// они здесь, под правом «Производство». Раньше лежали в модуле зарплаты, и
+// менеджер без права «Зарплата» не мог подтвердить сделанную работу вообще.
+router.post("/accept/:entryId", (req, res) => {
+  const e = db.prepare("SELECT * FROM payroll_entries WHERE id = ?").get(req.params.entryId);
+  if (!e) return res.status(404).json({ error: "not_found", message: "Начисление не найдено" });
+  if (e.status !== "pending") {
+    return res.status(400).json({ error: "bad_status", message: "Эту работу уже подтвердили" });
+  }
+  const now = new Date().toISOString();
+  db.prepare("UPDATE payroll_entries SET status = 'payable', accepted_at = ?, accepted_by = ? WHERE id = ?")
+    .run(now, req.session.username, e.id);
+  db.prepare(`INSERT INTO payroll_entry_log (id, entry_id, at, user, action, field, old_value, new_value, comment)
+              VALUES (?,?,?,?,'accept','status','отложено','к выплате','Подтверждено в «Производстве»')`)
+    .run(uid("plog"), e.id, now, req.session.username);
+  logAudit({ user: req.session.username, action: "payroll_accept",
+             comment: `${e.product_name || e.article}: ${Math.round(Number(e.amount) || 0)} ₸` });
+  res.json({ ok: true, message: "Работа принята — сумма ушла в «К выплате»." });
+});
+
+// Начисление пропало (освободили заказ, перенос из старой системы) — создаём заново
+router.post("/accrue/:productionId", (req, res) => {
+  const prod = db.prepare("SELECT * FROM production WHERE id = ?").get(req.params.productionId);
+  if (!prod) return res.status(404).json({ error: "not_found", message: "Позиция не найдена" });
+  if (!prod.employee_id) return res.status(400).json({ error: "no_employee", message: "У позиции не указан исполнитель" });
+  const exists = db.prepare("SELECT id FROM payroll_entries WHERE production_id = ? AND status != 'cancelled'").get(prod.id);
+  if (exists) return res.status(400).json({ error: "already", message: "Начисление уже есть" });
+
+  const item = prod.article ? db.prepare("SELECT * FROM price_items WHERE article = ?").get(prod.article) : null;
+  const rate = item ? Number(item.labor_rate) || 0 : 0;
+  const order = prod.order_id ? db.prepare("SELECT qty, shop FROM orders WHERE id = ?").get(prod.order_id) : null;
+  const qty = Number(order?.qty) || Number(prod.quantity) || 1;
+  const now = new Date().toISOString();
+  const id = uid("pay");
+  db.prepare(`INSERT INTO payroll_entries
+    (id, employee_id, production_id, order_id, shop, article, product_name, qty, rate, amount,
+     kind, status, created_by, created_at, reported_done, assigned_by, assigned_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?, 'order','pending',?,?,0,?,?)`)
+    .run(id, prod.employee_id, prod.id, prod.order_id, order?.shop || prod.shop || null,
+         prod.article, prod.product_name, qty, rate, Math.round(rate * qty * 100) / 100,
+         req.session.username, now, req.session.username, now);
+  logAudit({ user: req.session.username, action: "payroll_accrue",
+             comment: `${prod.product_name || prod.article}: ${Math.round(rate * qty)} ₸` });
+  res.json({ ok: true, rateFound: rate > 0, amount: Math.round(rate * qty),
+             message: rate > 0 ? "Начисление создано." : "Начисление создано, но расценка в Справочнике не заполнена." });
+});
+
+// «Сшить на запас» — задание швее. Живёт ЗДЕСЬ, а не в модуле зарплаты:
+// кнопка стоит на вкладке «Производство», и менеджеру с правом «Производство»
+// она должна быть доступна. Раньше метод лежал в payroll.js, закрытом правом
+// «Зарплата», и менеджер получал отказ, хотя галочка у него стояла.
+router.post("/stock-task", (req, res) => {
+ try {
+  const b = req.body || {};
+  const emp = b.employeeId ? db.prepare("SELECT * FROM employees WHERE id = ?").get(b.employeeId) : null;
+  if (!emp) return res.status(400).json({ error: "no_employee", message: "Выберите, кто шьёт" });
+  const service = ["не определено","не определен","не определён","без оплаты","перекрыто","перекрыт","возврат","отмена","пропустим","хз","-","—"];
+  if (service.includes(String(emp.name || "").toLowerCase().trim())) {
+    return res.status(400).json({ error: "service_employee",
+      message: `«${emp.name}» — это пометка из старой таблицы, а не сотрудник. Выберите настоящего человека.` });
+  }
+  const qty = Number(b.qty) > 0 ? Number(b.qty) : 0;
+  if (!qty) return res.status(400).json({ error: "bad_qty", message: "Количество должно быть больше нуля" });
+
+  let item = null;
+  if (b.itemId) item = db.prepare("SELECT * FROM price_items WHERE id = ?").get(b.itemId);
+  if (!item && b.article) item = db.prepare("SELECT * FROM price_items WHERE article = ?").get(b.article);
+  if (!item) return res.status(400).json({ error: "item_not_found", message: "Товар не найден в Справочнике" });
+
+  const rate = Number(item.labor_rate) || 0;
+  // Расценки может не быть — работа всё равно делается, но просим согласиться
+  if (!(rate > 0) && b.confirmNoRate !== true) {
+    return res.status(400).json({ error: "no_rate",
+      message: `У товара «${item.name || item.article}» не задана расценка в Справочнике. ` +
+               `Можно создать задание без неё — тогда сумму проставите позже.` });
+  }
+
+  const now = new Date().toISOString();
+  const prodId = uid("prod");
+  db.prepare(`INSERT INTO production (id, order_id, article, product_name, quantity, shop,
+              stage, employee_id, manager_comment, created_at)
+              VALUES (?, NULL, ?, ?, ?, NULL, 'to_stock', ?, ?, ?)`)
+    .run(prodId, item.article || "", item.name || item.kaspi_name || "", qty,
+         b.employeeId, String(b.comment || "").trim().slice(0, 500) || null, now);
+
+  logAudit({ user: req.session.username, action: "production_stock_task",
+             comment: `Задание на запас: ${item.name || item.article} ×${qty}, шьёт ${emp.name}` });
+  res.json({ ok: true, productionId: prodId, rate,
+             message: `Задание создано: шьёт ${emp.name}. Отметьте «Сшито», когда будет готово.` +
+                      (rate > 0 ? "" : " Расценка не задана — проставьте её в Справочнике до выплаты.") });
+ } catch (err) {
+  console.error("[dispatch/stock-task] Ошибка:", err.message, err.stack);
+  res.status(500).json({ error: "internal_error", message: "Не получилось создать задание: " + err.message });
+ }
 });
 
 // Швея отчиталась: чехол сшит. Только теперь изделие появляется на складе —
