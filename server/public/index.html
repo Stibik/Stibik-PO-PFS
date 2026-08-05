@@ -662,6 +662,7 @@
         <input type="file" id="bulkPhotosInput" accept="image/*" multiple style="display:none">
         <button class="btn secondary" id="btnImportCatalog">Импорт из Kaspi (Excel)</button>
         <input type="file" id="importCatalogInput" accept=".xlsx,.xls" style="display:none">
+        <button class="btn secondary" id="btnMaterialPrices">Цены материалов</button>
         <button class="btn secondary" id="btnExportCatalog">Экспорт в Excel</button>
         <button class="btn secondary" id="btnImportCatalogFilled">Загрузить заполненный файл</button>
         <input type="file" id="importCatalogFilledInput" accept=".xlsx,.xls" style="display:none">
@@ -721,7 +722,8 @@
           <div><label>GTIN / штрихкод</label><input id="ci_gtin" type="text" placeholder="напр. 4870123456789"></div>
           <div><label>Расценка забивщику, ₸ (для Зарплаты)</label><input id="ci_laborRate" type="number" step="1">
             <div style="font-size:11px; color:var(--ink-soft); margin-top:3px;">Швея на окладе — сдельно за пошив не начисляется</div></div>
-          <div><label>Затраты на материал, ₸</label><input id="ci_materialCost" type="number" step="1"></div>
+          <div><label>Затраты на материал, ₸</label><input id="ci_materialCost" type="number" step="1">
+            <div id="ci_matCalc" style="font-size:11.5px; margin-top:4px;"></div></div>
           <div><label>Прочие затраты, ₸</label><input id="ci_miscCost" type="number" step="1"></div>
           <div><label>Ветошь, ₸</label><input id="ci_ragsCost" type="number" step="1"></div>
           <div><label>Доставка, ₸ за шт</label><input id="ci_deliveryCost" type="number" step="1"></div>
@@ -1344,6 +1346,27 @@
     <div class="modal-actions">
       <div id="rollbackActions"></div>
       <button class="btn secondary" id="rollbackClose">Закрыть</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="matPricesOverlay">
+  <div class="modal" style="max-width:480px;">
+    <h3>Цены материалов за м²</h3>
+    <div style="font-size:12.5px; color:var(--ink-soft); margin-top:-8px;">
+      По ним считается расход на изделие: площадь цилиндра плюс 15% на швы и раскрой.
+    </div>
+    <div id="matPricesBody" style="margin-top:12px;"></div>
+    <div style="display:flex; gap:8px; margin-top:10px;">
+      <input type="text" id="matNewName" placeholder="Материал, например ПВХ" style="flex:1;">
+      <input type="number" id="matNewPrice" placeholder="₸ за м²" style="width:110px;">
+      <button class="btn secondary" id="matAdd">Добавить</button>
+    </div>
+    <div class="error" id="matPricesError"></div>
+    <div class="modal-actions">
+      <div></div>
+      <div><button class="btn secondary" id="matPricesClose">Закрыть</button>
+      <button class="btn amber" id="matPricesSave">Сохранить</button></div>
     </div>
   </div>
 </div>
@@ -1990,7 +2013,7 @@
       myRole = data.role;
       myPermissions = data.permissions || [];
       setCurrentUser(data.username, data.role);
-      if(data.mustChangePassword) setTimeout(()=>openPasswordForm(true), 400);
+      if(data.mustChangePassword && !window.__impersonating) setTimeout(()=>openPasswordForm(true), 400);
       applyRoleUI();
       showApp();
       await loadAll();
@@ -2270,8 +2293,9 @@
       "Прочие затраты": it.miscCost??"",
       "Ветошь": it.ragsCost??"",
       "Себестоимость": it.costPrice??"",
-      "Маржа тг": (()=>{ const m = catalogMargin(it); return m ? Math.round(m.sum) : ""; })(),
-      "Маржа %": (()=>{ const m = catalogMargin(it); return m ? m.pct : ""; })(),
+      "Маржа тг": (()=>{ const m = catalogMargin(it); return m.ok ? Math.round(m.sum) : ""; })(),
+      "Маржа %": (()=>{ const m = catalogMargin(it); return m.ok ? m.pct : ""; })(),
+      "Почему не считается": (()=>{ const m = catalogMargin(it); return m.ok ? "" : m.why; })(),
       "Розница": it.retailPrice??"",
       "Заметка": it.note||"",
       "Цена Kaspi (справка)": it.kaspiPrice||"",
@@ -2413,27 +2437,169 @@
   // Маржа считается по тем же правилам, что в карточке: розница минус
   // себестоимость. Низкая — подсвечиваем строку, чтобы не проглядеть.
   const MARGIN_LOW = 15, MARGIN_WARN = 25;
+  // Из чего складывается себестоимость. Держим списком, чтобы показать разбор
+  // и честно сказать, каких именно цифр не хватает.
+  // ---------- Расход материала по размеру ----------
+  // Груша и мешок — цилиндр: боковина π·D·H плюс два круга по D. Считаем в
+  // квадратных метрах и добавляем припуск на швы: раскрой никогда не бывает
+  // без отхода, и без этой прибавки расчёт стабильно занижает материал.
+  const SEAM_ALLOWANCE = 1.15;   // +15% на швы и раскрой
+  let materialPrices = null;
+
+  function cylinderArea(diameterCm, heightCm){
+    const d = Number(diameterCm) || 0, h = Number(heightCm) || 0;
+    if(!(d > 0) || !(h > 0)) return null;
+    const side = Math.PI * d * h;               // боковая поверхность, см²
+    const caps = 2 * Math.PI * Math.pow(d / 2, 2); // дно и верх
+    const cm2 = (side + caps) * SEAM_ALLOWANCE;
+    return { m2: cm2 / 10000, side, caps };
+  }
+
+  async function loadMaterialPrices(){
+    if(materialPrices) return materialPrices;
+    try{ materialPrices = await api("/catalog/material-prices"); }
+    catch(e){ materialPrices = {}; }
+    return materialPrices;
+  }
+
+  async function updateMaterialCalc(){
+    const box = document.getElementById("ci_matCalc");
+    if(!box) return;
+    const d = document.getElementById("ci_diameter").value;
+    const h = document.getElementById("ci_height").value;
+    const material = (document.getElementById("ci_material") || {}).value || "";
+    const a = cylinderArea(d, h);
+    if(!a){ box.innerHTML = `<span style="color:var(--ink-soft);">Заполните диаметр и высоту — посчитаю расход материала</span>`; return; }
+    const prices = await loadMaterialPrices();
+    const price = Number(prices[material]) || 0;
+    const m2 = Math.round(a.m2 * 1000) / 1000;
+    if(!price){
+      box.innerHTML = `<span style="color:var(--amber);">Нужно ${m2} м² материала.</span>
+        <span style="color:var(--ink-soft);">Цена «${esc(material || "материал не выбран")}» за м² не задана —
+        поставьте её кнопкой «Цены материалов».</span>`;
+      return;
+    }
+    const sum = Math.round(m2 * price);
+    box.innerHTML = `<span style="color:var(--ink-soft);">${m2} м² × ${money(price)} ₸ = </span>
+      <b>${money(sum)} ₸</b>
+      <button type="button" class="btn secondary" id="ci_applyMat" style="padding:2px 8px; font-size:11px; margin-left:6px;">Подставить</button>`;
+    document.getElementById("ci_applyMat").addEventListener("click", ()=>{
+      document.getElementById("ci_materialCost").value = sum;
+      document.getElementById("ci_materialCost").dispatchEvent(new Event("input", { bubbles:true }));
+      toast(`Материал: ${money(sum)} ₸ на ${m2} м²`);
+    });
+  }
+  ["ci_diameter","ci_height","ci_material"].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.addEventListener("input", updateMaterialCalc);
+    if(el) el.addEventListener("change", updateMaterialCalc);
+  });
+
+  document.getElementById("btnMaterialPrices").addEventListener("click", async ()=>{
+    materialPrices = null;
+    const prices = await loadMaterialPrices();
+    // Подсказываем материалы, которые уже встречаются в Справочнике,
+    // чтобы не вспоминать их названия по памяти
+    const used = Array.from(new Set(catalogItems.map(i=>i.material).filter(Boolean)));
+    const all = Array.from(new Set([...Object.keys(prices), ...used]));
+    renderMatPrices(all, prices);
+    document.getElementById("matPricesError").textContent = "";
+    document.getElementById("matPricesOverlay").classList.add("show");
+  });
+
+  function renderMatPrices(names, prices){
+    document.getElementById("matPricesBody").innerHTML = names.length
+      ? names.map(n=>`
+        <div style="display:flex; align-items:center; gap:8px; padding:5px 0; border-bottom:1px solid var(--line);">
+          <span style="flex:1; font-size:13px;">${esc(n)}</span>
+          <input type="number" data-mat="${esc(n)}" value="${Number(prices[n]) || ""}"
+            placeholder="не задана" style="width:120px;"> <span style="font-size:12px; color:var(--ink-soft);">₸/м²</span>
+        </div>`).join("")
+      : `<div style="color:var(--ink-soft); font-size:13px;">Материалов пока нет — добавьте ниже.</div>`;
+  }
+
+  document.getElementById("matAdd").addEventListener("click", ()=>{
+    const name = document.getElementById("matNewName").value.trim();
+    const price = Number(document.getElementById("matNewPrice").value) || 0;
+    if(!name){ document.getElementById("matPricesError").textContent = "Впишите название материала"; return; }
+    const cur = {};
+    document.querySelectorAll("[data-mat]").forEach(i=>{ cur[i.dataset.mat] = Number(i.value) || 0; });
+    cur[name] = price;
+    renderMatPrices(Object.keys(cur), cur);
+    document.getElementById("matNewName").value = "";
+    document.getElementById("matNewPrice").value = "";
+    document.getElementById("matPricesError").textContent = "";
+  });
+
+  document.getElementById("matPricesClose").addEventListener("click", ()=>
+    document.getElementById("matPricesOverlay").classList.remove("show"));
+
+  document.getElementById("matPricesSave").addEventListener("click", async ()=>{
+    const body = {};
+    document.querySelectorAll("[data-mat]").forEach(i=>{
+      const v = Number(i.value);
+      if(Number.isFinite(v) && v > 0) body[i.dataset.mat] = v;
+    });
+    try{
+      const r = await api("/catalog/material-prices", { method:"PUT", body: JSON.stringify(body) });
+      materialPrices = r.prices || body;
+      document.getElementById("matPricesOverlay").classList.remove("show");
+      toast(r.message || "Сохранено");
+      updateMaterialCalc();
+    }catch(e){ document.getElementById("matPricesError").textContent = e.message; }
+  });
+
+  const COST_PARTS = [
+    { key:"materialCost", label:"материал" },
+    { key:"miscCost",     label:"фурнитура" },
+    { key:"ragsCost",     label:"наполнитель" },
+    { key:"laborRate",    label:"работа" },
+    { key:"deliveryCost", label:"доставка" }
+  ];
   function catalogMargin(it){
     const retail = Number(it.retailPrice) || 0;
-    if(!retail) return null;
-    let cost = Number(it.costPrice) || 0;
-    if(!cost){
-      cost = ["materialCost","miscCost","ragsCost","laborRate","deliveryCost"].reduce((s,k)=>s + (Number(it[k])||0), 0)
-        + retail * (Number(it.taxPercent)||0) / 100;
+    // Раньше при нехватке данных возвращался просто null, и в таблице стоял
+    // прочерк — одинаковый и когда нет розницы, и когда нет себестоимости.
+    // Понять, чего именно не хватает, было нельзя. Теперь причина называется.
+    if(!retail) return { ok:false, why:"нет розничной цены", missing:["Розничная цена"] };
+
+    const direct = Number(it.costPrice) || 0;
+    const parts = COST_PARTS.map(p=>({ ...p, value: Number(it[p.key]) || 0 }));
+    const filled = parts.filter(p=>p.value > 0);
+    const tax = retail * (Number(it.taxPercent) || 0) / 100;
+
+    let cost, source;
+    if(direct > 0){ cost = direct; source = "себестоимость задана вручную"; }
+    else {
+      cost = parts.reduce((s,p)=>s + p.value, 0) + tax;
+      source = "сложено из затрат";
     }
-    if(!cost) return null;
+    if(!cost) {
+      return { ok:false, why:"не заполнены затраты", missing: parts.map(p=>p.label) };
+    }
     const sum = retail - cost;
-    return { sum, pct: Math.round(sum / retail * 100) };
+    return { ok:true, sum, pct: Math.round(sum / retail * 100), cost, retail, tax, source,
+             parts, missing: direct > 0 ? [] : parts.filter(p=>!p.value).map(p=>p.label) };
   }
   function catalogMarginCell(it){
     const m = catalogMargin(it);
-    if(!m) return `<span style="color:var(--ink-soft);">—</span>`;
+    if(!m.ok){
+      return `<span style="color:var(--red); cursor:help; font-size:11.5px;"
+        title="Маржа не считается: ${esc(m.why)}. Не хватает: ${esc(m.missing.join(", "))}">не считается</span>`;
+    }
     const color = m.pct < MARGIN_LOW ? "var(--red)" : m.pct < MARGIN_WARN ? "#B45309" : "var(--green)";
-    return `<span style="color:${color}; font-weight:600;" title="Розница минус все затраты">${money(m.sum)} ₸<div style="font-size:11px;">${m.pct}%</div></span>`;
+    // Разбор прямо в подсказке: видно, из чего сложилась себестоимость
+    const breakdown = m.source === "сложено из затрат"
+      ? m.parts.map(p=>`${p.label}: ${money(p.value)}`).join(", ") + (m.tax ? `, налог: ${money(m.tax)}` : "")
+      : m.source;
+    const warn = m.missing.length
+      ? `<div style="font-size:10.5px; color:var(--red);">нет: ${esc(m.missing.join(", "))}</div>` : "";
+    return `<span style="color:${color}; font-weight:600; cursor:help;"
+      title="Розница ${money(m.retail)} − себестоимость ${money(m.cost)} (${breakdown})">${money(m.sum)} ₸<div style="font-size:11px;">${m.pct}%</div></span>${warn}`;
   }
   function catalogRowStyle(it){
     const m = catalogMargin(it);
-    if(!m) return "";
+    if(!m.ok) return "";
     if(m.pct < MARGIN_LOW) return "background:#FDF3F1;";
     if(m.pct < MARGIN_WARN) return "background:#FFFBEB;";
     return "";
@@ -10048,10 +10214,16 @@
   // ---------- Смена пароля ----------
   let passwordForced = false;
   function openPasswordForm(forced){
+    // Во время примерки чужой роли пароль менять не просим: это не ваш пароль,
+    // а окно без «Отмены» намертво запирало экран — выйти обратно в свою роль
+    // было нечем.
+    if(forced && window.__impersonating) return;
     passwordForced = !!forced;
     document.getElementById("pwTitle").textContent = forced ? "Задайте свой пароль" : "Смена пароля";
     document.getElementById("pwForced").style.display = forced ? "block" : "none";
-    document.getElementById("pw_cancel").style.display = forced ? "none" : "";
+    // Кнопка выхода есть всегда: запирать человека в окне нельзя
+    document.getElementById("pw_cancel").style.display = "";
+    document.getElementById("pw_cancel").textContent = forced ? "Позже" : "Отмена";
     ["pw_old","pw_new","pw_new2"].forEach(id=>document.getElementById(id).value = "");
     document.getElementById("pw_error").textContent = "";
     document.getElementById("passwordOverlay").classList.add("show");
@@ -10318,7 +10490,7 @@
       myPermissions = me.permissions || [];
       myEmployeeId = me.employeeId || null;
       window.__impersonating = me.impersonating || null;
-      if(me.mustChangePassword) setTimeout(()=>openPasswordForm(true), 400);
+      if(me.mustChangePassword && !window.__impersonating) setTimeout(()=>openPasswordForm(true), 400);
       setCurrentUser(me.username, me.role, me.roleLabel);
       applyRoleUI();
       showApp();
