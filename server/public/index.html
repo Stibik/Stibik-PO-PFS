@@ -5787,31 +5787,72 @@
   const legsOf = (it)=>legsFrom(`${it.name || ""} ${it.kaspiName || ""} ${it.printName || ""}`);
   const criterionValue = (it, key)=> key === "legs" ? legsOf(it) : (it[key] == null ? "" : String(it[key]));
 
+  // Отбор по одному признаку с учётом всех остальных выбранных.
+  // Именно это делает подбор осмысленным: выбрали диаметр 35 — в «Высоте»
+  // остаются только те высоты, которые у тридцать пятого реально бывают.
+  // Без этого можно было набрать невозможное сочетание и упереться
+  // в «ничего не найдено», не понимая, какой из пяти выборов лишний.
+  function applyCriteria(items, exceptKey){
+    let r = items;
+    for(const [k, v] of Object.entries(spCriteriaValues)){
+      if(!v || k === exceptKey) continue;
+      r = r.filter(it=>criterionValue(it, k) === v);
+    }
+    return r;
+  }
+
+  function criteriaValues(items, key){
+    return Array.from(new Set(items.map(it=>criterionValue(it, key))
+      .filter(v=>v !== "" && v !== "0")))
+      .sort((a, b)=>{
+        const na = Number(a), nb = Number(b);
+        return (Number.isFinite(na) && Number.isFinite(nb)) ? na - nb : String(a).localeCompare(String(b), "ru");
+      });
+  }
+
   function renderCriteria(items, onChange){
     const wrap = document.getElementById("spCriteriaWrap");
     const box = document.getElementById("spCriteria");
     if(!wrap || !box) return;
+
+    // Сначала убираем выбранное, чего в этой группе уже нет — иначе оно молча
+    // обнуляет список и человек видит пустоту без объяснения
+    let dropped = false;
+    for(const c of CRITERIA){
+      const v = spCriteriaValues[c.key];
+      if(v && !criteriaValues(items, c.key).includes(v)){ delete spCriteriaValues[c.key]; dropped = true; }
+    }
+
     const blocks = CRITERIA.map(c=>{
-      // Показываем признак, только если он у этой группы вообще заполнен
-      const vals = Array.from(new Set(items.map(it=>criterionValue(it, c.key))
-        .filter(v=>v !== "" && v !== "0"))).sort((a,b)=>{
-          const na = Number(a), nb = Number(b);
-          return (Number.isFinite(na) && Number.isFinite(nb)) ? na - nb : String(a).localeCompare(String(b), "ru");
-        });
-      if(vals.length < 2) return "";
+      // Варианты считаем по товарам, отфильтрованным ОСТАЛЬНЫМИ признаками
+      const pool = applyCriteria(items, c.key);
+      const vals = criteriaValues(pool, c.key);
+      const all = criteriaValues(items, c.key);
+      if(all.length < 2) return "";        // выбирать не из чего
+      const cur = spCriteriaValues[c.key] || "";
       return `<div><label style="font-size:11.5px;">${c.label}</label>
         <select data-crit="${c.key}" style="width:100%;">
-          <option value="">— любой —</option>
-          ${vals.map(v=>`<option value="${esc(v)}" ${spCriteriaValues[c.key]===v?"selected":""}>${esc(v)}</option>`).join("")}
+          <option value="">— любой (${vals.length}) —</option>
+          ${vals.map(v=>{
+            const n = pool.filter(it=>criterionValue(it, c.key) === v).length;
+            return `<option value="${esc(v)}" ${cur===v?"selected":""}>${esc(v)}${n>1?` (${n})`:""}</option>`;
+          }).join("")}
         </select></div>`;
     }).filter(Boolean);
 
     wrap.style.display = blocks.length ? "" : "none";
-    box.innerHTML = blocks.join("");
+    box.innerHTML = blocks.join("") +
+      (Object.values(spCriteriaValues).some(Boolean)
+        ? `<div style="grid-column:1/-1;"><button type="button" class="btn secondary" id="spCritReset"
+             style="padding:3px 10px; font-size:11.5px;">Сбросить признаки</button></div>` : "");
+
     box.querySelectorAll("[data-crit]").forEach(sel=>sel.addEventListener("change", ()=>{
       spCriteriaValues[sel.dataset.crit] = sel.value;
       onChange();
     }));
+    const reset = document.getElementById("spCritReset");
+    if(reset) reset.addEventListener("click", ()=>{ spCriteriaValues = {}; onChange(); });
+    if(dropped) onChange();
   }
 
   function fillCascade(groupSel, matSel, itemSel, searchInput){
@@ -5829,9 +5870,7 @@
       let items = inGroup.filter(it=>!m || it.material === m);
       // Признаки собираем по тому, что осталось после группы и материала
       renderCriteria(items, refresh);
-      for(const [key, val] of Object.entries(spCriteriaValues)){
-        if(val) items = items.filter(it=>criterionValue(it, key) === val);
-      }
+      items = applyCriteria(items, null);
       // Поиск идёт и по короткому коду: «М1202» или «40150К» найдут изделие
       // быстрее, чем прокрутка сотни длинных названий из Kaspi
       if(q){
