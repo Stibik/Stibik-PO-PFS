@@ -10129,7 +10129,11 @@
   // ---------- Шапка: пользователь, состояние данных, уведомления ----------
   let myEmployeeId = null;
   const ROLE_LABELS_UI = { admin:"Администратор", manager:"Менеджер", warehouse:"Склад", stitcher:"Забивщик" };
+  // Имя текущего пользователя нужно напоминаниям: свои поставленные задачи
+  // показываем отдельно от чужих
+  let currentUsername = "";
   function setCurrentUser(username, role, roleLabel){
+    currentUsername = username || "";
     document.getElementById("whoami").textContent = username || "";
     document.getElementById("hdrRole").textContent = roleLabel || ROLE_LABELS_UI[role] || role;
     document.getElementById("hdrAvatar").textContent = (username || "?").slice(0, 2).toUpperCase();
@@ -10209,6 +10213,49 @@
         setTimeout(()=>document.getElementById("cnBtnInventory").click(), 300);
       }});
     }catch(e){ /* контур Китая ещё не залит на сервер — не повод ломать шапку */ }
+
+    // ---------- Зависшие задачи ----------
+    // Задачу поставили, а к ней никто не притронулся. Напоминаем на следующий
+    // день: тому, кто ставил — «попросите ускорить», и отдельно видно, на ком
+    // она висит. Без этого задача может неделю лежать в «Надо сделать», и все
+    // считают, что кто-то другой ей занимается.
+    try{
+      const tasks = await api("/tasks");
+      const now = Date.now();
+      const daysSince = (d)=>d ? Math.floor((now - new Date(d).getTime()) / 86400000) : 0;
+
+      const stuck = tasks.filter(t=>t.status === "todo" && !t.isArchived && daysSince(t.createdAt) >= 1);
+      const mine = stuck.filter(t=>t.createdBy && t.createdBy === currentUsername);
+      const overdue = tasks.filter(t=>t.overdue && t.status !== "done" && !t.isArchived);
+      const goTasks = (filterEmployee)=>()=>{
+        document.querySelector('.tab-btn[data-tab="tasks"]').click();
+        if(filterEmployee){
+          const sel = document.getElementById("taskFilterEmployee");
+          if(sel){ sel.value = filterEmployee; loadTasks(); }
+        }
+      };
+
+      // Свои поставленные показываем отдельно и первыми: это ваш «хвост»
+      if(mine.length){
+        const who = Array.from(new Set(mine.map(t=>t.employeeName).filter(Boolean)));
+        alerts.push({
+          text: `Ваши задачи не взяли в работу: ${mine.length}` +
+                (who.length ? ` — ${who.join(", ")}. Попросите ускорить` : " — исполнитель не назначен"),
+          go: goTasks(mine[0].employeeId || "")
+        });
+      }
+      // Остальные зависшие — для тех, кто смотрит за всеми
+      const others = stuck.filter(t=>!mine.includes(t));
+      if(others.length && (myRole === "admin" || myRole === "manager")){
+        const byWho = {};
+        others.forEach(t=>{ const k = t.employeeName || "не назначено"; byWho[k] = (byWho[k] || 0) + 1; });
+        const list = Object.entries(byWho).map(([n, c])=>`${n}: ${c}`).join(", ");
+        alerts.push({ text: `Задачи висят больше суток — надо поднажать. ${list}`, go: goTasks("") });
+      }
+      if(overdue.length){
+        alerts.push({ text: `Просрочено задач: ${overdue.length} — срок вышел, а работа не закрыта`, go: goTasks("") });
+      }
+    }catch(e){ /* раздел задач может быть не залит — шапку из-за этого не роняем */ }
 
     const badge = document.getElementById("hdrBadge");
     badge.style.display = alerts.length ? "flex" : "none";
