@@ -228,7 +228,7 @@ router.get("/employees-audit", (req, res) => {
     const stock = db.prepare("SELECT COUNT(*) AS n FROM warehouse_stock WHERE employee_id = ? OR sewn_by = ? OR filled_by = ?").get(e.id, e.id, e.id);
     const kind = isServiceName(e.name) ? "service" : (isTestName(e.name) ? "test" : "real");
     return {
-      id: e.id, name: e.name, kind,
+      id: e.id, name: e.name, kind, role: e.role || "both",
       works: money.n, sum: Math.round(money.s),
       productionRows: prod.n, stockRows: stock.n,
       // Удалять можно только тех, за кем ничего не числится
@@ -250,6 +250,14 @@ router.get("/employees-audit", (req, res) => {
 router.put("/employees/:id", (req, res) => {
   const e = db.prepare("SELECT * FROM employees WHERE id = ?").get(req.params.id);
   if (!e) return res.status(404).json({ error: "not_found", message: "Сотрудник не найден" });
+  // Роль можно менять отдельно от имени
+  if (req.body?.role !== undefined && req.body?.name === undefined) {
+    const role = ["sew", "fill", "both"].includes(req.body.role) ? req.body.role : "both";
+    db.prepare("UPDATE employees SET role = ? WHERE id = ?").run(role, e.id);
+    const LABEL = { sew: "швея", fill: "забивщик", both: "и шьёт, и забивает" };
+    logAudit({ user: req.session.username, action: "employee_role", comment: `${e.name}: ${LABEL[role]}` });
+    return res.json({ ok: true, id: e.id, role, message: `${e.name} — ${LABEL[role]}` });
+  }
   const name = String(req.body?.name || "").replace(/[\r\n\t]+/g, " ").trim().slice(0, 60);
   if (!name) return res.status(400).json({ error: "no_name", message: "Имя не может быть пустым" });
   const dupe = db.prepare("SELECT id FROM employees WHERE lower(name) = lower(?) AND id != ?").get(name, e.id);
