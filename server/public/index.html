@@ -678,7 +678,7 @@
       </div>
       <div class="tbl-wrap">
         <table>
-          <thead><tr><th></th><th>SKU</th><th>Название (Kaspi)</th><th>Название для печати</th><th>Группа</th><th>GTIN</th><th class="num">Розница</th><th class="num" title="Розница минус все затраты">Маржа</th><th title="Показывать товар в прайс-листе">В прайсе</th><th title="Чего не хватает для работы">Готовность</th><th></th></tr></thead>
+          <thead><tr><th></th><th>Код</th><th>SKU</th><th>Название (Kaspi)</th><th>Название для печати</th><th>Группа</th><th>GTIN</th><th class="num">Розница</th><th class="num" title="Розница минус все затраты">Маржа</th><th title="Показывать товар в прайс-листе">В прайсе</th><th title="Чего не хватает для работы">Готовность</th><th></th></tr></thead>
           <tbody id="catalogBody"><tr><td colspan="9" style="text-align:center;color:var(--ink-soft);padding:20px;">Справочник пуст — нажмите «Импорт из Kaspi», чтобы загрузить файл выгрузки активных товаров</td></tr></tbody>
         </table>
       </div>
@@ -1721,7 +1721,16 @@
       </div>
     </div>
     <div class="grid2">
+      <div class="full"><label>Поиск по коду или названию</label>
+        <input type="text" id="spSearch" style="width:100%;" placeholder="М1202, 40150К, «манекен 120», артикул...">
+        <div style="font-size:11.5px; color:var(--ink-soft); margin-top:3px;">
+          Короткий код: манекен 120 на 2 ноги — <b>М1202</b>, груша Ø40×150 из кожи — <b>40150К</b>
+        </div></div>
       <div class="full"><label>Группа</label><select id="spGroup" style="width:100%;"></select></div>
+      <div class="full" id="spCriteriaWrap" style="display:none;">
+        <label>Подбор по признакам</label>
+        <div id="spCriteria" style="display:grid; grid-template-columns:1fr 1fr; gap:8px;"></div>
+      </div>
       <div class="full"><label>Материал</label><select id="spMaterial" style="width:100%;"></select></div>
       <div class="full"><label>Товар *</label><select id="spItem" style="width:100%;"></select></div>
       <div><label>Исполнитель *</label><select id="spEmployee" style="width:100%;"></select></div>
@@ -2293,6 +2302,7 @@
       "Прочие затраты": it.miscCost??"",
       "Ветошь": it.ragsCost??"",
       "Себестоимость": it.costPrice??"",
+      "Код": shortCode(it),
       "Маржа тг": (()=>{ const m = catalogMargin(it); return m.ok ? Math.round(m.sum) : ""; })(),
       "Маржа %": (()=>{ const m = catalogMargin(it); return m.ok ? m.pct : ""; })(),
       "Почему не считается": (()=>{ const m = catalogMargin(it); return m.ok ? "" : m.why; })(),
@@ -2439,6 +2449,49 @@
   const MARGIN_LOW = 15, MARGIN_WARN = 25;
   // Из чего складывается себестоимость. Держим списком, чтобы показать разбор
   // и честно сказать, каких именно цифр не хватает.
+  // ---------- Короткий код изделия ----------
+  // Длинные названия из Kaspi для работы не годятся: их не назовёшь вслух и не
+  // найдёшь по памяти. Нужен короткий код по вашей системе:
+  //   манекен 120 см на 2 ноги      → М1202
+  //   груша Ø40 × 150 из кожи       → 40150К
+  const MATERIAL_LETTER = { "пвх":"П", "кожа":"К", "натуральная кожа":"К", "тарпаулин":"Т",
+                            "брезент":"Б", "винил":"В", "нейлон":"Н" };
+  function materialLetter(m){
+    const s = String(m || "").toLowerCase().trim();
+    if(!s) return "";
+    for(const [k, v] of Object.entries(MATERIAL_LETTER)) if(s.includes(k)) return v;
+    return s[0].toUpperCase();
+  }
+  // Число ног у манекена берём из названия: «2х», «2 ноги», «двуногий»
+  function legsFrom(text){
+    const s = String(text || "").toLowerCase();
+    // Граница слова \b здесь не работает: кириллическая «х» для неё не буква,
+    // и «120 см 2х ПВХ» не распознавалось. Смотрим, что после «х» не буква.
+    const m = s.match(/(\d)\s*[хx](?![а-яёa-z])/i) || s.match(/(\d)\s*ног/);
+    if(m) return m[1];
+    if(/двуног|двух\s*ног/.test(s)) return "2";
+    if(/одноног/.test(s)) return "1";
+    return "";
+  }
+  function numFrom(text, re){
+    const m = String(text || "").match(re);
+    return m ? m[1] : "";
+  }
+  function shortCode(it){
+    const name = `${it.name || ""} ${it.kaspiName || ""} ${it.printName || ""}`;
+    const type = String(it.type || "").toLowerCase();
+    const height = Math.round(Number(it.height) || 0) || numFrom(name, /(\d{2,3})\s*см/);
+    const diameter = Math.round(Number(it.diameter) || 0) || numFrom(name, /[ød⌀]\s*(\d{2,3})/i);
+
+    if(/манекен|dummy|mnk/i.test(type + " " + name)){
+      const legs = legsFrom(name);
+      return height ? `М${height}${legs}` : "";
+    }
+    // Груша, мешок и всё остальное цилиндрическое
+    if(diameter && height) return `${diameter}${height}${materialLetter(it.material)}`;
+    return "";
+  }
+
   // ---------- Расход материала по размеру ----------
   // Груша и мешок — цилиндр: боковина π·D·H плюс два круга по D. Считаем в
   // квадратных метрах и добавляем припуск на швы: раскрой никогда не бывает
@@ -2619,9 +2672,12 @@
     const group = document.getElementById("catalogFilterGroup").value;
     const onlyIncomplete = document.getElementById("catalogOnlyIncomplete").checked;
     return catalogItems.filter(it=>{
+      // Ищем и по короткому коду: «М1202», «40150К» — так изделие находится
+      // быстрее, чем по длинному названию из Kaspi
       const okQ = !q || String(it.article||"").toLowerCase().includes(q)
         || String(it.printName||"").toLowerCase().includes(q)
-        || String(it.kaspiName||"").toLowerCase().includes(q);
+        || String(it.kaspiName||"").toLowerCase().includes(q)
+        || shortCode(it).toLowerCase().includes(q);
       const okGroup = !group || (it.category||"") === group;
       // «Незаполненные» — те, с которыми ещё нельзя работать: нет названия для
       // печати, розницы или расценки труда
@@ -2676,6 +2732,8 @@
     body.innerHTML = pageItems.map((it)=>`
       <tr style="${it.isArchived ? "opacity:.5;" : ""}${catalogRowStyle(it)}">
         <td>${it.photo?`<img class="thumb" src="${esc(it.photo)}">`:`<div class="thumb-empty">—</div>`}</td>
+        <td class="mono" style="font-size:12.5px; font-weight:600;">${(()=>{ const c = shortCode(it);
+          return c ? esc(c) : `<span style="color:var(--ink-soft); font-weight:400; font-size:11px;" title="Не хватает размеров или материала">—</span>`; })()}</td>
         <td class="mono" style="font-size:11.5px;">${esc(it.article)}${it.isArchived ? `<div style="font-size:10px; color:var(--ink-soft);">в архиве</div>` : ""}</td>
         <td>${esc(it.kaspiName||"—")}</td>
         <td>${esc(it.printName||"—")}</td>
@@ -5711,10 +5769,56 @@
 
   // ---------- Выбор товара разбивкой: группа → материал → товар ----------
   // Искать текстом среди 233 позиций неудобно, а так выбор сужается сам
-  function fillCascade(groupSel, matSel, itemSel){
+  // ---------- Подбор от типа изделия ----------
+  // У манекена и груши разные признаки: у одного ноги и вес, у другого диаметр
+  // и крепление. Показывать общий список полей бессмысленно — выбираем группу,
+  // и появляются только те признаки, которые у этой группы вообще есть.
+  const CRITERIA = [
+    { key:"diameter", label:"Диаметр, см", unit:"" },
+    { key:"height",   label:"Высота, см",  unit:"" },
+    { key:"weight",   label:"Вес, кг",     unit:"" },
+    { key:"color",    label:"Цвет",        unit:"" },
+    { key:"mount",    label:"Крепление",   unit:"" },
+    { key:"legs",     label:"Ноги",        unit:"" }
+  ];
+  let spCriteriaValues = {};
+
+  // Ноги полем не хранятся — вынимаем из названия тем же правилом, что и в коде
+  const legsOf = (it)=>legsFrom(`${it.name || ""} ${it.kaspiName || ""} ${it.printName || ""}`);
+  const criterionValue = (it, key)=> key === "legs" ? legsOf(it) : (it[key] == null ? "" : String(it[key]));
+
+  function renderCriteria(items, onChange){
+    const wrap = document.getElementById("spCriteriaWrap");
+    const box = document.getElementById("spCriteria");
+    if(!wrap || !box) return;
+    const blocks = CRITERIA.map(c=>{
+      // Показываем признак, только если он у этой группы вообще заполнен
+      const vals = Array.from(new Set(items.map(it=>criterionValue(it, c.key))
+        .filter(v=>v !== "" && v !== "0"))).sort((a,b)=>{
+          const na = Number(a), nb = Number(b);
+          return (Number.isFinite(na) && Number.isFinite(nb)) ? na - nb : String(a).localeCompare(String(b), "ru");
+        });
+      if(vals.length < 2) return "";
+      return `<div><label style="font-size:11.5px;">${c.label}</label>
+        <select data-crit="${c.key}" style="width:100%;">
+          <option value="">— любой —</option>
+          ${vals.map(v=>`<option value="${esc(v)}" ${spCriteriaValues[c.key]===v?"selected":""}>${esc(v)}</option>`).join("")}
+        </select></div>`;
+    }).filter(Boolean);
+
+    wrap.style.display = blocks.length ? "" : "none";
+    box.innerHTML = blocks.join("");
+    box.querySelectorAll("[data-crit]").forEach(sel=>sel.addEventListener("change", ()=>{
+      spCriteriaValues[sel.dataset.crit] = sel.value;
+      onChange();
+    }));
+  }
+
+  function fillCascade(groupSel, matSel, itemSel, searchInput){
     const groups = Array.from(new Set(catalogItems.filter(it=>!it.isArchived).map(it=>it.category).filter(Boolean))).sort();
     groupSel.innerHTML = `<option value="">— все группы —</option>` + groups.map(g=>`<option value="${esc(g)}">${esc(g)}</option>`).join("");
     const refresh = ()=>{
+      const q = ((searchInput && searchInput.value) || "").trim().toLowerCase();
       const g = groupSel.value;
       const inGroup = catalogItems.filter(it=>!it.isArchived && (!g || it.category === g));
       const mats = Array.from(new Set(inGroup.map(it=>it.material).filter(Boolean))).sort();
@@ -5722,13 +5826,42 @@
       matSel.innerHTML = `<option value="">— все материалы —</option>` + mats.map(m=>`<option value="${esc(m)}">${esc(m)}</option>`).join("");
       if(mats.includes(prevMat)) matSel.value = prevMat;
       const m = matSel.value;
-      const items = inGroup.filter(it=>!m || it.material === m)
-        .sort((a,b)=>(a.printName||a.kaspiName||"").localeCompare(b.printName||b.kaspiName||"","ru"));
-      itemSel.innerHTML = `<option value="">— выберите товар —</option>` +
-        items.map(it=>`<option value="${esc(it.article)}">${esc(it.printName || it.kaspiName || it.article)}${it.laborRate ? ` · работа ${money(it.laborRate)} ₸` : " · расценка не задана"}</option>`).join("");
+      let items = inGroup.filter(it=>!m || it.material === m);
+      // Признаки собираем по тому, что осталось после группы и материала
+      renderCriteria(items, refresh);
+      for(const [key, val] of Object.entries(spCriteriaValues)){
+        if(val) items = items.filter(it=>criterionValue(it, key) === val);
+      }
+      // Поиск идёт и по короткому коду: «М1202» или «40150К» найдут изделие
+      // быстрее, чем прокрутка сотни длинных названий из Kaspi
+      if(q){
+        items = items.filter(it=>{
+          const code = shortCode(it).toLowerCase();
+          return code.includes(q) ||
+            String(it.article || "").toLowerCase().includes(q) ||
+            String(it.printName || "").toLowerCase().includes(q) ||
+            String(it.kaspiName || "").toLowerCase().includes(q) ||
+            String(it.name || "").toLowerCase().includes(q);
+        });
+      }
+      items.sort((a,b)=>(a.printName||a.kaspiName||"").localeCompare(b.printName||b.kaspiName||"","ru"));
+      itemSel.innerHTML = (items.length
+        ? `<option value="">— выберите товар (${items.length}) —</option>`
+        : `<option value="">— ничего не найдено —</option>`) +
+        items.map(it=>{
+          const code = shortCode(it);
+          return `<option value="${esc(it.article)}">${code ? `[${esc(code)}] ` : ""}${esc(it.printName || it.kaspiName || it.article)}${it.laborRate ? ` · работа ${money(it.laborRate)} ₸` : " · расценка не задана"}</option>`;
+        }).join("");
+      // Осталось ровно одно — выбираем сразу, лишний клик ни к чему.
+      // Работает и для поиска по коду, и для подбора по признакам.
+      if(items.length === 1){
+        itemSel.value = items[0].article;
+        if(itemSel.onchange) itemSel.onchange();
+      }
     };
     groupSel.onchange = refresh;
     matSel.onchange = refresh;
+    if(searchInput) searchInput.oninput = refresh;
     refresh();
   }
 
@@ -7112,7 +7245,10 @@
       ? `<option value="">— выберите —</option>` + sewers.map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join("")
       : `<option value="">— швей в списке нет, добавьте в «Сотрудники» —</option>`;
     // Выбор сужается по шагам: группа → материал → товар
-    fillCascade(document.getElementById("spGroup"), document.getElementById("spMaterial"), document.getElementById("spItem"));
+    document.getElementById("spSearch").value = "";
+    spCriteriaValues = {};
+    fillCascade(document.getElementById("spGroup"), document.getElementById("spMaterial"),
+                document.getElementById("spItem"), document.getElementById("spSearch"));
     document.getElementById("spItem").onchange = ()=>{
       spItem = catalogItems.find(x=>x.article === document.getElementById("spItem").value) || null;
       updateSpPreview();
