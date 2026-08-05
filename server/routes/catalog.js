@@ -357,4 +357,34 @@ router.post("/bulk-update", async (req, res) => {
   res.json({ updated, created, notFound, snapshot });
 });
 
+// ---------- Цены материалов за квадратный метр ----------
+// Нужны, чтобы считать расход по размеру изделия: у груши площадь однозначно
+// выводится из диаметра и высоты, а цена ткани — величина общая, и держать её
+// в каждой карточке отдельно значит забыть обновить половину.
+function readMaterialPrices() {
+  try {
+    const row = db.prepare("SELECT value FROM meta WHERE key = 'material_prices'").get();
+    return row ? JSON.parse(row.value) : {};
+  } catch (e) { return {}; }
+}
+
+router.get("/material-prices", (req, res) => {
+  res.json(readMaterialPrices());
+});
+
+router.put("/material-prices", (req, res) => {
+  const b = req.body || {};
+  const out = {};
+  for (const [name, price] of Object.entries(b)) {
+    const key = String(name).trim().slice(0, 60);
+    const val = Number(price);
+    if (key && Number.isFinite(val) && val >= 0) out[key] = Math.round(val);
+  }
+  db.prepare(`INSERT INTO meta (key, value) VALUES ('material_prices', ?)
+              ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(JSON.stringify(out));
+  logAudit({ user: req.session.username, action: "material_prices",
+             comment: Object.entries(out).map(([k, v]) => `${k}: ${v}`).join(", ") });
+  res.json({ ok: true, prices: out, message: "Цены материалов сохранены" });
+});
+
 export default router;
