@@ -630,6 +630,10 @@ export function ensureSchema() {
   // номера склада: заказа под таким заданием нет, а сослаться на него надо
   // с первой минуты — швее говорят «шей 50003», а не «шей вон то».
   safeAddColumn("production", "stock_number INTEGER");
+  // Кто чем занимается: швея шьёт чехлы, забивщик набивает. Без этого в окне
+  // «Кто шьёт?» показывались все подряд, включая забивщиков, и наоборот.
+  // 'both' — умеет и то и другое, так что старые записи ничего не теряют.
+  safeAddColumn("employees", "role TEXT DEFAULT 'both'");
   // Отмены и возвраты: разобранное можно убрать в архив, а лишнее — скрыть
   // из списка. Сам заказ при этом остаётся: он живёт в Kaspi и в «Заказах».
   safeAddColumn("orders", "claim_archived INTEGER DEFAULT 0");
@@ -815,7 +819,22 @@ export function bumpOrderNumber(minNext) {
 }
 
 export function nextStockNumber() {
-  const n = parseInt(getMeta("next_stock_number") || "50000", 10);
+  // Номер берём как «максимум из счётчика и того, что уже реально занято».
+  // Одного счётчика мало: если он собьётся или его не запишут, номера начнут
+  // повторяться, и две разные вещи окажутся под одним именем. Смотрим на
+  // занятые номера и на складе, и в заданиях производства — так повтор
+  // невозможен в принципе, а сбитый счётчик чинит сам себя.
+  const counter = parseInt(getMeta("next_stock_number") || "0", 10) || 0;
+  let used = 0;
+  try {
+    const a = db.prepare("SELECT MAX(stock_number) AS m FROM warehouse_stock").get();
+    if (a && a.m) used = Math.max(used, a.m);
+  } catch (e) {}
+  try {
+    const b = db.prepare("SELECT MAX(stock_number) AS m FROM production").get();
+    if (b && b.m) used = Math.max(used, b.m);
+  } catch (e) {}
+  const n = Math.max(counter, used + 1, 50000);
   setMeta("next_stock_number", n + 1);
   return n;
 }
