@@ -5284,7 +5284,7 @@
     const ids = Array.from(whSelected);
     const rows = (window.__whRows || []).filter(i=>ids.includes(i.id) && i.nextAction === "fill");
     if(!rows.length){ toast("Среди выбранных нет сшитых, ждущих забивки"); return; }
-    const pick = await pickEmployee({ title: "Кому отправить на забивку?", allowAll: true, withComment: true });
+    const pick = await pickEmployee({ title: "Кому отправить на забивку?", allowAll: true, withComment: true, role: "fill" });
     if(!pick) return;
     let ok = 0;
     for(const i of rows){
@@ -5339,7 +5339,7 @@
   }
 
   async function whFill(itemId){
-    const pick = await pickEmployee({ title: "Кто забил?" });
+    const pick = await pickEmployee({ title: "Кто забил?", role: "fill" });
     if(!pick || !pick.employeeId) return;
     try{
       const r = await api(`/warehouse/${encodeURIComponent(itemId)}/stage`, { method:"POST",
@@ -5351,7 +5351,7 @@
 
   // Менеджер отправляет чехол в очередь на забивку — как обычный заказ
   async function whSendToProduction(itemId){
-    const pick = await pickEmployee({ title: "Кому отправить на забивку?", allowAll: true, withComment: true });
+    const pick = await pickEmployee({ title: "Кому отправить на забивку?", allowAll: true, withComment: true, role: "fill" });
     if(!pick) return;
     try{
       const r = await api(`/warehouse/${encodeURIComponent(itemId)}/to-production`, { method:"POST",
@@ -5423,7 +5423,7 @@
       if(it){ found = it; group = g; break; }
     }
     if(!found) return;
-    const pick = await pickEmployee({ title: `№ ${found.number || "—"} — кто это сшил?` });
+    const pick = await pickEmployee({ title: `№ ${found.number || "—"} — кто это сшил?`, role: "sew" });
     if(!pick) return;
     const body = { employeeId: pick.employeeId || null };
     if(group.unnamed){
@@ -6940,8 +6940,11 @@
     if(!employeesList.length){ try{ employeesList = await api("/employees"); }catch(e){} }
     if(!catalogItems.length){ try{ catalogItems = await api("/catalog"); }catch(e){} }
     // «не определено» и «Без оплаты» — пометки из старой таблицы, не люди
-    document.getElementById("spEmployee").innerHTML = `<option value="">— выберите —</option>` +
-      realEmployees().map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join("");
+    await loadEmployeeRoles();
+    const sewers = realEmployees("sew");
+    document.getElementById("spEmployee").innerHTML = sewers.length
+      ? `<option value="">— выберите —</option>` + sewers.map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join("")
+      : `<option value="">— швей в списке нет, добавьте в «Сотрудники» —</option>`;
     // Выбор сужается по шагам: группа → материал → товар
     fillCascade(document.getElementById("spGroup"), document.getElementById("spMaterial"), document.getElementById("spItem"));
     document.getElementById("spItem").onchange = ()=>{
@@ -7383,7 +7386,7 @@
     }
     // Швея отчиталась — изделие уходит на склад со своим номером
     wrap.querySelectorAll(".prod-to-fill").forEach(b=>b.addEventListener("click", async ()=>{
-      const pick = await pickEmployee({ title: "Кому отправить на забивку?", allowAll: true, withComment: true });
+      const pick = await pickEmployee({ title: "Кому отправить на забивку?", allowAll: true, withComment: true, role: "fill" });
       if(!pick) return;
       try{
         const r = await api(`/warehouse/${encodeURIComponent(b.dataset.stockId)}/to-production`, { method:"POST",
@@ -7393,7 +7396,7 @@
       }catch(e){ toast("Не получилось: " + e.message); }
     }));
     wrap.querySelectorAll(".prod-sewn").forEach(b=>b.addEventListener("click", async ()=>{
-      const pick = await pickEmployee({ title: "Кто сшил?" });
+      const pick = await pickEmployee({ title: "Кто сшил?", role: "sew" });
       if(!pick || !pick.employeeId) return;
       try{
         const r = await api(`/dispatch/${encodeURIComponent(b.dataset.prodId)}/sewn`, { method:"POST",
@@ -7417,7 +7420,7 @@
     wrap.querySelectorAll(".prod-quick-assign").forEach(b=>b.addEventListener("click", async ()=>{
       let employeeId = prodDefaultEmployeeId;
       if(!employeeId){
-        const pick = await pickEmployee({ title: "Кто шьёт?" });
+        const pick = await pickEmployee({ title: "Кто шьёт?", role: "sew" });
         if(!pick || !pick.employeeId) return;
         employeeId = pick.employeeId;
       }
@@ -7473,14 +7476,31 @@
     const s = String(n||"").trim();
     return isServiceName(s) || isTestName(s) || s.length < 2;
   };
-  const realEmployees = ()=>employeesList.filter(e=>!isJunkEmployee(e.name));
+  // Роли подтягиваем отдельно: обычный список сотрудников их не отдаёт
+  let employeeRoles = {};
+  async function loadEmployeeRoles(){
+    try{
+      const a = await api("/dispatch/employees-audit");
+      employeeRoles = {};
+      (a.employees || []).forEach(e=>{ employeeRoles[e.id] = e.role || "both"; });
+    }catch(e){}
+  }
+  const roleOf = (id)=>employeeRoles[id] || "both";
+  // role: "sew" — только швеи, "fill" — только забивщики, пусто — все
+  const realEmployees = (role)=>employeesList.filter(e=>{
+    if(isJunkEmployee(e.name)) return false;
+    if(!role) return true;
+    const r = roleOf(e.id);
+    return r === "both" || r === role;
+  });
 
   // Выбор исполнителя списком кнопок. Раньше здесь был системный prompt,
   // и в нём вместо переносов строк печаталось «\n1. Андрей\n2. ...» —
   // перенос был экранирован дважды, поэтому список читался как каша.
-  function pickEmployee({ title = "Кто шьёт?", allowAll = false, withComment = false } = {}){
+  function pickEmployee({ title = "Кто шьёт?", allowAll = false, withComment = false, role = "" } = {}){
     return new Promise(async (resolve)=>{
       if(!employeesList.length){ try{ employeesList = await api("/employees"); }catch(e){} }
+      if(!Object.keys(employeeRoles).length) await loadEmployeeRoles();
       const ov = document.getElementById("empPickOverlay");
       const list = document.getElementById("empPickList");
       document.getElementById("empPickTitle").textContent = title;
@@ -7494,10 +7514,14 @@
           style="text-align:left; padding:10px 14px; font-size:14px;">${label}</button>`;
         // «не определено», «Без оплаты» и прочие пометки из старой таблицы —
         // это не люди, назначать на них работу нельзя
-        const people = realEmployees();
+        const people = realEmployees(role);
+        const ROLE_WORD = { sew: "швей", fill: "забивщиков" };
         list.innerHTML = (allowAll ? btn("__all__", "📣 Всем — заберёт кто первый", "amber") : "") +
           (people.length ? people.map(e=>btn(e.id, esc(e.name), "secondary")).join("")
-                         : `<div style="color:var(--ink-soft);">Настоящих сотрудников в списке нет — добавьте кнопкой «Сотрудники».</div>`);
+                         : `<div style="color:var(--red); font-size:13px;">
+                              Подходящих ${ROLE_WORD[role] || "сотрудников"} в списке нет.<br>
+                              <span style="color:var(--ink-soft);">Добавьте человека кнопкой «Сотрудники» и поставьте ему нужную роль,
+                              или смените роль у существующего.</span></div>`);
       }
 
       const onClick = (ev)=>{
@@ -7589,7 +7613,7 @@
     const rows = (window.__prodShown || []).filter(p=>selectedProdIds.has(p.id));
     const withStock = rows.filter(p=>p.stockId);
     if(!withStock.length){ toast("У выбранных нет складской позиции"); return; }
-    const pick = await pickEmployee({ title: "Кому отправить на забивку?", allowAll: true, withComment: true });
+    const pick = await pickEmployee({ title: "Кому отправить на забивку?", allowAll: true, withComment: true, role: "fill" });
     if(!pick) return;
     let ok = 0; const errors = [];
     for(const p of withStock){
@@ -7722,6 +7746,7 @@
     document.getElementById("employeesOverlay").classList.add("show");
   });
   async function renderEmployeesManagePanel(){
+    await loadEmployeeRoles();
     employeesList = await api("/employees");
     const body = document.getElementById("employeesManageBody");
     // Сразу помечаем, кто настоящий, а кто тестовый или вовсе не человек
@@ -7730,13 +7755,28 @@
       const svc = isServiceName(e.name);
       const mark = svc ? `<span style="color:var(--red); font-size:11.5px;"> · не человек, пометка</span>`
                  : test ? `<span style="color:var(--amber); font-size:11.5px;"> · тестовый</span>` : "";
+      const role = roleOf(e.id);
       return `
       <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--line);${svc||test?"opacity:.7;":""}">
         <span style="flex:1;">${esc(e.name)}${mark}</span>
+        <select data-role-for="${esc(e.id)}" style="font-size:12px; width:135px;" title="Что делает">
+          <option value="both" ${role==="both"?"selected":""}>шьёт и забивает</option>
+          <option value="sew" ${role==="sew"?"selected":""}>только шьёт</option>
+          <option value="fill" ${role==="fill"?"selected":""}>только забивает</option>
+        </select>
         <button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__renameEmployee('${e.id}')" title="Переименовать">✎</button>
         <button class="btn secondary" style="padding:4px 10px;font-size:12px" onclick="window.__mergeEmployee('${e.id}')" title="Передать работы другому и убрать">⇄</button>
         <button class="btn danger" style="padding:4px 10px;font-size:12px" onclick="window.__deleteEmployee('${e.id}')">Удалить</button>
       </div>`;}).join("") : `<div style="color:var(--ink-soft);">Пока нет сотрудников</div>`;
+    // Роль меняется прямо в списке — отдельного окна для этого не надо
+    body.querySelectorAll("[data-role-for]").forEach(sel=>sel.addEventListener("change", async ()=>{
+      try{
+        const r = await api("/dispatch/employees/" + encodeURIComponent(sel.dataset.roleFor), {
+          method:"PUT", body: JSON.stringify({ role: sel.value }) });
+        employeeRoles[sel.dataset.roleFor] = sel.value;
+        toast(r.message);
+      }catch(e){ toast("Не получилось: " + e.message); }
+    }));
     loadEmployeesAudit();
   }
   document.getElementById("btnAddEmployee").addEventListener("click", async ()=>{
