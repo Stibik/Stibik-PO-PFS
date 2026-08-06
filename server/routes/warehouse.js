@@ -438,6 +438,26 @@ router.post("/:id/consume", (req, res) => {
   const orderId = str(req.body?.orderId, 60) || null;
   const order = orderId ? db.prepare("SELECT * FROM orders WHERE id = ?").get(orderId) : null;
   if (orderId && !order) return res.status(400).json({ error: "no_order", message: "Заказ не найден" });
+
+  // Два изделия на один заказ — это задвоение: на складе минус две штуки,
+  // а продан один товар. Пропускаем только с явным подтверждением.
+  if (orderId && req.body?.confirmDouble !== true) {
+    const already = db.prepare("SELECT stock_number FROM warehouse_stock WHERE consumed_by_order_id = ? AND id != ?")
+      .get(orderId, row.id);
+    if (already) {
+      return res.status(400).json({ error: "already_issued",
+        message: `На заказ №${order.display_number} уже выдано изделие со склада №${already.stock_number}. ` +
+                 `Выдать второе — значит списать со склада лишнее.` });
+    }
+    const entry = db.prepare("SELECT * FROM payroll_entries WHERE order_id = ? AND status != 'cancelled' AND warehouse_stock_id IS NULL")
+      .get(orderId);
+    if (entry) {
+      const who = entry.employee_id ? db.prepare("SELECT name FROM employees WHERE id = ?").get(entry.employee_id)?.name : "";
+      return res.status(400).json({ error: "already_accrued",
+        message: `По заказу №${order.display_number} уже начислена работа${who ? ` — ${who}` : ""}. ` +
+                 `Если выдать со склада, изделие спишется, а работа останется оплаченной дважды.` });
+    }
+  }
   const now = new Date().toISOString();
 
   db.prepare("UPDATE warehouse_stock SET consumed = 1, consumed_by_order_id = ?, consumed_at = ?, consumed_by = ? WHERE id = ?")
@@ -529,6 +549,57 @@ router.get("/moves", (req, res) => {
       orderNumber: m.order_number, employeeName: emp?.name || "", amount: m.amount, comment: m.comment
     };
   }));
+});
+
+// Поиск заказа для выдачи со склада. Раньше отдавались ТОЛЬКО заказы со
+// статусом «ждёт решения», и найти по номеру уже начатый заказ было нельзя —
+// окно писало «заказов нет», хотя заказ существует. Теперь ищем среди всех
+// живых и честно говорим, что с каждым уже сделали: так видно, где выдача
+// приведёт к задвоению, а где всё чисто.
+router.get("/orders", (req, res) => {
+  const q = String(req.query.q || "").trim().toLowerCase();
+  const rows = db.prepare(`
+    SELECT o.* FROM orders o
+    WHERE (o.kaspi_status IS NULL OR o.kaspi_status NOT IN ('CANCELLED','CANCELLING','RETURNED','RETURN_REQUESTED'))
+    ORDER BY o.display_number DESC LIMIT 4000`).all();
+
+  const filtered = q
+    ? rows.filter(o =>
+        String(o.display_number == null ? "" : o.display_number).includes(q) ||
+        String(o.kaspi_code || "").toLowerCase().includes(q) ||
+        String(o.product_name || "").toLowerCase().includes(q))
+    : rows;
+
+  const out = filtered.slice(0, 60).map(o => {
+    const prod = db.prepare("SELECT * FROM production WHERE order_id = ? ORDER BY created_at DESC").get(o.id);
+    const entry = db.prepare("SELECT * FROM payroll_entries WHERE order_id = ? AND status != 'cancelled'").get(o.id);
+    const stock = db.prepare("SELECT stock_number FROM warehouse_stock WHERE consumed_by_order_id = ?").get(o.id);
+    const emp = prod?.employee_id ? db.prepare("SELECT name FROM employees WHERE id = ?").get(prod.employee_id) : null;
+
+    // Три причины, по которым выдавать второй раз не надо
+    let warning = null;
+    if (stock) warning = `На этот заказ уже выдано со склада №${stock.stock_number}`;
+    else if (entry) warning = `По заказу уже начислена работа${emp ? ` — ${emp.name}` : ""}, выдача со склада её задвоит`;
+    else if (prod && prod.decision === "stock") warning = "Заказ уже закрыт как «со склада»";
+
+    const decisionLabel = !prod ? "нет записи в производстве"
+      : !prod.decision ? "ждёт решения"
+      : prod.decision === "stock" ? "со склада"
+      : prod.decision === "assigned" ? `делает ${emp ? emp.name : "исполнитель"}`
+      : prod.decision === "return_offset" ? "перекрыт возвратом"
+      : prod.decision === "sewn_to_stock" ? "сшито на склад" : prod.decision;
+
+    return {
+      productionId: prod ? prod.id : null,
+      orderId: o.id, number: o.display_number, shop: o.shop, kaspiCode: o.kaspi_code,
+      article: prod?.article || o.article || null,
+      name: prod?.product_name || o.product_name || "",
+      qty: num(o.qty) || num(prod?.quantity) || 1,
+      pending: !!(prod && !prod.decision),
+      decisionLabel, warning
+    };
+  });
+  res.json({ orders: out, total: filtered.length, shown: out.length });
 });
 
 // Заказы, ждущие решения — чтобы списать со склада прямо в нужный заказ
