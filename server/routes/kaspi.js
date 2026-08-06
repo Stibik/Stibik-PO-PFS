@@ -250,9 +250,11 @@ router.post("/sync", async (req, res) => {
   // правок. Раньше их приходилось звать кнопкой — теперь подтягиваются сами.
   let autoPulled = 0;
   try {
+    // Ручные заказы (УД) тоже идут в производство: их так же надо изготовить
+    // или взять со склада. Раньше здесь стояло source = 'kaspi', и УД не
+    // попадали в «Производство» вообще — а значит и в разноску по зарплате.
     const missing = db.prepare(`SELECT o.* FROM orders o
-      WHERE o.source = 'kaspi'
-        AND (o.kaspi_status IS NULL OR o.kaspi_status NOT IN ('CANCELLED','CANCELLING','RETURNED','RETURN_REQUESTED','COMPLETED'))
+      WHERE (o.kaspi_status IS NULL OR o.kaspi_status NOT IN ('CANCELLED','CANCELLING','RETURNED','RETURN_REQUESTED','COMPLETED'))
         AND (o.delivery_state IS NULL OR o.delivery_state != 'ARCHIVE')
         AND NOT EXISTS (SELECT 1 FROM production p WHERE p.order_id = o.id)`).all();
     const nowIso = new Date().toISOString();
