@@ -435,19 +435,20 @@ router.post("/pull-missing", (req, res) => {
   const dryRun = req.body?.confirm !== true;
   // Что считаем «активным» — ровно то, что в кабинете Kaspi ещё в работе:
   // предзаказ, упаковка, передача, доставка. Отменённое и завершённое не берём.
+  // Ручные заказы (УД) считаем наравне с Kaspi: их тоже изготавливают
   const ACTIVE = `(o.kaspi_status IS NULL OR o.kaspi_status NOT IN ('CANCELLED','CANCELLING','RETURNED','RETURN_REQUESTED','COMPLETED'))
                   AND (o.delivery_state IS NULL OR o.delivery_state != 'ARCHIVE')`;
 
-  const activeTotal = db.prepare(`SELECT COUNT(*) AS n FROM orders o WHERE o.source = 'kaspi' AND ${ACTIVE}`).get().n;
+  const activeTotal = db.prepare(`SELECT COUNT(*) AS n FROM orders o WHERE ${ACTIVE}`).get().n;
   // Совсем без записи в производстве
   const noRow = db.prepare(`SELECT o.* FROM orders o
-    WHERE o.source = 'kaspi' AND ${ACTIVE}
+    WHERE ${ACTIVE}
       AND NOT EXISTS (SELECT 1 FROM production p WHERE p.order_id = o.id)
     ORDER BY o.display_number`).all();
   // Запись есть, но закрыта решением или убрана в архив, — а заказ всё ещё в
   // работе. Такие тоже нигде не видны, хотя делать их надо.
   const closedRow = db.prepare(`SELECT o.* FROM orders o
-    WHERE o.source = 'kaspi' AND ${ACTIVE}
+    WHERE ${ACTIVE}
       AND NOT EXISTS (SELECT 1 FROM production p WHERE p.order_id = o.id AND p.decision IS NULL AND p.archived_at IS NULL)
       AND EXISTS (SELECT 1 FROM production p WHERE p.order_id = o.id)
     ORDER BY o.display_number`).all();
