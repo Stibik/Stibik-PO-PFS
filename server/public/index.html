@@ -5725,38 +5725,63 @@
       `Выдать № ${whConsumeItem.number || "—"}: ${group.name}`;
     document.getElementById("whOrderSearch").value = "";
     document.getElementById("whConsumeOverlay").classList.add("show");
-    try{
-      whPendingOrders = await api("/warehouse/pending-orders");
-    }catch(e){ whPendingOrders = []; }
     renderWhOrders(group.article);
   }
 
-  function renderWhOrders(article){
-    const q = (document.getElementById("whOrderSearch").value || "").trim().toLowerCase();
-    // Сначала показываем заказы на этот же товар — обычно списывают именно в них
-    const list = whPendingOrders
-      .filter(o=>!q || String(o.number).includes(q) || String(o.name||"").toLowerCase().includes(q) || String(o.article||"").toLowerCase().includes(q))
-      .sort((a,b)=>(b.article === article ? 1 : 0) - (a.article === article ? 1 : 0));
+  let whOrderArticle = "";
+  async function renderWhOrders(article){
+    if(article !== undefined) whOrderArticle = article || "";
+    const q = (document.getElementById("whOrderSearch").value || "").trim();
     const wrap = document.getElementById("whOrdersList");
+    wrap.innerHTML = `<div style="padding:12px; text-align:center; color:var(--ink-soft); font-size:12.5px;">Ищу...</div>`;
+    let data;
+    try{
+      // Ищем среди ВСЕХ живых заказов, а не только «ждущих решения»: раньше
+      // заказ по номеру просто не находился, хотя существовал
+      data = await api("/warehouse/orders" + (q ? "?q=" + encodeURIComponent(q) : ""));
+    }catch(e){
+      wrap.innerHTML = `<div style="padding:12px; color:var(--red); font-size:12.5px;">${esc(e.message)}</div>`;
+      return;
+    }
+    const list = data.orders.sort((a,b)=>
+      (b.article === whOrderArticle ? 1 : 0) - (a.article === whOrderArticle ? 1 : 0) ||
+      (b.pending ? 1 : 0) - (a.pending ? 1 : 0));
+
     wrap.innerHTML = list.length ? list.map(o=>`
       <div style="display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--line);
-                  ${o.article === article ? "background:#F0FDF4;" : ""}">
+                  ${o.article === whOrderArticle ? "background:#F0FDF4;" : ""}${o.warning ? "opacity:.85;" : ""}">
         <div style="flex:1;">
-          <b>№${esc(o.number || "—")}</b> <span style="font-size:12px; color:var(--ink-soft);">${esc(o.shop || "")}</span>
+          <b>№${esc(o.number || "—")}</b>
+          <span style="font-size:12px; color:var(--ink-soft);">${esc(o.shop || "")} ${esc(o.kaspiCode || "")}</span>
           <div style="font-size:12.5px;">${esc(o.name || "—")}
-            ${o.article === article ? `<span style="color:var(--green); font-size:11.5px;">· тот же товар</span>` : ""}</div>
+            ${o.article === whOrderArticle ? `<span style="color:var(--green); font-size:11.5px;">· тот же товар</span>` : ""}</div>
+          <div style="font-size:11px; color:var(--ink-soft);">${esc(o.decisionLabel)}</div>
+          ${o.warning ? `<div style="font-size:11.5px; color:var(--red);">⚠ ${esc(o.warning)}</div>` : ""}
         </div>
-        <button class="btn amber" style="padding:4px 12px; font-size:12px;" data-wh-order="${esc(o.orderId)}">Выдать сюда</button>
-      </div>`).join("")
-      : `<div style="padding:16px; text-align:center; color:var(--ink-soft); font-size:12.5px;">Заказов, ждущих решения, нет</div>`;
+        <button class="btn ${o.warning ? "secondary" : "amber"}" style="padding:4px 12px; font-size:12px;"
+          data-wh-order="${esc(o.orderId)}" data-wh-warn="${o.warning ? esc(o.warning) : ""}">Выдать сюда</button>
+      </div>`).join("") + (data.total > data.shown
+        ? `<div style="padding:8px; text-align:center; font-size:11.5px; color:var(--ink-soft);">
+             Показаны первые ${data.shown} из ${data.total} — уточните поиск</div>` : "")
+      : `<div style="padding:16px; text-align:center; color:var(--ink-soft); font-size:12.5px;">
+           ${q ? `По запросу «${esc(q)}» заказов не нашлось` : "Заказов нет"}</div>`;
 
-    wrap.querySelectorAll("[data-wh-order]").forEach(b=>b.addEventListener("click", ()=>consumeStock(b.dataset.whOrder)));
+    wrap.querySelectorAll("[data-wh-order]").forEach(b=>b.addEventListener("click", ()=>
+      consumeStock(b.dataset.whOrder, b.dataset.whWarn)));
   }
-  document.getElementById("whOrderSearch").addEventListener("input", ()=>renderWhOrders(whConsumeItem ? "" : ""));
+  let whSearchTimer = null;
+  document.getElementById("whOrderSearch").addEventListener("input", ()=>{
+    clearTimeout(whSearchTimer);
+    whSearchTimer = setTimeout(()=>renderWhOrders(), 250);
+  });
 
-  async function consumeStock(orderId){
+  async function consumeStock(orderId, warning){
+    // Задвоение возможно: изделие спишется со склада, а работа по заказу уже
+    // оплачена или другое изделие уже выдано. Спрашиваем прямо.
+    if(warning && !confirm(`${warning}\n\nВсё равно выдать?`)) return;
     try{
-      await api(`/warehouse/${whConsumeItem.id}/consume`, {method:"POST", body: JSON.stringify({ orderId: orderId || null })});
+      await api(`/warehouse/${whConsumeItem.id}/consume`, {method:"POST",
+        body: JSON.stringify({ orderId: orderId || null, confirmDouble: !!warning })});
       document.getElementById("whConsumeOverlay").classList.remove("show");
       toast(orderId ? "Выдано в заказ, зарплата не начисляется" : "Списано со склада");
       loadWarehouse();
